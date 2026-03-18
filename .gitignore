@@ -1,0 +1,6 @@
+bin/*
+*.exe
+*.zip
+.env*
+!.env.example
+config*.json

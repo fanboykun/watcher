@@ -1,0 +1,409 @@
+name: Deploy App (Windows via Debian Jump Host)
+
+# ==============================================================
+# CONFIGURATION — edit this block to reuse for any project
+# ==============================================================
+env:
+  # ── App identity ──────────────────────────────────────────
+  APP_NAME: admin-be
+
+  # ── Go build ──────────────────────────────────────────────
+  GO_VERSION: "1.25"
+  GO_PRIVATE: github.com/pecut-ai/*
+
+  # ── Binaries ──────────────────────────────────────────────
+  WEB_BINARY: web.exe
+  WORKER_BINARY: worker.exe
+  WEB_ENTRY: cmd/api/main.go
+  WORKER_ENTRY: cmd/worker/main.go
+
+  # ── Windows paths ─────────────────────────────────────────
+  WIN_BASE_DIR: C:\admin-be
+
+  # ── Service instances ─────────────────────────────────────
+  WEB_INSTANCE_COUNT: 2
+  WORKER_INSTANCE_COUNT: 2
+
+  # ── Ports ─────────────────────────────────────────────────
+  WEB_BASE_PORT: 8000
+  IIS_PROXY_PORT: 8080
+  SSH_PORT: 8195
+
+  # ── Health check ──────────────────────────────────────────
+  HEALTH_CHECK_PATH: /health
+  HEALTH_CHECK_RETRIES: 10
+  HEALTH_CHECK_INTERVAL: 3
+
+  # ── IIS / ARR ─────────────────────────────────────────────
+  IIS_SITE_NAME: admin-be-proxy
+  IIS_FARM_NAME: admin-be-farm
+  IIS_SITE_DIR: C:\inetpub\admin-be-proxy
+
+# ==============================================================
+
+on:
+  push:
+    branches: main
+    paths:
+      - ".github/workflows/**"
+      - "cmd/api/main.go"
+      - "cmd/worker/main.go"
+      - "configs/sqlc/sqlc.yaml"
+      - "internal/**"
+      - "pkg/**"
+      - "static/**"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================================
+  # JOB 1 — AUTO TAGGING
+  # Reads commit messages since last tag and bumps version
+  # using conventional commits:
+  #   BREAKING CHANGE or feat!  → major bump (v1.x.x → v2.0.0)
+  #   feat:                     → minor bump (v1.0.x → v1.1.0)
+  #   fix: / chore: / etc.      → patch bump (v1.0.0 → v1.0.1)
+  # ============================================================
+  tag:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip cd]')"
+    name: Auto Tag
+    environment: production
+    outputs:
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+      version: ${{ steps.bump.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history needed to read all commits since last tag
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine version bump
+        id: bump
+        run: |
+          # ── Get latest tag (default to v0.0.0 if none exists) ─────────────
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+
+          # ── Parse current version ─────────────────────────────────────────
+          VERSION=${LATEST_TAG#v}
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+
+          # ── Collect all commit messages since last tag ────────────────────
+          COMMITS=$(git log ${LATEST_TAG}..HEAD --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
+          echo "Commits since $LATEST_TAG:"
+          echo "$COMMITS"
+
+          # ── Determine bump type from conventional commits ─────────────────
+          BUMP="patch"  # default
+
+          while IFS= read -r msg; do
+            # BREAKING CHANGE: major bump
+            if echo "$msg" | grep -qiE "(BREAKING CHANGE|^[a-z]+!:)"; then
+              BUMP="major"
+              break
+            fi
+            # feat: minor bump (only if not already major)
+            if echo "$msg" | grep -qiE "^feat(\(.+\))?:"; then
+              BUMP="minor"
+            fi
+          done <<< "$COMMITS"
+
+          echo "Bump type: $BUMP"
+
+          # ── Calculate new version ─────────────────────────────────────────
+          case $BUMP in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "New tag: $NEW_TAG"
+
+          # ── Push new tag ──────────────────────────────────────────────────
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+
+          echo "new_tag=$NEW_TAG"    >> $GITHUB_OUTPUT
+          echo "version=$NEW_TAG"   >> $GITHUB_OUTPUT
+
+  # ============================================================
+  # JOB 2 — BUILD & DEPLOY
+  # Runs after tagging succeeds
+  # ============================================================
+  deploy:
+    runs-on: ubuntu-latest
+    needs: tag
+    name: Deploy ${{ env.APP_NAME }} ${{ needs.tag.outputs.new_tag }}
+    environment: production
+
+    steps:
+      # ===============================
+      # CHECKOUT
+      # ===============================
+      - uses: actions/checkout@v4
+
+      # ===============================
+      # GO SETUP
+      # ===============================
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - run: go version
+
+      # ===============================
+      # CONFIGURE PRIVATE PACKAGES
+      # ===============================
+      - name: Configure Go to use private packages
+        run: |
+          echo "GOPRIVATE=${{ env.GO_PRIVATE }}" >> $GITHUB_ENV
+          git config --global url."https://${{ secrets.GH_ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+        env:
+          GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      # ===============================
+      # BUILD WINDOWS BINARIES
+      # ===============================
+      - name: Build Web and Worker (Windows)
+        run: |
+          mkdir -p bin
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -ldflags="-X main.Version=${{ needs.tag.outputs.new_tag }}" \
+            -o bin/${{ env.WEB_BINARY }} ${{ env.WEB_ENTRY }}
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -ldflags="-X main.Version=${{ needs.tag.outputs.new_tag }}" \
+            -o bin/${{ env.WORKER_BINARY }} ${{ env.WORKER_ENTRY }}
+
+      # ===============================
+      # SSH AGENT
+      # ===============================
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_KEY }}
+
+      # ===============================
+      # SSH CONFIG
+      # ===============================
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          cat > ~/.ssh/config << EOF
+          Host jump
+            HostName ${{ secrets.VPS_HOST }}
+            User ${{ secrets.VPS_USER }}
+            Port ${{ env.SSH_PORT }}
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+
+          Host windows
+            HostName ${{ secrets.WIN_PRIVATE_HOST }}
+            User ${{ secrets.WIN_USER }}
+            Port ${{ env.SSH_PORT }}
+            ProxyJump jump
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+          EOF
+
+          chmod 600 ~/.ssh/config
+
+      # ===============================
+      # UPLOAD BINARIES
+      # ===============================
+      - name: Upload new binaries to Windows server
+        run: |
+          scp bin/${{ env.WEB_BINARY }}    windows:${{ env.WEB_BINARY }}.new
+          scp bin/${{ env.WORKER_BINARY }} windows:${{ env.WORKER_BINARY }}.new
+
+      # ===============================
+      # ROLLING DEPLOY
+      # ===============================
+      - name: Rolling Deploy
+        env:
+          APP_NAME: ${{ env.APP_NAME }}
+          WIN_BASE_DIR: ${{ env.WIN_BASE_DIR }}
+          WEB_BINARY: ${{ env.WEB_BINARY }}
+          WORKER_BINARY: ${{ env.WORKER_BINARY }}
+          WEB_INSTANCE_COUNT: ${{ env.WEB_INSTANCE_COUNT }}
+          WORKER_INSTANCE_COUNT: ${{ env.WORKER_INSTANCE_COUNT }}
+          WEB_BASE_PORT: ${{ env.WEB_BASE_PORT }}
+          HEALTH_CHECK_PATH: ${{ env.HEALTH_CHECK_PATH }}
+          HEALTH_CHECK_RETRIES: ${{ env.HEALTH_CHECK_RETRIES }}
+          HEALTH_CHECK_INTERVAL: ${{ env.HEALTH_CHECK_INTERVAL }}
+        run: |
+          ssh windows powershell -NoProfile -NonInteractive -Command - << 'EOF'
+          $ErrorActionPreference = 'Stop'
+
+          # ── Read config from environment ───────────────────────────────────
+          $AppName             = $env:APP_NAME
+          $BaseDir             = $env:WIN_BASE_DIR
+          $WebBinary           = $env:WEB_BINARY
+          $WorkerBinary        = $env:WORKER_BINARY
+          $WebInstanceCount    = [int]$env:WEB_INSTANCE_COUNT
+          $WorkerInstanceCount = [int]$env:WORKER_INSTANCE_COUNT
+          $WebBasePort         = [int]$env:WEB_BASE_PORT
+          $HealthPath          = $env:HEALTH_CHECK_PATH
+          $HealthRetries       = [int]$env:HEALTH_CHECK_RETRIES
+          $HealthInterval      = [int]$env:HEALTH_CHECK_INTERVAL
+          $NSSM                = "C:\ProgramData\chocolatey\bin\nssm.exe"
+
+          # ── Build service lists dynamically ───────────────────────────────
+          $WebInstances = @()
+          for ($i = 1; $i -le $WebInstanceCount; $i++) {
+            $WebInstances += @{
+              Name    = "$AppName-web-$i"
+              Exe     = "$BaseDir\$WebBinary"
+              EnvFile = "$BaseDir\.env.web.$i"
+              Port    = $WebBasePort + ($i - 1)
+            }
+          }
+
+          $WorkerInstances = @()
+          for ($i = 1; $i -le $WorkerInstanceCount; $i++) {
+            $WorkerInstances += @{
+              Name    = "$AppName-worker-$i"
+              Exe     = "$BaseDir\$WorkerBinary"
+              EnvFile = "$BaseDir\.env.worker.$i"
+            }
+          }
+
+          # ── Helpers ────────────────────────────────────────────────────────
+          function Ensure-Service($svc) {
+            $existing = Get-Service $svc.Name -ErrorAction SilentlyContinue
+            if (-not $existing) {
+              Write-Host "Installing service: $($svc.Name)"
+              & $NSSM install $svc.Name $svc.Exe
+              & $NSSM set $svc.Name AppDirectory    $BaseDir
+              & $NSSM set $svc.Name AppEnvExtra     "ENV_FILE=$($svc.EnvFile)"
+              & $NSSM set $svc.Name Start           SERVICE_AUTO_START
+              & $NSSM set $svc.Name AppStdout       "$BaseDir\logs\$($svc.Name).out.log"
+              & $NSSM set $svc.Name AppStderr       "$BaseDir\logs\$($svc.Name).err.log"
+              & $NSSM set $svc.Name AppRotateFiles  1
+              & $NSSM set $svc.Name AppRotateOnline 1
+            }
+          }
+
+          function Stop-Svc($name) {
+            $s = Get-Service $name -ErrorAction SilentlyContinue
+            if ($s -and $s.Status -eq 'Running') {
+              Write-Host "Stopping: $name"
+              & $NSSM stop $name confirm
+              Start-Sleep 3
+            }
+          }
+
+          function Start-Svc($name) {
+            Write-Host "Starting: $name"
+            & $NSSM start $name
+            Start-Sleep 3
+          }
+
+          function Wait-Healthy($port) {
+            Write-Host "Waiting for health check on port $port ..."
+            for ($i = 0; $i -lt $HealthRetries; $i++) {
+              try {
+                $resp = Invoke-WebRequest -Uri "http://localhost:$port$HealthPath" -UseBasicParsing -TimeoutSec 3
+                if ($resp.StatusCode -eq 200) {
+                  Write-Host "  Healthy on port $port"
+                  return $true
+                }
+              } catch {}
+              Write-Host "  Attempt $($i+1)/$HealthRetries failed, retrying in $($HealthInterval)s..."
+              Start-Sleep $HealthInterval
+            }
+            throw "Service on port $port did not become healthy after $HealthRetries attempts"
+          }
+
+          # ── Prepare ────────────────────────────────────────────────────────
+          Write-Host "=== Preparing directories ==="
+          New-Item -ItemType Directory -Path $BaseDir        -Force | Out-Null
+          New-Item -ItemType Directory -Path "$BaseDir\logs" -Force | Out-Null
+
+          Write-Host "=== Ensuring NSSM ==="
+          if (-not (Test-Path $NSSM)) { choco install nssm -y --force }
+          if (-not (Test-Path $NSSM)) { throw "NSSM not available" }
+
+          foreach ($svc in ($WebInstances + $WorkerInstances)) { Ensure-Service $svc }
+
+          # ── Rolling deploy: WEB ────────────────────────────────────────────
+          Write-Host ""
+          Write-Host "=== Rolling deploy: WEB ($WebInstanceCount instances) ==="
+
+          foreach ($svc in $WebInstances) {
+            Write-Host ""
+            Write-Host "--- Updating $($svc.Name) (port $($svc.Port)) ---"
+            Stop-Svc  $svc.Name
+            Copy-Item -Force "$env:USERPROFILE\$WebBinary.new" $svc.Exe
+            Start-Svc $svc.Name
+            Wait-Healthy $svc.Port
+            Write-Host "  $($svc.Name) updated successfully"
+          }
+
+          # ── Rolling deploy: WORKER ─────────────────────────────────────────
+          Write-Host ""
+          Write-Host "=== Rolling deploy: WORKER ($WorkerInstanceCount instances) ==="
+
+          foreach ($svc in $WorkerInstances) {
+            Write-Host ""
+            Write-Host "--- Updating $($svc.Name) ---"
+            Stop-Svc  $svc.Name
+            Copy-Item -Force "$env:USERPROFILE\$WorkerBinary.new" $svc.Exe
+            Start-Svc $svc.Name
+            Start-Sleep 5
+
+            $s = Get-Service $svc.Name -ErrorAction SilentlyContinue
+            if ($s.Status -ne 'Running') {
+              throw "$($svc.Name) failed to start after deploy"
+            }
+            Write-Host "  $($svc.Name) updated successfully"
+          }
+
+          # ── Cleanup ────────────────────────────────────────────────────────
+          Write-Host ""
+          Write-Host "=== Cleanup ==="
+          Remove-Item -Force "$env:USERPROFILE\$WebBinary.new"    -ErrorAction SilentlyContinue
+          Remove-Item -Force "$env:USERPROFILE\$WorkerBinary.new" -ErrorAction SilentlyContinue
+
+          # ── Final status ───────────────────────────────────────────────────
+          Write-Host ""
+          Write-Host "=== ALL SERVICES STATUS ==="
+          foreach ($svc in ($WebInstances + $WorkerInstances)) {
+            $s = Get-Service $svc.Name -ErrorAction SilentlyContinue
+            Write-Host "  $($svc.Name) -> $($s.Status)"
+          }
+
+          Write-Host ""
+          Write-Host "=== SUCCESS ==="
+          EOF
+
+      # ===============================
+      # DONE
+      # ===============================
+      - name: Done
+        run: |
+          echo "Deployed ${{ env.APP_NAME }} ${{ needs.tag.outputs.new_tag }} successfully"

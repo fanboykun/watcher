@@ -1,0 +1,319 @@
+name: Release
+
+# ==============================================================
+# CONFIGURATION — edit this block to match your app repo
+# ==============================================================
+env:
+  # Must match "service_name" in watcher's config.json
+  APP_NAME: watcher
+
+  # Go build
+  GO_VERSION: "1.25"
+
+  # ── Binaries ──────────────────────────────────────────────
+  WEB_BINARY: watcher.exe # was: web.exe
+  WORKER_BINARY: "" # remove — watcher has no worker
+  WEB_ENTRY: cmd/watcher/main.go # was: cmd/api/main.go
+  WORKER_ENTRY: ""
+
+# ==============================================================
+
+on:
+  push:
+    branches: main
+    paths:
+      - ".github/workflows/**"
+      - "cmd/**"
+      - "internal/**"
+      - "pkg/**"
+      - "static/**"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+    inputs:
+      force_bump:
+        description: "Force a specific bump (patch|minor|major) — skips commit analysis"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================================
+  # JOB 1 — SEMANTIC VERSION TAG
+  #
+  # Reads all commits since the last tag and determines bump type:
+  #   BREAKING CHANGE / feat!:  → major  (v1.x.x → v2.0.0)
+  #   feat:                     → minor  (v1.0.x → v1.1.0)
+  #   fix: / perf: / refactor:  → patch  (v1.0.0 → v1.0.1)
+  #   chore: / docs: / ci: / style: / test: → NO release (skipped)
+  #
+  # Outputs:
+  #   should_release  — "true" | "false"
+  #   new_tag         — "v1.2.3"
+  #   bump_type       — "major" | "minor" | "patch"
+  #   changelog       — newline-separated list of releasable commits
+  # ============================================================
+  tag:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    name: Semantic Version Tag
+    environment: production
+    outputs:
+      should_release: ${{ steps.semver.outputs.should_release }}
+      new_tag: ${{ steps.semver.outputs.new_tag }}
+      bump_type: ${{ steps.semver.outputs.bump_type }}
+      changelog: ${{ steps.semver.outputs.changelog }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine version bump and tag
+        id: semver
+        run: |
+          # ── Get latest tag (default to v0.0.0 if none) ────────────────────
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+
+          # ── Parse semver components ────────────────────────────────────────
+          VERSION=${LATEST_TAG#v}
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+
+          # ── Collect commits since last tag ─────────────────────────────────
+          if [ "$LATEST_TAG" = "v0.0.0" ]; then
+            COMMITS=$(git log --pretty=format:"%s" 2>/dev/null)
+          else
+            COMMITS=$(git log "${LATEST_TAG}..HEAD" --pretty=format:"%s" 2>/dev/null)
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "No commits since $LATEST_TAG — nothing to release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Commits since $LATEST_TAG:"
+          echo "$COMMITS"
+
+          # ── Classify commits ───────────────────────────────────────────────
+          BUMP=""
+          CHANGELOG=""
+          SKIP_ONLY=true   # tracks if all commits are non-releasable
+
+          while IFS= read -r msg; do
+            # Skip empty lines
+            [ -z "$msg" ] && continue
+
+            # BREAKING CHANGE → major
+            if echo "$msg" | grep -qiE "(BREAKING[[:space:]]CHANGE|^[a-z]+(\(.+\))?!:)"; then
+              BUMP="major"
+              CHANGELOG="${CHANGELOG}• ${msg}\n"
+              SKIP_ONLY=false
+              continue
+            fi
+
+            # feat → minor (if not already major)
+            if echo "$msg" | grep -qiE "^feat(\(.+\))?:"; then
+              [ "$BUMP" != "major" ] && BUMP="minor"
+              CHANGELOG="${CHANGELOG}• ${msg}\n"
+              SKIP_ONLY=false
+              continue
+            fi
+
+            # fix / perf / refactor → patch (if not already major/minor)
+            if echo "$msg" | grep -qiE "^(fix|perf|refactor)(\(.+\))?:"; then
+              [ "$BUMP" != "major" ] && [ "$BUMP" != "minor" ] && BUMP="patch"
+              CHANGELOG="${CHANGELOG}• ${msg}\n"
+              SKIP_ONLY=false
+              continue
+            fi
+
+            # chore / docs / ci / style / test / build → skip (no release)
+            # These are intentionally not added to changelog or bump
+          done <<< "$COMMITS"
+
+          # ── Handle force_bump override from manual dispatch ────────────────
+          FORCE="${{ github.event.inputs.force_bump }}"
+          if [ -n "$FORCE" ]; then
+            echo "Force bump override: $FORCE"
+            BUMP="$FORCE"
+            SKIP_ONLY=false
+          fi
+
+          # ── Skip if nothing releasable ─────────────────────────────────────
+          if [ "$SKIP_ONLY" = "true" ] || [ -z "$BUMP" ]; then
+            echo "No releasable commits found (only chore/docs/ci/style/test) — skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # ── Calculate new version ──────────────────────────────────────────
+          case $BUMP in
+            major)
+              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor)
+              MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch)
+              PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+
+          echo ""
+          echo "Bump type : $BUMP"
+          echo "Old tag   : $LATEST_TAG"
+          echo "New tag   : $NEW_TAG"
+          echo ""
+          echo "Releasable commits:"
+          printf "$CHANGELOG"
+
+          # ── Push new tag ───────────────────────────────────────────────────
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+          echo "Tag $NEW_TAG pushed"
+
+          # ── Write outputs ──────────────────────────────────────────────────
+          # Escape newlines for GitHub Actions output
+          CHANGELOG_ESCAPED="${CHANGELOG//$'\n'/'%0A'}"
+
+          echo "should_release=true"          >> $GITHUB_OUTPUT
+          echo "new_tag=$NEW_TAG"             >> $GITHUB_OUTPUT
+          echo "bump_type=$BUMP"              >> $GITHUB_OUTPUT
+          echo "changelog=$CHANGELOG_ESCAPED" >> $GITHUB_OUTPUT
+
+  # ============================================================
+  # JOB 2 — BUILD & PUBLISH RELEASE
+  # Only runs when job 1 determines should_release=true
+  # ============================================================
+  release:
+    runs-on: ubuntu-latest
+    needs: tag
+    if: needs.tag.outputs.should_release == 'true'
+    name: Build and Release ${{ needs.tag.outputs.new_tag }}
+    environment: production
+
+    steps:
+      # ===============================
+      # CHECKOUT at the new tag
+      # ===============================
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.new_tag }}
+
+      # ===============================
+      # GO SETUP
+      # ===============================
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - run: go version
+
+      # ===============================
+      # BUILD WINDOWS BINARIES
+      # ===============================
+      - name: Build for Windows (amd64)
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -ldflags="-X main.Version=${{ needs.tag.outputs.new_tag }}" \
+            -o dist/watcher.exe \
+            cmd/watcher/main.go
+
+          echo "Built:"
+          ls -lh dist/
+
+      # ===============================
+      # PACKAGE AS ZIP
+      # Binaries are zipped flat (no subdirectory) so the watcher
+      # finds them directly at current/web.exe after extraction
+      # ===============================
+      - name: Package release zip
+        id: zip
+        run: |
+          ZIP_NAME="${{ env.APP_NAME }}-${{ needs.tag.outputs.new_tag }}.zip"
+          cd dist && zip -j "../${ZIP_NAME}" ./* && cd ..
+          echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
+          echo "Packaged: ${ZIP_NAME} ($(du -sh ${ZIP_NAME} | cut -f1))"
+
+      # ===============================
+      # GENERATE version.json
+      # Must match VersionMetadata struct in watcher/internal/github.go
+      # ===============================
+      - name: Generate version.json
+        run: |
+          VERSION="${{ needs.tag.outputs.new_tag }}"
+          ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
+          REPO="${{ github.repository }}"
+          ARTIFACT_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ZIP_NAME}"
+          PUBLISHED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          cat > version.json << EOF
+          {
+            "services": {
+              "${{ env.APP_NAME }}": {
+                "version": "${VERSION}",
+                "artifact": "${ZIP_NAME}",
+                "artifact_url": "${ARTIFACT_URL}",
+                "published_at": "${PUBLISHED_AT}"
+              }
+            }
+          }
+          EOF
+
+          echo "version.json:"
+          cat version.json
+
+      # ===============================
+      # CREATE GITHUB RELEASE
+      # ===============================
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.new_tag }}
+          name: "${{ env.APP_NAME }} ${{ needs.tag.outputs.new_tag }}"
+          body: |
+            ## What's changed (${{ needs.tag.outputs.bump_type }} bump)
+
+            ${{ needs.tag.outputs.changelog }}
+
+            ---
+            *Deployed automatically by the watcher agent within `check_interval_sec` seconds.*
+          files: |
+            ${{ steps.zip.outputs.zip_name }}
+            version.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ===============================
+      # SUMMARY
+      # ===============================
+      - name: Print release summary
+        run: |
+          REPO="${{ github.repository }}"
+          VERSION="${{ needs.tag.outputs.new_tag }}"
+          ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
+
+          echo ""
+          echo "========================================"
+          echo " Released: $VERSION (${{ needs.tag.outputs.bump_type }} bump)"
+          echo "========================================"
+          echo ""
+          echo "Watcher metadata URL (use in config.json):"
+          echo "  https://github.com/${REPO}/releases/latest/download/version.json"
+          echo ""
+          echo "Direct artifact URL:"
+          echo "  https://github.com/${REPO}/releases/download/${VERSION}/${ZIP_NAME}"
+          echo ""
+          echo "The watcher will pick this up within check_interval_sec seconds."
