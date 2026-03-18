@@ -200,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: tag
     if: needs.tag.outputs.should_release == 'true'
-    name: Build and Release ${{ needs.tag.outputs.new_tag }}
+    name: Build and Release
     environment: production
 
     steps:
