@@ -95,7 +95,7 @@ type ServiceConfig struct {
 	EnvFile string `json:"env_file"`
 
 	// HealthCheckURL overrides the watcher-level health check URL for this service
-	HealthCheckURL string `json:"health_check_url"`
+	HealthCheckURL string `json:"health_check_url,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -143,9 +143,6 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func (c *Config) validate() error {
-	if c.GitHubToken == "" {
-		return fmt.Errorf("github_token is required")
-	}
 	if len(c.Watchers) == 0 {
 		return fmt.Errorf("at least one watcher entry is required")
 	}

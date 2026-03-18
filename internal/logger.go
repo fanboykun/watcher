@@ -41,7 +41,7 @@ func NewFileLogger(component, logDir string) (*Logger, error) {
 	}, nil
 }
 
-// WithComponent returns a new Logger with a different component label.
+// WithComponent returns a child logger with a different component label.
 // Used so each RepoWatcher logs with its own name as context.
 func (l *Logger) WithComponent(component string) *Logger {
 	return &Logger{component: component, out: l.out}
@@ -61,7 +61,13 @@ func (l *Logger) write(level, msg string, args ...any) {
 			if !ok {
 				key = fmt.Sprintf("arg%d", i)
 			}
-			entry.Fields[key] = args[i+1]
+			val := args[i+1]
+			// error interface has no exported fields so json.Marshal produces {}
+			// convert to string so the message is actually visible in logs
+			if err, ok := val.(error); ok {
+				val = err.Error()
+			}
+			entry.Fields[key] = val
 		}
 	}
 	b, _ := json.Marshal(entry)
