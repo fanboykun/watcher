@@ -30,7 +30,7 @@ func NewFileLogger(component, logDir string) (*Logger, error) {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return nil, fmt.Errorf("create log dir: %w", err)
 	}
-	path := filepath.Join(logDir, component+".log")
+	path := filepath.Join(logDir, "watcher.log")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open log file: %w", err)
@@ -39,6 +39,12 @@ func NewFileLogger(component, logDir string) (*Logger, error) {
 		component: component,
 		out:       io.MultiWriter(os.Stdout, f),
 	}, nil
+}
+
+// WithComponent returns a new Logger with a different component label.
+// Used so each RepoWatcher logs with its own name as context.
+func (l *Logger) WithComponent(component string) *Logger {
+	return &Logger{component: component, out: l.out}
 }
 
 func (l *Logger) write(level, msg string, args ...any) {

@@ -19,7 +19,6 @@ const (
 	StatusRollback  DeployStatus = "rollback"
 )
 
-// State is the on-disk deployment state written to state.json
 type State struct {
 	CurrentVersion string       `json:"current_version"`
 	Status         DeployStatus `json:"status"`
@@ -37,15 +36,9 @@ func NewStateManager(installDir string, log *Logger) *StateManager {
 	return &StateManager{installDir: installDir, log: log}
 }
 
-func (s *StateManager) statePath() string {
-	return filepath.Join(s.installDir, "state.json")
-}
+func (s *StateManager) statePath() string   { return filepath.Join(s.installDir, "state.json") }
+func (s *StateManager) versionPath() string { return filepath.Join(s.installDir, "version.txt") }
 
-func (s *StateManager) versionPath() string {
-	return filepath.Join(s.installDir, "version.txt")
-}
-
-// ReadVersion returns the currently deployed version, or "" if not yet deployed
 func (s *StateManager) ReadVersion() (string, error) {
 	data, err := os.ReadFile(s.versionPath())
 	if os.IsNotExist(err) {
@@ -79,7 +72,7 @@ func (s *StateManager) ReadState() (*State, error) {
 func (s *StateManager) writeState(st *State) error {
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode state: %w", err)
+		return err
 	}
 	return atomicWrite(s.statePath(), data)
 }
@@ -138,7 +131,6 @@ func (s *StateManager) SetRolledBack(version string) error {
 	return s.writeState(st)
 }
 
-// atomicWrite writes data to path via tmp + rename to avoid partial writes
 func atomicWrite(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("ensure dir: %w", err)
@@ -154,6 +146,4 @@ func atomicWrite(path string, data []byte) error {
 	return nil
 }
 
-func now() string {
-	return time.Now().UTC().Format(time.RFC3339)
-}
+func now() string { return time.Now().UTC().Format(time.RFC3339) }

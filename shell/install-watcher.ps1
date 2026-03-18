@@ -15,7 +15,7 @@ $Config = @{
     ConfigFile   = "C:\apps\watcher\config.json"
     LogDir       = "C:\apps\watcher\logs"
     NssmPath     = "C:\ProgramData\chocolatey\bin\nssm.exe"
-    RestartDelay = 5000   # ms before NSSM restarts on crash
+    RestartDelay = 5000
 }
 # ==============================================================
 
@@ -37,59 +37,43 @@ Write-Host "  Service : $($Config.ServiceName)" -ForegroundColor Gray
 Write-Host "  Dir     : $($Config.InstallDir)" -ForegroundColor Gray
 Write-Host "============================================================`n" -ForegroundColor Cyan
 
-
-# ── Preflight checks ──────────────────────────────────────────────────────────
 Write-Step "Preflight checks"
 
 if (-not (Test-Path $Config.WatcherExe)) {
     Write-Fail "watcher.exe not found at $($Config.WatcherExe)"
-    Write-Host "  Copy watcher.exe here before running this script" -ForegroundColor Yellow
     exit 1
 }
 Write-OK "watcher.exe found"
 
 if (-not (Test-Path $Config.ConfigFile)) {
     Write-Fail "config.json not found at $($Config.ConfigFile)"
-    Write-Host "  Copy and fill in config.json here before running this script" -ForegroundColor Yellow
     exit 1
 }
 Write-OK "config.json found"
 
 if (-not (Test-Path $Config.NssmPath)) {
-    Write-Fail "NSSM not found at $($Config.NssmPath)"
-    Write-Host "  Run: choco install nssm" -ForegroundColor Yellow
+    Write-Fail "NSSM not found — run: choco install nssm"
     exit 1
 }
 Write-OK "NSSM found"
 
-
-# ── Create directories ────────────────────────────────────────────────────────
 Write-Step "Creating directories"
-
 @($Config.InstallDir, $Config.LogDir) | ForEach-Object {
     if (Test-Path $_) { Write-Skip $_ }
-    else {
-        New-Item -ItemType Directory -Path $_ -Force | Out-Null
-        Write-OK "Created $_"
-    }
+    else { New-Item -ItemType Directory -Path $_ -Force | Out-Null; Write-OK "Created $_" }
 }
 
-
-# ── Install or update NSSM service ───────────────────────────────────────────
 Write-Step "Configuring NSSM service: $($Config.ServiceName)"
 
 $existing = Get-Service $Config.ServiceName -ErrorAction SilentlyContinue
-
 if ($existing) {
     if ($existing.Status -eq "Running") {
         Write-Host "  Stopping existing service..." -ForegroundColor Yellow
         & $Config.NssmPath stop $Config.ServiceName confirm
         Start-Sleep 3
     }
-    Write-Host "  Updating existing service"
     & $Config.NssmPath set $Config.ServiceName Application $Config.WatcherExe
 } else {
-    Write-Host "  Installing new service"
     & $Config.NssmPath install $Config.ServiceName $Config.WatcherExe
 }
 
@@ -102,13 +86,9 @@ if ($existing) {
 & $Config.NssmPath set $Config.ServiceName AppRotateOnline 1
 & $Config.NssmPath set $Config.ServiceName AppRotateSeconds 86400
 & $Config.NssmPath set $Config.ServiceName AppRestartDelay $Config.RestartDelay
-
 Write-OK "NSSM service configured"
 
-
-# ── Start service ─────────────────────────────────────────────────────────────
 Write-Step "Starting $($Config.ServiceName)"
-
 & $Config.NssmPath start $Config.ServiceName
 Start-Sleep 4
 
@@ -120,8 +100,6 @@ if ($svc -and $svc.Status -eq "Running") {
     exit 1
 }
 
-
-# ── Done ──────────────────────────────────────────────────────────────────────
 Write-Host "`n============================================================" -ForegroundColor Cyan
 Write-Host "  WATCHER INSTALLED SUCCESSFULLY" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Cyan
@@ -129,7 +107,7 @@ Write-Host ""
 Write-Host "Logs    : $($Config.LogDir)\watcher.out.log" -ForegroundColor Yellow
 Write-Host "Config  : $($Config.ConfigFile)" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "Useful commands:" -ForegroundColor Yellow
+Write-Host "Commands:" -ForegroundColor Yellow
 Write-Host "  Status    : Get-Service $($Config.ServiceName)"
 Write-Host "  Stop      : nssm stop $($Config.ServiceName)"
 Write-Host "  Start     : nssm start $($Config.ServiceName)"

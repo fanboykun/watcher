@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// VersionMetadata mirrors the version.json structure published by GitHub Actions
 type VersionMetadata struct {
 	Services map[string]ServiceMeta `json:"services"`
 }
@@ -38,8 +37,6 @@ func NewGitHubClient(token string, log *Logger) *GitHubClient {
 	}
 }
 
-// FetchMetadata downloads and parses version.json.
-// Uses Authorization header for private repo release assets.
 func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionMetadata, error) {
 	g.log.Debug("fetching metadata", "url", url)
 
@@ -47,7 +44,6 @@ func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionM
 	if err != nil {
 		return nil, err
 	}
-	// Accept JSON explicitly
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := g.client.Do(req)
@@ -68,13 +64,11 @@ func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionM
 	return &meta, nil
 }
 
-// DownloadArtifact downloads the release zip to destPath with exponential backoff retry.
-// Private GitHub release assets require the Authorization header + Accept: application/octet-stream.
 func (g *GitHubClient) DownloadArtifact(ctx context.Context, url, destPath string, retries int) error {
 	var lastErr error
 
 	for attempt := 1; attempt <= retries; attempt++ {
-		g.log.Info("downloading artifact", "url", url, "attempt", attempt, "retries", retries)
+		g.log.Info("downloading artifact", "url", url, "attempt", attempt)
 
 		err := g.downloadOnce(ctx, url, destPath)
 		if err == nil {
@@ -87,7 +81,7 @@ func (g *GitHubClient) DownloadArtifact(ctx context.Context, url, destPath strin
 
 		if attempt < retries {
 			backoff := time.Duration(attempt*attempt) * time.Second
-			g.log.Info("backing off before retry", "seconds", backoff.Seconds())
+			g.log.Info("backing off", "seconds", backoff.Seconds())
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -104,7 +98,6 @@ func (g *GitHubClient) downloadOnce(ctx context.Context, url, destPath string) e
 	if err != nil {
 		return err
 	}
-	// Required for GitHub private release assets
 	req.Header.Set("Accept", "application/octet-stream")
 
 	resp, err := g.client.Do(req)
@@ -113,12 +106,10 @@ func (g *GitHubClient) downloadOnce(ctx context.Context, url, destPath string) e
 	}
 	defer resp.Body.Close()
 
-	// GitHub redirects private asset downloads — net/http follows automatically
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
 
-	// Write to .tmp first, then rename atomically to avoid partial files
 	tmp := destPath + ".tmp"
 	f, err := os.Create(tmp)
 	if err != nil {
