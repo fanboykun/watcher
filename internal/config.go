@@ -95,7 +95,7 @@ type ServiceConfig struct {
 	EnvFile string `json:"env_file"`
 
 	// HealthCheckURL overrides the watcher-level health check URL for this service
-	HealthCheckURL string `json:"health_check_url,omitempty"`
+	HealthCheckURL string `json:"health_check_url"`
 }
 
 func LoadConfig(path string) (*Config, error) {
