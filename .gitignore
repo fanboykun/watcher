@@ -4,3 +4,13 @@ bin/*
 .env*
 !.env.example
 config*.json
+!config.example.json
+
+# OS
+.DS_Store
+Thumbs.db
+ 
+# Editor
+.vscode/
+.idea/
+*.swp

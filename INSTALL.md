@@ -6,11 +6,11 @@ The release zip contains:
 
 ```
 watcher-vX.Y.Z.zip
-  watcher.exe             the watcher agent binary
+  watcher.exe               the watcher agent binary
   shell/
-    install-watcher.ps1   bootstrap script (registers watcher as a Windows service)
-  config.json             example config -- copy and edit before running
-  INSTALL.md              this file
+    install-watcher.ps1     bootstrap script (registers watcher as a Windows service)
+  config.example.json       example config -- copy to config.json and edit before running
+  INSTALL.md                this file
 ```
 
 ---
@@ -92,15 +92,19 @@ D:\apps\watcher\
   watcher.exe
   shell\
     install-watcher.ps1
-  config.json
+  config.example.json
   INSTALL.md
 ```
 
 ---
 
-### Step 2 -- Edit `config.json`
+### Step 2 -- Create `config.json` from the example
 
-Open `D:\apps\watcher\config.json` and fill in your values:
+```powershell
+Copy-Item D:\apps\watcher\config.example.json D:\apps\watcher\config.json
+```
+
+Then open and fill in your values:
 
 ```json
 {

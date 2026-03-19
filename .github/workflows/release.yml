@@ -183,11 +183,11 @@ jobs:
 
       # ── Assemble release package ────────────────────────────────────────────
       # The zip contains everything the user needs to bootstrap a server:
-      #   watcher.exe           -- the agent binary
-      #   shell/                -- PowerShell scripts
-      #     install-watcher.ps1 -- registers watcher as a Windows service
-      #   config.json           -- example config (edit before running)
-      #   INSTALL.md            -- step-by-step install guide
+      #   watcher.exe             -- the agent binary
+      #   shell/                  -- PowerShell scripts
+      #     install-watcher.ps1   -- registers watcher as a Windows service
+      #   config.example.json     -- example config (copy to config.json and edit)
+      #   INSTALL.md              -- step-by-step install guide
       - name: Assemble release package
         id: zip
         run: |
@@ -198,7 +198,7 @@ jobs:
 
           cp dist/${{ env.WATCHER_BINARY }} "$STAGING/"
           cp shell/install-watcher.ps1      "$STAGING/shell/"
-          cp config.json                    "$STAGING/"
+          cp config.example.json            "$STAGING/"
           cp INSTALL.md                     "$STAGING/"
 
           cd "$STAGING" && zip -r "../${ZIP_NAME}" . && cd ..

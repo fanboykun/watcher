@@ -64,14 +64,14 @@ build:
 	@echo "    OK: $(OUT)"
 	@echo ""
 
-## package: build watcher.exe and zip with shell/install-watcher.ps1 + config.json + INSTALL.md
+## package: build watcher.exe and zip with shell/install-watcher.ps1 + config.example.json + INSTALL.md
 package: build
 	@echo ""
 	@echo ">>> Packaging release zip"
 	@mkdir -p $(BIN_DIR)/staging/shell
 	@cp $(OUT)                       $(BIN_DIR)/staging/
 	@cp shell/install-watcher.ps1    $(BIN_DIR)/staging/shell/
-	@cp config.json                  $(BIN_DIR)/staging/
+	@cp config.example.json          $(BIN_DIR)/staging/
 	@cp INSTALL.md                   $(BIN_DIR)/staging/
 	@cd $(BIN_DIR)/staging && zip -r ../$(APP_NAME)-$(VERSION).zip . && cd ../..
 	@echo ""
