@@ -20,8 +20,9 @@ on:
       - "go.mod"
       - "go.sum"
       - "shell/**"
+      - "config.example.json"
       - "INSTALL.md"
-      - "config.json"
+      - "README.md"
   workflow_dispatch:
     inputs:
       force_bump:
