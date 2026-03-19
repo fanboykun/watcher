@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -44,7 +45,11 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 	d.log.Info("starting services")
 	for _, svc := range d.wcfg.Services {
 		newBin := filepath.Join(currentDir, svc.BinaryName)
-		d.updateServiceBinary(svc.WindowsServiceName, newBin)
+
+		if err := d.ensureService(svc, newBin); err != nil {
+			return d.tryRollback(ctx, previousVersion,
+				fmt.Errorf("ensure service %s: %w", svc.WindowsServiceName, err))
+		}
 
 		if err := d.startService(svc.WindowsServiceName); err != nil {
 			return d.tryRollback(ctx, previousVersion,
@@ -92,7 +97,9 @@ func (d *Deployer) Rollback(ctx context.Context, version string) error {
 
 	for _, svc := range d.wcfg.Services {
 		newBin := filepath.Join(currentDir, svc.BinaryName)
-		d.updateServiceBinary(svc.WindowsServiceName, newBin)
+		if err := d.ensureService(svc, newBin); err != nil {
+			return fmt.Errorf("ensure service %s during rollback: %w", svc.WindowsServiceName, err)
+		}
 		if err := d.startService(svc.WindowsServiceName); err != nil {
 			return fmt.Errorf("start %s during rollback: %w", svc.WindowsServiceName, err)
 		}
@@ -189,11 +196,74 @@ func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
 	return nil
 }
 
-func (d *Deployer) updateServiceBinary(name, binPath string) {
-	out, err := exec.Command(d.nssmPath, "set", name, "Application", binPath).CombinedOutput()
-	if err != nil {
-		d.log.Warn("failed to update service binary", "name", name, "error", err, "output", string(out))
+// ensureService registers the service with NSSM if it does not exist yet,
+// or updates the binary path if it already exists.
+// This means you never need to manually register services -- the watcher
+// handles it on first deploy.
+func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
+	existing := d.serviceExists(svc.WindowsServiceName)
+
+	if !existing {
+		d.log.Info("service not registered, installing via NSSM", "name", svc.WindowsServiceName)
+
+		out, err := exec.Command(d.nssmPath, "install", svc.WindowsServiceName, binPath).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("nssm install %s: %w (output: %s)", svc.WindowsServiceName, err, string(out))
+		}
+
+		// Configure service settings
+		logDir := filepath.Join(d.wcfg.InstallDir, "logs")
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			d.log.Warn("could not create log dir", "path", logDir, "error", err)
+		}
+
+		settings := [][]string{
+			{"AppDirectory", d.wcfg.InstallDir},
+			{"Start", "SERVICE_AUTO_START"},
+			{"AppStdout", filepath.Join(logDir, svc.WindowsServiceName+".out.log")},
+			{"AppStderr", filepath.Join(logDir, svc.WindowsServiceName+".err.log")},
+			{"AppRotateFiles", "1"},
+			{"AppRotateOnline", "1"},
+			{"AppRotateSeconds", "86400"},
+			{"AppRestartDelay", "5000"},
+		}
+		if svc.EnvFile != "" {
+			settings = append(settings, []string{"AppEnvExtra", "ENV_FILE=" + svc.EnvFile})
+		}
+
+		for _, kv := range settings {
+			o, e := exec.Command(d.nssmPath, "set", svc.WindowsServiceName, kv[0], kv[1]).CombinedOutput()
+			if e != nil {
+				d.log.Warn("nssm set warning", "key", kv[0], "error", e, "output", string(o))
+			}
+		}
+
+		d.log.Info("service installed", "name", svc.WindowsServiceName, "binary", binPath)
+	} else {
+		// Service exists -- just update the binary path
+		d.log.Info("updating service binary", "name", svc.WindowsServiceName, "binary", binPath)
+		out, err := exec.Command(d.nssmPath, "set", svc.WindowsServiceName, "Application", binPath).CombinedOutput()
+		if err != nil {
+			d.log.Warn("failed to update binary path", "name", svc.WindowsServiceName, "error", err, "output", string(out))
+		}
 	}
+
+	return nil
+}
+
+// serviceExists checks if a Windows service is registered (via NSSM or SCM)
+func (d *Deployer) serviceExists(name string) bool {
+	out, err := exec.Command(d.nssmPath, "status", name).CombinedOutput()
+	if err != nil {
+		// NSSM exits non-zero if service doesn't exist
+		// Double-check the output to distinguish "not found" from other errors
+		return !containsAny(string(out),
+			"Can't open service",
+			"does not exist",
+			"OpenService()",
+		)
+	}
+	return true
 }
 
 func (d *Deployer) stopService(name string) {
@@ -246,6 +316,16 @@ func (d *Deployer) healthCheck(ctx context.Context, serviceName, url string) err
 		}
 	}
 	return fmt.Errorf("not healthy after %d attempts", hc.Retries)
+}
+
+// containsAny reports whether s contains any of the given substrings
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func copyDir(src, dst string) error {

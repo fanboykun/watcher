@@ -2,7 +2,93 @@
 
 A pull-based deployment agent for Go services on private Windows servers with no inbound network access.
 
-The watcher runs as a Windows service, polls GitHub Releases every N seconds, and deploys new versions automatically — no SSH, no VPN, no push required.
+The watcher runs as a Windows service, polls GitHub Releases on a configurable interval, and deploys new versions automatically — no SSH, no VPN, no push access required.
+
+---
+
+## Table of contents
+
+- [How it works](#how-it-works)
+- [Requirements for watched services](#requirements-for-watched-services)
+- [Project structure](#project-structure)
+- [Installation](#installation)
+- [Triggering a release](#triggering-a-release)
+- [Rollback](#rollback)
+- [Disk layout](#disk-layout)
+- [state.json reference](#statejson-reference)
+- [Logs](#logs)
+- [config.json reference](#configjson-reference)
+
+---
+
+## Requirements for watched services
+
+> **Any service managed by this watcher must use the same `release.yml` workflow.**
+
+The watcher is tightly coupled to the release format that `release.yml` produces. If a service repo uses a different release workflow or a different artifact structure, the watcher will fail to deploy it.
+
+### What `release.yml` must produce
+
+Every watched service repo must publish a GitHub Release containing exactly these two assets:
+
+**1. `version.json`** — the version metadata file the watcher polls:
+
+```json
+{
+  "services": {
+    "<APP_NAME>": {
+      "version": "v1.2.0",
+      "artifact": "my-service-v1.2.0.zip",
+      "artifact_url": "https://github.com/your-org/my-service/releases/download/v1.2.0/my-service-v1.2.0.zip",
+      "published_at": "2024-01-15T10:00:00Z"
+    }
+  }
+}
+```
+
+**2. `<APP_NAME>-<version>.zip`** — a flat zip archive containing the binaries:
+
+```
+my-service-v1.2.0.zip
+  ├── web.exe       ← at root level, no subdirectory
+  └── worker.exe    ← at root level, no subdirectory
+```
+
+> Binaries **must be at the root** of the zip. The watcher extracts directly into `releases/<version>/` and expects `releases/<version>/web.exe` — not `releases/<version>/dist/web.exe`.
+
+### How to set up `release.yml` in a new service repo
+
+1. Copy `release.yml` from this repo into `.github/workflows/release.yml` of the target service repo
+2. Edit only the config block at the top of the file:
+
+```yaml
+env:
+  APP_NAME:
+    my-service # must be unique across all watched services
+    # must match "service_name" in watcher's config.json
+  GO_VERSION: "1.21"
+  GO_PRIVATE: github.com/your-org/*
+  WEB_BINARY: my-service.exe # must match "binary_name" in watcher's config.json
+  WORKER_BINARY: "" # leave empty if no worker binary
+  WEB_ENTRY: cmd/api/main.go
+  WORKER_ENTRY: "" # leave empty if no worker
+```
+
+3. Add the same secrets to the repo's `production` environment:
+   - `GH_ACCESS_TOKEN` — PAT for pulling private Go packages
+   - `GITHUB_TOKEN` — automatically available, used for creating releases
+
+### The contract between `release.yml` and `config.json`
+
+These values must stay in sync between the service repo's `release.yml` and the watcher's `config.json`:
+
+| `release.yml`   | `config.json`             | Must match                                             |
+| --------------- | ------------------------- | ------------------------------------------------------ |
+| `APP_NAME`      | `watchers[].service_name` | Exact string match — this is the key in `version.json` |
+| `WEB_BINARY`    | `services[].binary_name`  | Exact filename inside the zip                          |
+| `WORKER_BINARY` | `services[].binary_name`  | Exact filename inside the zip                          |
+
+If these are out of sync the watcher will either fail to find the service in `version.json`, or fail to find the binary inside the zip after extraction.
 
 ---
 
@@ -10,14 +96,17 @@ The watcher runs as a Windows service, polls GitHub Releases every N seconds, an
 
 ```
 Developer
-  └── git tag v1.2.0 && git push --tags
+  └── git commit -m "feat: add new endpoint"
+  └── git push origin main
         ↓
-GitHub Actions (release.yml)
-  └── builds web.exe + worker.exe
-  └── zips into admin-be-v1.2.0.zip
-  └── creates GitHub Release
-  └── uploads admin-be-v1.2.0.zip + version.json
-        ↓  (publicly or privately accessible over HTTPS)
+GitHub Actions (release.yml in app repo)
+  └── detects feat: → minor bump
+  └── pushes tag v1.2.0
+  └── builds web.exe + worker.exe for Windows
+  └── packages into admin-be-v1.2.0.zip
+  └── creates GitHub Release v1.2.0
+  └── uploads admin-be-v1.2.0.zip + version.json as release assets
+        ↓  (accessible over HTTPS using GitHub PAT)
 version.json
   {
     "services": {
@@ -27,19 +116,19 @@ version.json
       }
     }
   }
-        ↑  (polls every 60s via HTTPS using GitHub PAT)
-Watcher Agent  [Windows Service — private server]
-  └── reads version.txt → "v1.1.0"
-  └── sees target "v1.2.0" → mismatch
+        ↑  (polls every 60s via HTTPS)
+Watcher Agent  [Windows Service on private server]
+  └── reads local version.txt → "v1.1.0"
+  └── sees remote target "v1.2.0" → mismatch detected
   └── downloads admin-be-v1.2.0.zip
-  └── extracts to releases/v1.2.0/
+  └── extracts to D:\apps\admin-be\releases\v1.2.0\
   └── stops NSSM services
-  └── swaps current/ junction → releases/v1.2.0/
+  └── swaps D:\apps\admin-be\current\ → releases\v1.2.0\
   └── starts NSSM services
-  └── polls /health until 200
-  └── on failure: rolls back to releases/v1.1.0/
+  └── polls /health until HTTP 200
+  └── on failure: automatically rolls back to releases\v1.1.0\
   └── writes version.txt → "v1.2.0"
-  └── updates state.json
+  └── updates state.json → status: healthy
 ```
 
 ---
@@ -48,118 +137,161 @@ Watcher Agent  [Windows Service — private server]
 
 ```
 watcher/
-  cmd/watcher/main.go         entrypoint, signal handling, poll loop
+  cmd/watcher/main.go         entrypoint — signal handling, starts Agent
   internal/
     config.go                 config loader + validation
-    github.go                 fetch version.json, download artifact (private repo support)
-    deploy.go                 extract zip, swap junction, NSSM service management, rollback
+    github.go                 fetch version.json, download artifact (private repo)
+    deploy.go                 extract zip, swap junction, NSSM management, rollback
     state.go                  atomic read/write of version.txt + state.json
-    watcher.go                main orchestration loop
-    logger.go                 structured JSON logger
-  config.json                 example config (web + worker)
-  config.web-only.json        example config (web only — per-server customization)
-  install-watcher.ps1         first-time Windows service bootstrap script
+    watcher.go                Agent + RepoWatcher — one goroutine per watched repo
+    logger.go                 structured JSON logger with per-component context
+    ticker.go                 ticker helper
+  config.json                 example config
+  install-watcher.ps1         first-time Windows service bootstrap
   go.mod
 ```
 
+## Installation
+
+For step-by-step instructions on how to set up the server, install the watcher, and add new services, see:
+
+**[INSTALL.md](./INSTALL.md)**
+
+The release zip already includes `INSTALL.md` alongside `watcher.exe` and `shell/install-watcher.ps1` so you have everything in one place after downloading.
+
 ---
 
-## Building
+---
+
+## Triggering a release
+
+The watcher uses **auto-tagging via semantic versioning**. You never create tags manually — just push a commit to `main` with a recognized message pattern and the release workflow handles the rest.
+
+### How it works
+
+When a push lands on `main`, the `release.yml` workflow:
+
+1. Reads all commit messages since the last tag
+2. Classifies each commit and determines the highest bump type
+3. If any releasable commits exist, bumps the version, pushes a new tag, builds `watcher.exe`, packages the zip, and creates a GitHub Release
+4. If no releasable commits exist (e.g. only `chore:` or `docs:`), the workflow exits early with no release
+
+### Commit patterns
+
+**Conventional commits (spec):**
+
+| Pattern                                 | Bump     | Example                                     |
+| --------------------------------------- | -------- | ------------------------------------------- |
+| `feat: <msg>`                           | minor    | `feat: add health check endpoint`           |
+| `fix: <msg>`                            | patch    | `fix: nil pointer on startup`               |
+| `perf: <msg>`                           | patch    | `perf: reduce polling overhead`             |
+| `refactor: <msg>`                       | patch    | `refactor: split deploy logic`              |
+| `feat!: <msg>`                          | major    | `feat!: redesign config format`             |
+| `BREAKING CHANGE: <msg>`                | major    | `BREAKING CHANGE: drop config.json support` |
+| `chore: / docs: / ci: / style: / test:` | **skip** | no release triggered                        |
+
+**Shortcut patterns (forgiving aliases):**
+
+| Pattern                         | Bump  | Example                               |
+| ------------------------------- | ----- | ------------------------------------- |
+| `minor: <msg>`                  | minor | `minor: bump go version`              |
+| `patch: <msg>`                  | patch | `patch: update deps`                  |
+| `major: <msg>`                  | major | `major: new config format`            |
+| `bump: minor`                   | minor | `bump: minor`                         |
+| `bump: patch`                   | patch | `bump: patch`                         |
+| `bump: major`                   | major | `bump: major`                         |
+| `release: <msg>`                | patch | `release: deploy hotfix`              |
+| `release(minor): <msg>`         | minor | `release(minor): new watcher feature` |
+| `release(major): <msg>`         | major | `release(major): breaking change`     |
+| `[release]` anywhere in message | patch | `update readme [release]`             |
+| `[release:minor]` anywhere      | minor | `update readme [release:minor]`       |
+| `[release:major]` anywhere      | major | `update readme [release:major]`       |
+
+**Unrecognized patterns are skipped** — if none of your commits since the last tag match any pattern above, no release is created. This is intentional: it prevents accidental releases from noise commits.
+
+### Version bump priority
+
+When multiple commits exist since the last tag, the highest bump wins:
+
+```
+major > minor > patch > skip
+```
+
+For example, if you push three commits:
+
+```
+chore: update dependencies    -> skip
+fix: handle timeout errors    -> patch
+feat: add multi-repo support  -> minor
+```
+
+The result is a **minor** bump.
+
+### Manual trigger
+
+If you forgot the right pattern or need to force a specific bump, go to:
+
+**Actions → Release Watcher → Run workflow** → set `force_bump` to `patch`, `minor`, or `major`
+
+This bypasses commit analysis entirely and creates a release with the specified bump.
+
+### Skip release entirely
+
+Add `[skip ci]` anywhere in a commit message to skip the workflow completely:
 
 ```bash
-# Cross-compile for Windows from Linux/macOS
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o watcher.exe ./cmd/watcher
-
-# Build on Windows
-go build -o watcher.exe ./cmd/watcher
+git commit -m "chore: internal notes [skip ci]"
 ```
 
 ---
 
-## First-time server setup (via RDP)
+## Rollback
 
-1. Build `watcher.exe` (cross-compile from CI or local machine)
-2. RDP into the server
-3. Copy `watcher.exe` to `C:\apps\watcher\`
-4. Copy and fill in `config.json` to `C:\apps\watcher\config.json`
-5. Run as Administrator:
+Rollback is automatic when a health check fails after deploy. The watcher swaps `current/` back to the previous release and restarts services without any intervention.
+
+For manual rollback, stop the watcher, edit `version.txt`, then restart:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File C:\apps\watcher\install-watcher.ps1
+nssm stop app-watcher
+Set-Content D:\apps\admin-be\version.txt "v1.1.0"
+nssm start app-watcher
 ```
 
-That's it. The watcher will run forever, restart on crash (via NSSM), and deploy new versions automatically.
+The watcher detects the mismatch and re-deploys `v1.1.0` on the next tick.
 
 ---
 
-## Configuration
+## Disk layout
 
-Each server has its own `config.json`. The key per-server field is `services` — different servers can manage different subsets of services.
-
-```json
-{
-  "service_name": "admin-be",
-  "environment": "production",
-  "install_dir": "C:\\apps\\admin-be",
-  "check_interval_sec": 60,
-  "metadata_url": "https://github.com/your-org/your-repo/releases/latest/download/version.json",
-  "github_token": "ghp_xxxxxxxxxxxxxxxxxxxx",
-  "download_retries": 3,
-  "health_check": {
-    "enabled": true,
-    "retries": 10,
-    "interval_sec": 3,
-    "timeout_sec": 5
-  },
-  "services": [
-    {
-      "windows_service_name": "admin-be-web-1",
-      "binary_name": "web.exe",
-      "env_file": "C:\\admin-be\\.env.web.1",
-      "health_check_url": "http://localhost:8000/health"
-    },
-    {
-      "windows_service_name": "admin-be-worker-1",
-      "binary_name": "worker.exe",
-      "env_file": "C:\\admin-be\\.env.worker.1"
-    }
-  ]
-}
-```
-
-| Field                             | Description                                                   |
-| --------------------------------- | ------------------------------------------------------------- |
-| `service_name`                    | Must match the key in `version.json`                          |
-| `environment`                     | Human-readable label for this server                          |
-| `install_dir`                     | Base directory — releases, state, version.txt live here       |
-| `check_interval_sec`              | Poll frequency (default: 60)                                  |
-| `metadata_url`                    | Use `releases/latest/download/version.json` for always-latest |
-| `github_token`                    | GitHub PAT with `repo` scope (private repo)                   |
-| `download_retries`                | Retry attempts with exponential backoff (default: 3)          |
-| `health_check.enabled`            | Set `false` to skip post-deploy validation                    |
-| `services[].windows_service_name` | Windows service managed by NSSM                               |
-| `services[].binary_name`          | Filename inside the release zip                               |
-| `services[].env_file`             | Path to the .env file for this service instance               |
-| `services[].health_check_url`     | Overrides top-level health check URL for this service         |
-
----
-
-## Disk layout after first deploy
+After the first deploy, the install directory looks like this:
 
 ```
-C:\apps\admin-be\
-  current\              <- junction pointing to active release
+D:\apps\admin-be\
+  current\                  ← junction pointing to active release
     web.exe
     worker.exe
   releases\
-    v1.1.0\             <- previous (kept for rollback)
+    v1.1.0\                 ← previous version (kept for rollback)
       web.exe
       worker.exe
-    v1.2.0\             <- current
+    v1.2.0\                 ← current version
       web.exe
       worker.exe
-  version.txt           <- "v1.2.0"
-  state.json            <- status, timestamps, last error
+  .env.web.1
+  .env.web.2
+  .env.worker.1
+  .env.worker.2
+  version.txt               ← "v1.2.0"
+  state.json                ← deployment status
+  logs\
+    admin-be-web-1.out.log
+    admin-be-web-1.err.log
+    ...
+
+D:\apps\watcher\
+  watcher.exe
+  config.json
+  install-watcher.ps1
   logs\
     watcher.out.log
     watcher.err.log
@@ -167,7 +299,7 @@ C:\apps\admin-be\
 
 ---
 
-## state.json
+## state.json reference
 
 Written after every check and deploy:
 
@@ -181,33 +313,51 @@ Written after every check and deploy:
 }
 ```
 
-Status values: `unknown` | `deploying` | `healthy` | `failed` | `rollback`
+| Status      | Meaning                                       |
+| ----------- | --------------------------------------------- |
+| `unknown`   | Watcher has never deployed to this server     |
+| `deploying` | Deploy in progress                            |
+| `healthy`   | Last deploy succeeded and health check passed |
+| `failed`    | Deploy failed — see `last_error`              |
+| `rollback`  | Rolled back to a previous version             |
 
 ---
 
-## Rollback
+## Logs
 
-Rollback is automatic when a health check fails after deploy.
-For manual rollback, edit `version.txt` and restart the watcher:
+All logs are structured JSON written to `D:\apps\watcher\logs\watcher.out.log`.
 
-```powershell
-nssm stop app-watcher
-Set-Content C:\apps\admin-be\version.txt "v1.1.0"
-nssm start app-watcher
+```json
+{"time":"2024-01-15T10:00:00Z","level":"INFO","component":"admin-be","msg":"check cycle","fields":{"metadata_url":"https://..."}}
+{"time":"2024-01-15T10:00:01Z","level":"INFO","component":"admin-be","msg":"version mismatch, deploying","fields":{"from":"v1.1.0","to":"v1.2.0"}}
+{"time":"2024-01-15T10:00:15Z","level":"INFO","component":"admin-be","msg":"health check passed","fields":{"service":"admin-be-web-1","attempt":2}}
+{"time":"2024-01-15T10:00:17Z","level":"INFO","component":"admin-be","msg":"deploy complete","fields":{"version":"v1.2.0"}}
 ```
 
-The watcher will detect the mismatch and re-deploy `v1.1.0`.
+The `component` field always matches the `name` set in `config.json` — useful for filtering logs when watching multiple repos.
 
 ---
 
-## GitHub token (security note)
+## config.json reference
 
-The PAT is stored in `config.json`. Protect the file with restricted Windows ACLs:
-
-```powershell
-icacls C:\apps\watcher\config.json /inheritance:r
-icacls C:\apps\watcher\config.json /grant "SYSTEM:(F)"
-icacls C:\apps\watcher\config.json /grant "BUILTIN\Administrators:(F)"
-```
-
-The token needs `repo` scope (or `contents:read` for fine-grained PATs) to download private release assets.
+| Field                                        | Required | Default                                  | Description                                       |
+| -------------------------------------------- | -------- | ---------------------------------------- | ------------------------------------------------- |
+| `environment`                                | no       | —                                        | Human-readable server label (logs only)           |
+| `github_token`                               | yes      | —                                        | PAT with `repo` scope for private repos           |
+| `log_dir`                                    | no       | `D:\apps\watcher\logs`                   | Where watcher writes its own logs                 |
+| `nssm_path`                                  | no       | `C:\ProgramData\chocolatey\bin\nssm.exe` | Full path to nssm.exe                             |
+| `watchers[].name`                            | no       | same as `service_name`                   | Label used in log output                          |
+| `watchers[].service_name`                    | yes      | —                                        | Must match `APP_NAME` in the repo's `release.yml` |
+| `watchers[].metadata_url`                    | yes      | —                                        | URL to `version.json` on GitHub Releases          |
+| `watchers[].check_interval_sec`              | no       | 60                                       | Poll frequency in seconds                         |
+| `watchers[].install_dir`                     | yes      | —                                        | Base directory for releases on this machine       |
+| `watchers[].download_retries`                | no       | 3                                        | Retry attempts with exponential backoff           |
+| `watchers[].health_check.enabled`            | no       | false                                    | Set `true` to validate after deploy               |
+| `watchers[].health_check.url`                | no       | —                                        | Default health endpoint (overridable per service) |
+| `watchers[].health_check.retries`            | no       | 10                                       | Attempts before rollback                          |
+| `watchers[].health_check.interval_sec`       | no       | 3                                        | Seconds between retries                           |
+| `watchers[].health_check.timeout_sec`        | no       | 5                                        | Per-request HTTP timeout                          |
+| `watchers[].services[].windows_service_name` | yes      | —                                        | NSSM-managed Windows service name                 |
+| `watchers[].services[].binary_name`          | yes      | —                                        | Filename inside the release zip                   |
+| `watchers[].services[].env_file`             | yes      | —                                        | Path to the `.env` file for this instance         |
+| `watchers[].services[].health_check_url`     | no       | —                                        | Overrides watcher-level health check URL          |

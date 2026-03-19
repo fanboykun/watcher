@@ -40,7 +40,7 @@ OUT := $(BIN_DIR)/$(BINARY_NAME)
 # Targets
 # ==============================================================
 
-.PHONY: all build test test-github test-verbose run clean info help
+.PHONY: all build package test test-github test-verbose run clean info help
 
 ## all: run tests then build
 all: test build
@@ -62,6 +62,22 @@ build:
 		$(CMD_PATH)
 	@echo ""
 	@echo "    OK: $(OUT)"
+	@echo ""
+
+## package: build watcher.exe and zip with shell/install-watcher.ps1 + config.json + INSTALL.md
+package: build
+	@echo ""
+	@echo ">>> Packaging release zip"
+	@mkdir -p $(BIN_DIR)/staging/shell
+	@cp $(OUT)                       $(BIN_DIR)/staging/
+	@cp shell/install-watcher.ps1    $(BIN_DIR)/staging/shell/
+	@cp config.json                  $(BIN_DIR)/staging/
+	@cp INSTALL.md                   $(BIN_DIR)/staging/
+	@cd $(BIN_DIR)/staging && zip -r ../$(APP_NAME)-$(VERSION).zip . && cd ../..
+	@echo ""
+	@echo "    OK: $(BIN_DIR)/$(APP_NAME)-$(VERSION).zip"
+	@echo "    Contents:"
+	@unzip -l $(BIN_DIR)/$(APP_NAME)-$(VERSION).zip
 	@echo ""
 
 ## test: run all tests
@@ -100,7 +116,6 @@ clean:
 	@echo ">>> Cleaning $(BIN_DIR)/"
 	@rm -rf $(BIN_DIR)
 	@echo "    Done"
-
 ## info: print resolved Go environment
 info:
 	@echo ""
