@@ -1,22 +1,13 @@
-name: Release
+name: Release Watcher
 
 # ==============================================================
-# CONFIGURATION — edit this block to match your app repo
+# CONFIGURATION -- edit this block if you fork this repo
 # ==============================================================
 env:
-  # Must match "service_name" in watcher's config.json
-  APP_NAME: admin-be
-
-  # Go build
-  GO_VERSION: "1.25"
-  GO_PRIVATE: github.com/pecut-ai/*
-
-  # Binary names must match "binary_name" in watcher's config.json
-  WEB_BINARY: web.exe
-  WORKER_BINARY: worker.exe
-  WEB_ENTRY: cmd/api/main.go
-  WORKER_ENTRY: cmd/worker/main.go
-
+  APP_NAME: watcher
+  GO_VERSION: "1.21"
+  WATCHER_ENTRY: cmd/watcher/main.go
+  WATCHER_BINARY: watcher.exe
 # ==============================================================
 
 on:
@@ -26,14 +17,16 @@ on:
       - ".github/workflows/**"
       - "cmd/**"
       - "internal/**"
-      - "pkg/**"
-      - "static/**"
       - "go.mod"
       - "go.sum"
+      - "shell/**"
+      - "config.example.json"
+      - "INSTALL.md"
+      - "README.md"
   workflow_dispatch:
     inputs:
       force_bump:
-        description: "Force a specific bump (patch|minor|major) — skips commit analysis"
+        description: "Force bump type (patch|minor|major) -- skips commit analysis"
         required: false
         default: ""
 
@@ -42,19 +35,7 @@ permissions:
 
 jobs:
   # ============================================================
-  # JOB 1 — SEMANTIC VERSION TAG
-  #
-  # Reads all commits since the last tag and determines bump type:
-  #   BREAKING CHANGE / feat!:  → major  (v1.x.x → v2.0.0)
-  #   feat:                     → minor  (v1.0.x → v1.1.0)
-  #   fix: / perf: / refactor:  → patch  (v1.0.0 → v1.0.1)
-  #   chore: / docs: / ci: / style: / test: → NO release (skipped)
-  #
-  # Outputs:
-  #   should_release  — "true" | "false"
-  #   new_tag         — "v1.2.3"
-  #   bump_type       — "major" | "minor" | "patch"
-  #   changelog       — newline-separated list of releasable commits
+  # JOB 1 -- SEMANTIC VERSION TAG
   # ============================================================
   tag:
     runs-on: ubuntu-latest
@@ -81,17 +62,14 @@ jobs:
       - name: Determine version bump and tag
         id: semver
         run: |
-          # ── Get latest tag (default to v0.0.0 if none) ────────────────────
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           echo "Latest tag: $LATEST_TAG"
 
-          # ── Parse semver components ────────────────────────────────────────
           VERSION=${LATEST_TAG#v}
           MAJOR=$(echo $VERSION | cut -d. -f1)
           MINOR=$(echo $VERSION | cut -d. -f2)
           PATCH=$(echo $VERSION | cut -d. -f3)
 
-          # ── Collect commits since last tag ─────────────────────────────────
           if [ "$LATEST_TAG" = "v0.0.0" ]; then
             COMMITS=$(git log --pretty=format:"%s" 2>/dev/null)
           else
@@ -99,7 +77,7 @@ jobs:
           fi
 
           if [ -z "$COMMITS" ]; then
-            echo "No commits since $LATEST_TAG — nothing to release"
+            echo "No commits since $LATEST_TAG"
             echo "should_release=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -107,173 +85,137 @@ jobs:
           echo "Commits since $LATEST_TAG:"
           echo "$COMMITS"
 
-          # ── Classify commits ───────────────────────────────────────────────
+          classify_commit() {
+            local msg="$1"
+            if echo "$msg" | grep -qiE "(BREAKING[[:space:]]CHANGE|^[a-z]+(\(.+\))?!:)"; then echo "major"; return; fi
+            if echo "$msg" | grep -qiE "^feat(\(.+\))?:"; then echo "minor"; return; fi
+            if echo "$msg" | grep -qiE "^(fix|perf|refactor)(\(.+\))?:"; then echo "patch"; return; fi
+            if echo "$msg" | grep -qiE "^(chore|docs|ci|style|test|build)(\(.+\))?:"; then echo "skip"; return; fi
+            if echo "$msg" | grep -qiE "^major:"; then echo "major"; return; fi
+            if echo "$msg" | grep -qiE "^minor:"; then echo "minor"; return; fi
+            if echo "$msg" | grep -qiE "^patch:"; then echo "patch"; return; fi
+            if echo "$msg" | grep -qiE "^bump:[[:space:]]*(major|breaking)"; then echo "major"; return; fi
+            if echo "$msg" | grep -qiE "^bump:[[:space:]]*(minor|feature|feat)"; then echo "minor"; return; fi
+            if echo "$msg" | grep -qiE "^bump:[[:space:]]*(patch|fix)"; then echo "patch"; return; fi
+            if echo "$msg" | grep -qiE "^release(\(major\))?:"; then echo "major"; return; fi
+            if echo "$msg" | grep -qiE "^release\(minor\):"; then echo "minor"; return; fi
+            if echo "$msg" | grep -qiE "^release(\(patch\))?:"; then echo "patch"; return; fi
+            if echo "$msg" | grep -qiE "\[release:(major|breaking)\]"; then echo "major"; return; fi
+            if echo "$msg" | grep -qiE "\[release:(minor|feature|feat)\]"; then echo "minor"; return; fi
+            if echo "$msg" | grep -qiE "\[release(:(patch|fix))?\]"; then echo "patch"; return; fi
+            echo "skip"
+          }
+
           BUMP=""
           CHANGELOG=""
-          SKIP_ONLY=true   # tracks if all commits are non-releasable
+          SKIP_ONLY=true
 
           while IFS= read -r msg; do
-            # Skip empty lines
             [ -z "$msg" ] && continue
-
-            # BREAKING CHANGE → major
-            if echo "$msg" | grep -qiE "(BREAKING[[:space:]]CHANGE|^[a-z]+(\(.+\))?!:)"; then
-              BUMP="major"
-              CHANGELOG="${CHANGELOG}• ${msg}\n"
-              SKIP_ONLY=false
-              continue
-            fi
-
-            # feat → minor (if not already major)
-            if echo "$msg" | grep -qiE "^feat(\(.+\))?:"; then
-              [ "$BUMP" != "major" ] && BUMP="minor"
-              CHANGELOG="${CHANGELOG}• ${msg}\n"
-              SKIP_ONLY=false
-              continue
-            fi
-
-            # fix / perf / refactor → patch (if not already major/minor)
-            if echo "$msg" | grep -qiE "^(fix|perf|refactor)(\(.+\))?:"; then
-              [ "$BUMP" != "major" ] && [ "$BUMP" != "minor" ] && BUMP="patch"
-              CHANGELOG="${CHANGELOG}• ${msg}\n"
-              SKIP_ONLY=false
-              continue
-            fi
-
-            # chore / docs / ci / style / test / build → skip (no release)
-            # These are intentionally not added to changelog or bump
+            RESULT=$(classify_commit "$msg")
+            case $RESULT in
+              major) BUMP="major"; CHANGELOG="${CHANGELOG}* ${msg}\n"; SKIP_ONLY=false ;;
+              minor) [ "$BUMP" != "major" ] && BUMP="minor"; CHANGELOG="${CHANGELOG}* ${msg}\n"; SKIP_ONLY=false ;;
+              patch) [ "$BUMP" != "major" ] && [ "$BUMP" != "minor" ] && BUMP="patch"; CHANGELOG="${CHANGELOG}* ${msg}\n"; SKIP_ONLY=false ;;
+            esac
           done <<< "$COMMITS"
 
-          # ── Handle force_bump override from manual dispatch ────────────────
           FORCE="${{ github.event.inputs.force_bump }}"
           if [ -n "$FORCE" ]; then
-            echo "Force bump override: $FORCE"
             BUMP="$FORCE"
             SKIP_ONLY=false
+            CHANGELOG="Manually triggered ($FORCE bump)\n"
           fi
 
-          # ── Skip if nothing releasable ─────────────────────────────────────
           if [ "$SKIP_ONLY" = "true" ] || [ -z "$BUMP" ]; then
-            echo "No releasable commits found (only chore/docs/ci/style/test) — skipping release"
+            echo "No releasable commits -- skipping"
             echo "should_release=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # ── Calculate new version ──────────────────────────────────────────
           case $BUMP in
-            major)
-              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor)
-              MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch)
-              PATCH=$((PATCH + 1)) ;;
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
           esac
 
           NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "New tag: $NEW_TAG ($BUMP bump)"
 
-          echo ""
-          echo "Bump type : $BUMP"
-          echo "Old tag   : $LATEST_TAG"
-          echo "New tag   : $NEW_TAG"
-          echo ""
-          echo "Releasable commits:"
-          printf "$CHANGELOG"
-
-          # ── Push new tag ───────────────────────────────────────────────────
           git tag "$NEW_TAG"
           git push origin "$NEW_TAG"
-          echo "Tag $NEW_TAG pushed"
 
-          # ── Write outputs ──────────────────────────────────────────────────
-          # Escape newlines for GitHub Actions output
           CHANGELOG_ESCAPED="${CHANGELOG//$'\n'/'%0A'}"
-
           echo "should_release=true"          >> $GITHUB_OUTPUT
           echo "new_tag=$NEW_TAG"             >> $GITHUB_OUTPUT
           echo "bump_type=$BUMP"              >> $GITHUB_OUTPUT
           echo "changelog=$CHANGELOG_ESCAPED" >> $GITHUB_OUTPUT
 
   # ============================================================
-  # JOB 2 — BUILD & PUBLISH RELEASE
-  # Only runs when job 1 determines should_release=true
+  # JOB 2 -- BUILD & PACKAGE RELEASE
   # ============================================================
   release:
     runs-on: ubuntu-latest
     needs: tag
     if: needs.tag.outputs.should_release == 'true'
-    name: Build and Release ${{ needs.tag.outputs.new_tag }}
+    name: Build and Release
     environment: production
 
     steps:
-      # ===============================
-      # CHECKOUT at the new tag
-      # ===============================
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.tag.outputs.new_tag }}
 
-      # ===============================
-      # GO SETUP
-      # ===============================
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
       - run: go version
 
-      # ===============================
-      # CONFIGURE PRIVATE PACKAGES
-      # ===============================
-      - name: Configure Go to use private packages
-        run: |
-          echo "GOPRIVATE=${{ env.GO_PRIVATE }}" >> $GITHUB_ENV
-          git config --global url."https://${{ secrets.GH_ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-        env:
-          GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
-
-      # ===============================
-      # BUILD WINDOWS BINARIES
-      # ===============================
-      - name: Build for Windows (amd64)
+      # ── Build watcher.exe for Windows ──────────────────────────────────────
+      - name: Build watcher.exe (Windows amd64)
         run: |
           mkdir -p dist
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
             -ldflags="-X main.Version=${{ needs.tag.outputs.new_tag }}" \
-            -o dist/${{ env.WEB_BINARY }} \
-            ${{ env.WEB_ENTRY }}
+            -o dist/${{ env.WATCHER_BINARY }} \
+            ${{ env.WATCHER_ENTRY }}
+          echo "Built: $(ls -lh dist/${{ env.WATCHER_BINARY }})"
 
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
-            -ldflags="-X main.Version=${{ needs.tag.outputs.new_tag }}" \
-            -o dist/${{ env.WORKER_BINARY }} \
-            ${{ env.WORKER_ENTRY }}
-
-          echo "Built:"
-          ls -lh dist/
-
-      # ===============================
-      # PACKAGE AS ZIP
-      # Binaries are zipped flat (no subdirectory) so the watcher
-      # finds them directly at current/web.exe after extraction
-      # ===============================
-      - name: Package release zip
+      # ── Assemble release package ────────────────────────────────────────────
+      # The zip contains everything the user needs to bootstrap a server:
+      #   watcher.exe             -- the agent binary
+      #   shell/                  -- PowerShell scripts
+      #     install-watcher.ps1   -- registers watcher as a Windows service
+      #   config.example.json     -- example config (copy to config.json and edit)
+      #   INSTALL.md              -- step-by-step install guide
+      - name: Assemble release package
         id: zip
         run: |
           ZIP_NAME="${{ env.APP_NAME }}-${{ needs.tag.outputs.new_tag }}.zip"
-          cd dist && zip -j "../${ZIP_NAME}" ./* && cd ..
-          echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
-          echo "Packaged: ${ZIP_NAME} ($(du -sh ${ZIP_NAME} | cut -f1))"
+          STAGING="staging"
 
-      # ===============================
-      # GENERATE version.json
-      # Must match VersionMetadata struct in watcher/internal/github.go
-      # ===============================
+          mkdir -p "$STAGING/shell"
+
+          cp dist/${{ env.WATCHER_BINARY }} "$STAGING/"
+          cp shell/install-watcher.ps1      "$STAGING/shell/"
+          cp config.example.json            "$STAGING/"
+          cp INSTALL.md                     "$STAGING/"
+
+          cd "$STAGING" && zip -r "../${ZIP_NAME}" . && cd ..
+
+          echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
+          echo "Release package contents:"
+          unzip -l "${ZIP_NAME}"
+
+      # ── Generate version.json ───────────────────────────────────────────────
+      # Allows a meta-watcher to auto-update the watcher itself in the future
       - name: Generate version.json
         run: |
           VERSION="${{ needs.tag.outputs.new_tag }}"
           ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
           REPO="${{ github.repository }}"
           ARTIFACT_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ZIP_NAME}"
-          PUBLISHED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           cat > version.json << EOF
           {
@@ -282,54 +224,48 @@ jobs:
                 "version": "${VERSION}",
                 "artifact": "${ZIP_NAME}",
                 "artifact_url": "${ARTIFACT_URL}",
-                "published_at": "${PUBLISHED_AT}"
+                "published_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
               }
             }
           }
           EOF
-
-          echo "version.json:"
           cat version.json
 
-      # ===============================
-      # CREATE GITHUB RELEASE
-      # ===============================
+      # ── Create GitHub Release ───────────────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag.outputs.new_tag }}
-          name: "${{ env.APP_NAME }} ${{ needs.tag.outputs.new_tag }}"
+          name: "Watcher ${{ needs.tag.outputs.new_tag }}"
           body: |
             ## What's changed (${{ needs.tag.outputs.bump_type }} bump)
 
             ${{ needs.tag.outputs.changelog }}
 
             ---
-            *Deployed automatically by the watcher agent within `check_interval_sec` seconds.*
+
+            ## Installation
+
+            1. Download `${{ steps.zip.outputs.zip_name }}`
+            2. Extract to `D:\apps\watcher\` on your Windows server
+            3. Edit `config.json` with your settings
+            4. Create `.env` files for your services
+            5. Run `shell\install-watcher.ps1` as Administrator
+
+            See `INSTALL.md` inside the zip for the full guide.
           files: |
             ${{ steps.zip.outputs.zip_name }}
             version.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ===============================
-      # SUMMARY
-      # ===============================
-      - name: Print release summary
+      # ── Summary ─────────────────────────────────────────────────────────────
+      - name: Print summary
         run: |
           REPO="${{ github.repository }}"
           VERSION="${{ needs.tag.outputs.new_tag }}"
           ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
-
           echo ""
-          echo "========================================"
-          echo " Released: $VERSION (${{ needs.tag.outputs.bump_type }} bump)"
-          echo "========================================"
+          echo "Released: $VERSION (${{ needs.tag.outputs.bump_type }} bump)"
+          echo "Download: https://github.com/${REPO}/releases/download/${VERSION}/${ZIP_NAME}"
           echo ""
-          echo "Watcher metadata URL (use in config.json):"
-          echo "  https://github.com/${REPO}/releases/latest/download/version.json"
-          echo ""
-          echo "Direct artifact URL:"
-          echo "  https://github.com/${REPO}/releases/download/${VERSION}/${ZIP_NAME}"
-          echo ""
-          echo "The watcher will pick this up within check_interval_sec seconds."
