@@ -3,49 +3,81 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/fanboykun/watcher/internal"
+	"github.com/fanboykun/watcher/internal/agent"
+	"github.com/fanboykun/watcher/internal/api"
+	"github.com/fanboykun/watcher/internal/config"
+	"github.com/fanboykun/watcher/internal/database"
 )
 
+var Version = "dev"
+
 func main() {
-	configPath := flag.String("config", "config.json", "path to config.json")
+	envPath := flag.String("config", ".env", "path to .env config file")
 	flag.Parse()
 
-	log := internal.NewLogger("agent")
-	log.Info("watcher agent starting", "config", *configPath)
+	log := agent.NewLogger("agent")
+	log.Info("watcher agent starting", "version", Version, "config", *envPath)
 
-	cfg, err := internal.LoadConfig(*configPath)
+	cfg, err := config.LoadConfig(*envPath)
 	if err != nil {
 		log.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
 
 	// Switch to file logger now that we have log dir
-	log, err = internal.NewFileLogger("agent", cfg.LogDir)
+	log, err = agent.NewFileLogger("agent", cfg.LogDir)
 	if err != nil {
-		log = internal.NewLogger("agent")
+		log = agent.NewLogger("agent")
 		log.Warn("could not open log file, using stdout only", "error", err)
 	}
 
 	log.Info("config loaded",
 		"environment", cfg.Environment,
-		"watchers", len(cfg.Watchers),
+		"db_path", cfg.DBPath,
+		"api_port", cfg.APIPort,
 	)
-	for _, w := range cfg.Watchers {
-		log.Info("watcher registered",
-			"name", w.Name,
-			"service_name", w.ServiceName,
-			"check_interval_sec", w.CheckIntervalSec,
-			"services", len(w.Services),
-		)
+
+	// Initialize database
+	db, err := database.NewDB(cfg.DBPath)
+	if err != nil {
+		log.Error("failed to open database", "error", err)
+		os.Exit(1)
 	}
+	log.Info("database ready", "path", cfg.DBPath)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	agent := internal.NewAgent(cfg, log)
-	agent.Run(ctx) // blocks until ctx cancelled — one goroutine per watcher
+	// Channel for API → Agent immediate check triggers
+	checkTrigger := make(chan uint, 10)
+
+	// Start API server in background
+	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, checkTrigger)
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%s", cfg.APIPort),
+		Handler: router,
+	}
+
+	go func() {
+		log.Info("API server starting", "port", cfg.APIPort)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("API server error", "error", err)
+		}
+	}()
+
+	// Start watcher agent (blocks until ctx cancelled)
+	a := agent.NewAgent(db, cfg, log, checkTrigger)
+	a.Run(ctx)
+
+	// Graceful shutdown of API server
+	log.Info("shutting down API server")
+	if err := srv.Shutdown(context.Background()); err != nil {
+		log.Warn("API server shutdown error", "error", err)
+	}
 }
