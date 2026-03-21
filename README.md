@@ -1,5 +1,9 @@
 # Watcher Agent
 
+[![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8?logo=go)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
+
 A pull-based deployment agent for Go services on private Windows servers with no inbound network access.
 
 The watcher runs as a Windows service, polls GitHub Releases on a configurable interval, and deploys new versions automatically — no SSH, no VPN, no push access required. Includes a built-in web dashboard for managing watchers, services, and viewing deploy history.
@@ -9,16 +13,16 @@ The watcher runs as a Windows service, polls GitHub Releases on a configurable i
 ## Table of contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [How it works](#how-it-works)
 - [Requirements for watched services](#requirements-for-watched-services)
 - [Project structure](#project-structure)
 - [Installation](#installation)
 - [Dashboard](#dashboard)
-- [Development](#development)
-- [Triggering a release](#triggering-a-release)
 - [Rollback](#rollback)
 - [Disk layout](#disk-layout)
 - [Configuration reference](#configuration-reference)
+- [Development & Contributing](#development--contributing)
 
 ---
 
@@ -33,6 +37,18 @@ The watcher runs as a Windows service, polls GitHub Releases on a configurable i
 - **SQLite database** — stores watchers, services, deploy history, and health events
 - **Single binary** — one `.exe` file contains the agent, API server, and dashboard
 - **Zero-downtime swap** — uses NTFS junctions (`mklink /J`) for atomic directory switching
+
+---
+
+## Screenshots
+
+> **TODO:** Add some beautiful screenshots of the web dashboard here!
+>
+> *(e.g., `![Dashboard View](assets/dashboard.png)`)*
+>
+> *(e.g., `![Watcher Details](assets/watcher-details.png)`)*
+>
+> *(e.g., `![Service Deployments](assets/service-deploys.png)`)*
 
 ---
 
@@ -220,7 +236,7 @@ All dashboard operations are available via the REST API at `/api/*`:
 
 ---
 
-## Development
+## Development & Contributing
 
 ### Prerequisites
 
@@ -255,13 +271,11 @@ make info          # Print Go environment
 make help          # Show all targets
 ```
 
----
-
-## Triggering a release
+### Releasing the Watcher (Internal)
 
 The watcher uses **auto-tagging via semantic versioning**. Push a commit to `main` with a recognized pattern:
 
-### Commit patterns
+#### Commit patterns
 
 | Pattern                                 | Bump     |
 | --------------------------------------- | -------- |
@@ -275,11 +289,11 @@ The watcher uses **auto-tagging via semantic versioning**. Push a commit to `mai
 
 **Fallback**: If only skip-pattern commits exist but important files changed (code, workflows, config), the workflow defaults to a **patch** bump.
 
-### Manual trigger
+#### Manual trigger
 
 **Actions → Release Watcher → Run workflow** → set `force_bump` to `patch`, `minor`, or `major`.
 
-### Skip release
+#### Skip release
 
 Add `[skip ci]` anywhere in a commit message.
 
