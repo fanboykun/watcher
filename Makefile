@@ -54,7 +54,7 @@ dev:
 	@echo "  ▸ API at http://localhost:$${API_PORT:-8080}"
 	@echo "  ▸ Run 'cd web && bun run dev' in another terminal for SPA dev server"
 	@echo ""
-	CGO_ENABLED=1 air -c .air.toml
+	air -c .air.toml
 
 ## build-web: build the SvelteKit SPA into web/build/
 build-web:

@@ -5,8 +5,8 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  # Build command — compile for Linux (dev on WSL), with CGO for SQLite
-  cmd = "CGO_ENABLED=1 go build -ldflags '-X main.Version=dev' -o ./tmp/watcher ./cmd/watcher"
+  # Build command — compile for local dev
+  cmd = "go build -ldflags '-X main.Version=dev' -o ./tmp/watcher ./cmd/watcher"
   bin = "./tmp/watcher"
   args_bin = ["-config", ".env"]
 
