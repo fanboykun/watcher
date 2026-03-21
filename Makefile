@@ -21,7 +21,8 @@ MODULE      := $(shell $(GO) list -m 2>/dev/null)
 CMD_PATH    := ./cmd/watcher
 BINARY_NAME := watcher.exe
 BIN_DIR     := bin
-TEST_PKG    := ./internal/
+TEST_PKG    := ./internal/...
+WEB_DIR     := web
 
 # ── Build config ──────────────────────────────────────────────
 GOOS        := windows
@@ -40,7 +41,7 @@ OUT := $(BIN_DIR)/$(BINARY_NAME)
 # Targets
 # ==============================================================
 
-.PHONY: all build package test test-github test-verbose run dev clean info help
+.PHONY: all build build-web package test test-github test-verbose run dev clean info help
 
 ## all: run tests then build
 all: test build
@@ -51,11 +52,23 @@ dev:
 	@echo ""
 	@echo "  ▸ Starting dev server with hot reload..."
 	@echo "  ▸ API at http://localhost:$${API_PORT:-8080}"
+	@echo "  ▸ Run 'cd web && bun run dev' in another terminal for SPA dev server"
 	@echo ""
 	CGO_ENABLED=1 air -c .air.toml
 
-## build: cross-compile watcher.exe for Windows (amd64)
-build:
+## build-web: build the SvelteKit SPA into web/build/
+build-web:
+	@echo ""
+	@echo ">>> Building SvelteKit SPA"
+	@echo "    Dir : $(WEB_DIR)"
+	@echo ""
+	cd $(WEB_DIR) && bun install --frozen-lockfile && bun run build
+	@echo ""
+	@echo "    OK: $(WEB_DIR)/build/"
+	@echo ""
+
+## build: build SPA + cross-compile watcher.exe for Windows (amd64)
+build: build-web
 	@echo ""
 	@echo ">>> Building $(OUT)"
 	@echo "    Go      : $(GO)"
@@ -70,7 +83,7 @@ build:
 		-o $(OUT) \
 		$(CMD_PATH)
 	@echo ""
-	@echo "    OK: $(OUT)"
+	@echo "    OK: $(OUT) (SPA embedded)"
 	@echo ""
 
 ## package: build watcher.exe and zip with shell/install-watcher.ps1 + config.example.json + INSTALL.md
@@ -103,7 +116,7 @@ test-github:
 	@echo ""
 	@echo ">>> Running github.go tests"
 	@echo ""
-	$(GO) test $(TEST_PKG) -count=1 -run "TestParse|TestFetchMetadata|TestDownloadArtifact|TestNewRequest" -v
+	$(GO) test ./internal/agent/ -count=1 -run "TestParse|TestFetchMetadata|TestDownloadArtifact|TestNewRequest" -v
 
 ## test-verbose: run all tests with verbose output
 test-verbose:
@@ -122,9 +135,11 @@ run:
 
 ## clean: remove build artifacts
 clean:
-	@echo ">>> Cleaning $(BIN_DIR)/"
+	@echo ">>> Cleaning $(BIN_DIR)/ and $(WEB_DIR)/build/"
 	@rm -rf $(BIN_DIR)
+	@rm -rf $(WEB_DIR)/build
 	@echo "    Done"
+
 ## info: print resolved Go environment
 info:
 	@echo ""
