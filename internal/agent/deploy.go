@@ -29,13 +29,31 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 
 	d.log.Info("deploying", "version", version, "release_dir", releaseDir)
 
-	if err := d.extractZip(zipPath, releaseDir); err != nil {
+	// Extract to a temporary directory first to avoid file-in-use errors during redeploys
+	tempReleaseDir := releaseDir + fmt.Sprintf("-%d", time.Now().UnixNano())
+
+	if err := d.extractZip(zipPath, tempReleaseDir); err != nil {
+		os.RemoveAll(tempReleaseDir)
 		return fmt.Errorf("extract zip: %w", err)
 	}
 
 	d.log.Info("stopping services")
 	for _, svc := range d.wcfg.Services {
 		d.stopService(svc.WindowsServiceName)
+	}
+
+	// Now that services are stopped, safely remove the old releaseDir if it exists (for redeploys)
+	if err := os.RemoveAll(releaseDir); err != nil {
+		d.log.Warn("failed to remove existing release dir", "dir", releaseDir, "error", err)
+	}
+
+	// Rename temp directory to final release directory
+	if err := os.Rename(tempReleaseDir, releaseDir); err != nil {
+		d.log.Warn("rename failed, falling back to copy", "error", err)
+		if err := copyDir(tempReleaseDir, releaseDir); err != nil {
+			return fmt.Errorf("rename fallback copy: %w", err)
+		}
+		os.RemoveAll(tempReleaseDir)
 	}
 
 	if err := d.swapCurrent(releaseDir, currentDir); err != nil {
