@@ -42,13 +42,11 @@ The watcher runs as a Windows service, polls GitHub Releases on a configurable i
 
 ## Screenshots
 
-> **TODO:** Add some beautiful screenshots of the web dashboard here!
->
-> *(e.g., `![Dashboard View](assets/dashboard.png)`)*
->
-> *(e.g., `![Watcher Details](assets/watcher-details.png)`)*
->
-> *(e.g., `![Service Deployments](assets/service-deploys.png)`)*
+![Dashboard View](assets/dashboard.png)
+
+![Watcher Details](assets/watcher.png)
+
+![Service Deployments](assets/service.png)
 
 ---
 
