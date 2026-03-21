@@ -277,10 +277,16 @@ func (d *Deployer) stopService(name string) {
 
 func (d *Deployer) startService(name string) error {
 	d.log.Info("starting service", "name", name)
-	out, err := exec.Command(d.nssmPath, "start", name).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("nssm start %s: %w (output: %s)", name, err, string(out))
+	outBytes, err := exec.Command(d.nssmPath, "start", name).CombinedOutput()
+	out := string(outBytes)
+	
+	if err != nil && !strings.Contains(out, "SERVICE_START_PENDING") && !strings.Contains(out, "SERVICE_RUNNING") {
+		return fmt.Errorf("nssm start %s: %w (output: %s)", name, err, out)
 	}
+	if err != nil {
+		d.log.Info("service start pending or already running", "name", name, "output", out)
+	}
+
 	time.Sleep(2 * time.Second)
 	return nil
 }

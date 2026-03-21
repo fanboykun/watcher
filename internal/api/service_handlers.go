@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fanboykun/watcher/internal/database"
@@ -55,14 +56,15 @@ func (h *Handler) StartService(c *gin.Context) {
 		return
 	}
 
-	out, errExec := exec.Command(h.nssmPath, "start", svc.WindowsServiceName).CombinedOutput()
-	if errExec != nil {
+	outBytes, errExec := exec.Command(h.nssmPath, "start", svc.WindowsServiceName).CombinedOutput()
+	out := string(outBytes)
+	if errExec != nil && !strings.Contains(out, "SERVICE_START_PENDING") && !strings.Contains(out, "SERVICE_RUNNING") {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: fmt.Sprintf("nssm start %s: %s (output: %s)", svc.WindowsServiceName, errExec, string(out)),
+			Error: fmt.Sprintf("nssm start %s: %s (output: %s)", svc.WindowsServiceName, errExec, out),
 		})
 		return
 	}
-	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s started", svc.WindowsServiceName)})
+	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s started (or pending)", svc.WindowsServiceName)})
 }
 
 func (h *Handler) StopService(c *gin.Context) {
@@ -98,14 +100,15 @@ func (h *Handler) RestartService(c *gin.Context) {
 	time.Sleep(2 * time.Second)
 
 	// Start
-	out, errExec := exec.Command(h.nssmPath, "start", svc.WindowsServiceName).CombinedOutput()
-	if errExec != nil {
+	outBytes, errExec := exec.Command(h.nssmPath, "start", svc.WindowsServiceName).CombinedOutput()
+	out := string(outBytes)
+	if errExec != nil && !strings.Contains(out, "SERVICE_START_PENDING") && !strings.Contains(out, "SERVICE_RUNNING") {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: fmt.Sprintf("nssm start %s after restart: %s (output: %s)", svc.WindowsServiceName, errExec, string(out)),
+			Error: fmt.Sprintf("nssm start %s after restart: %s (output: %s)", svc.WindowsServiceName, errExec, out),
 		})
 		return
 	}
-	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s restarted", svc.WindowsServiceName)})
+	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s restarted (or pending)", svc.WindowsServiceName)})
 }
 
 // ── Health status ─────────────────────────────────────────────────────
