@@ -127,6 +127,17 @@
 		}
 	}
 
+	async function triggerRedeploy() {
+		if (!confirm(`Are you sure you want to force a redeployment for "${watcher?.name}"? This will restart its services.`)) return;
+		try {
+			const res = await api.redeployWatcher(id);
+			triggerMsg = res.message;
+			setTimeout(() => (triggerMsg = ''), 3000);
+		} catch (e) {
+			triggerMsg = e instanceof Error ? e.message : 'Redeploy failed';
+		}
+	}
+
 	function statusColor(s: string) {
 		switch (s) {
 			case 'healthy':
@@ -203,6 +214,9 @@
 			</Button.Root>
 			<Button.Root variant="outline" size="sm" onclick={triggerCheck}>
 				<Zap class="mr-2 h-4 w-4" /> Check Now
+			</Button.Root>
+			<Button.Root variant="outline" size="sm" class="text-orange-500 hover:bg-orange-500/10 hover:text-orange-600 border-orange-500/30" onclick={triggerRedeploy}>
+				<RotateCcw class="mr-2 h-4 w-4" /> Redeploy
 			</Button.Root>
 		{/if}
 	</div>

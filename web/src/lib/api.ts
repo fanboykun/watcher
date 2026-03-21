@@ -99,6 +99,7 @@ export const api = {
 	updateWatcher: (id: number, data: Partial<Watcher>) => request<Watcher>(`/watchers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 	deleteWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}`, { method: 'DELETE' }),
 	triggerCheck: (id: number) => request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
+	redeployWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}/redeploy`, { method: 'POST' }),
 	watcherDeploys: (id: number) => request<DeployLog[]>(`/watchers/${id}/deploys`),
 
 	// Services (flat)
