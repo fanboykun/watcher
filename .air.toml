@@ -14,7 +14,7 @@ tmp_dir = "tmp"
   include_ext = ["go", "env"]
 
   # Exclude directories
-  exclude_dir = ["tmp", "bin", "vendor", "node_modules", ".git", ".github", ".agent"]
+  exclude_dir = ["tmp", "bin", "vendor", "node_modules", "web", ".git", ".github", ".agent"]
 
   # Exclude files
   exclude_file = []
