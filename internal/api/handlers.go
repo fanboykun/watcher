@@ -312,6 +312,33 @@ func (h *Handler) DeleteService(c *gin.Context) {
 	c.JSON(http.StatusOK, MessageResponse{Message: "service deleted"})
 }
 
+// RedeployWatcher clears the current version and triggers an immediate check to force a fresh deployment.
+func (h *Handler) RedeployWatcher(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	// Clear current_version and last_error to force the agent to see a mismatch
+	if err := h.db.Model(watcher).Select("current_version", "last_error").Updates(map[string]interface{}{
+		"current_version": "",
+		"last_error":      "",
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	h.triggerSync()
+
+	// Trigger immediate check
+	select {
+	case h.checkTrigger <- watcher.ID:
+	default:
+	}
+
+	c.JSON(http.StatusAccepted, MessageResponse{Message: "redeploy triggered"})
+}
+
 // ── Deploy Logs ───────────────────────────────────────────────
 
 // ListDeployLogs returns deploy history for a watcher.
