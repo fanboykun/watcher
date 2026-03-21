@@ -4,14 +4,14 @@ name: Release
 # CONFIGURATION — edit this block to match your app repo
 # ==============================================================
 env:
-  # Must match "service_name" in watcher's config.json
+  # Must match "Service Name" in watcher's dashboard
   APP_NAME: admin-be
 
   # Go build
   GO_VERSION: "1.25"
   GO_PRIVATE: github.com/pecut-ai/*
 
-  # Binary names must match "binary_name" in watcher's config.json
+  # Binary names must match "Binary Name" in watcher's dashboard
   WEB_BINARY: web.exe
   WORKER_BINARY: worker.exe
   WEB_ENTRY: cmd/api/main.go
@@ -326,7 +326,7 @@ jobs:
           echo " Released: $VERSION (${{ needs.tag.outputs.bump_type }} bump)"
           echo "========================================"
           echo ""
-          echo "Watcher metadata URL (use in config.json):"
+          echo "Watcher metadata URL (use in dashboard):"
           echo "  https://github.com/${REPO}/releases/latest/download/version.json"
           echo ""
           echo "Direct artifact URL:"

@@ -86,14 +86,14 @@ build: build-web
 	@echo "    OK: $(OUT) (SPA embedded)"
 	@echo ""
 
-## package: build watcher.exe and zip with shell/install-watcher.ps1 + config.example.json + INSTALL.md
+## package: build watcher.exe and zip with shell/install-watcher.ps1 + .env.example + INSTALL.md
 package: build
 	@echo ""
 	@echo ">>> Packaging release zip"
 	@mkdir -p $(BIN_DIR)/staging/shell
 	@cp $(OUT)                       $(BIN_DIR)/staging/
 	@cp shell/install-watcher.ps1    $(BIN_DIR)/staging/shell/
-	@cp config.example.json          $(BIN_DIR)/staging/
+	@cp .env.example                 $(BIN_DIR)/staging/
 	@cp INSTALL.md                   $(BIN_DIR)/staging/
 	@cd $(BIN_DIR)/staging && zip -r ../$(APP_NAME)-$(VERSION).zip . && cd ../..
 	@echo ""
@@ -125,13 +125,13 @@ test-verbose:
 	@echo ""
 	$(GO) test $(TEST_PKG) -count=1 -v
 
-## run: run the watcher locally (uses config.json in current dir)
+## run: run the watcher locally (uses .env in current dir)
 run:
 	@echo ""
 	@echo ">>> Running watcher (native OS, not Windows)"
-	@echo "    Config : config.json"
+	@echo "    Config : .env"
 	@echo ""
-	$(GO) run $(CMD_PATH) -config config.json
+	$(GO) run $(CMD_PATH) -config .env
 
 ## clean: remove build artifacts
 clean:
