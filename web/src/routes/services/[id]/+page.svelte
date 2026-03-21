@@ -1,0 +1,379 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { page } from '$app/state';
+	import { api, type Service, type Watcher, type HealthEvent, type DeployLog } from '$lib/api';
+	import * as Card from '$lib/components/ui/card';
+	import * as Table from '$lib/components/ui/table';
+	import * as Tabs from '$lib/components/ui/tabs';
+	import * as Button from '$lib/components/ui/button';
+	import {
+		ArrowLeft,
+		Play,
+		Square,
+		RefreshCw,
+		Heart,
+		AlertCircle,
+		CheckCircle2,
+		XCircle,
+		Activity,
+		FileText
+	} from '@lucide/svelte';
+
+	let service = $state<Service | null>(null);
+	let watcher = $state<Watcher | null>(null);
+	let healthHistory = $state<HealthEvent[]>([]);
+	let deploys = $state<DeployLog[]>([]);
+	let logLines = $state<string[]>([]);
+	let error = $state('');
+	let actionMsg = $state('');
+	let logError = $state('');
+	let logType = $state<'out' | 'err'>('out');
+	let logCount = $state(100);
+
+	const id = Number(page.params.id);
+
+	onMount(async () => {
+		try {
+			const detail = await api.getService(id);
+			service = detail.service;
+			watcher = detail.watcher;
+			healthHistory = await api.healthHistory(id, 50);
+			deploys = await api.serviceDeploys(id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load service';
+		}
+		loadLogs();
+	});
+
+	async function loadLogs() {
+		logError = '';
+		try {
+			const res = await api.serviceLogs(id, logCount, logType);
+			logLines = res.lines ?? [];
+		} catch (e) {
+			logError = e instanceof Error ? e.message : 'Failed to load logs';
+			logLines = [];
+		}
+	}
+
+	async function runAction(fn: () => Promise<{ message: string }>) {
+		try {
+			const res = await fn();
+			actionMsg = res.message;
+			setTimeout(() => (actionMsg = ''), 4000);
+		} catch (e) {
+			actionMsg = e instanceof Error ? e.message : 'Action failed';
+			setTimeout(() => (actionMsg = ''), 5000);
+		}
+	}
+
+	async function checkHealth() {
+		try {
+			const h = await api.serviceHealth(id);
+			actionMsg = `Health: ${h.status} (HTTP ${h.http_status})${h.error ? ' — ' + h.error : ''}`;
+			healthHistory = await api.healthHistory(id, 50);
+			setTimeout(() => (actionMsg = ''), 5000);
+		} catch (e) {
+			actionMsg = e instanceof Error ? e.message : 'Health check failed';
+		}
+	}
+
+	function healthColor(s: string) {
+		switch (s) {
+			case 'healthy':
+				return 'text-emerald-400';
+			case 'unhealthy':
+				return 'text-red-400';
+			default:
+				return 'text-amber-400';
+		}
+	}
+
+	function healthBadgeColor(s: string) {
+		switch (s) {
+			case 'healthy':
+				return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
+			case 'unhealthy':
+				return 'bg-red-500/15 text-red-400 border-red-500/30';
+			default:
+				return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
+		}
+	}
+
+	function statusColor(s: string) {
+		switch (s) {
+			case 'healthy':
+				return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
+			case 'deploying':
+				return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
+			case 'failed':
+				return 'bg-red-500/15 text-red-400 border-red-500/30';
+			default:
+				return 'bg-muted text-muted-foreground border-border';
+		}
+	}
+
+	function formatDate(ts: string | null): string {
+		if (!ts) return '—';
+		return new Date(ts).toLocaleString();
+	}
+
+	function formatDuration(ms: number): string {
+		if (!ms) return '—';
+		if (ms < 1000) return `${ms}ms`;
+		return `${(ms / 1000).toFixed(1)}s`;
+	}
+</script>
+
+<div class="space-y-6">
+	<!-- Header -->
+	<div class="flex items-center gap-4">
+		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+		<a href="/services">
+			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
+				<ArrowLeft class="h-4 w-4" />
+			</Button.Root>
+		</a>
+		<div class="flex-1">
+			<h1 class="text-2xl font-bold tracking-tight">
+				{service?.windows_service_name ?? 'Loading...'}
+			</h1>
+			{#if watcher}
+				<p class="text-sm text-muted-foreground">
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+					Watcher: <a href="/watchers/{watcher.id}" class="hover:underline">{watcher.name}</a>
+				</p>
+			{/if}
+		</div>
+		{#if service}
+			<div class="flex items-center gap-2">
+				<Button.Root
+					variant="outline"
+					size="sm"
+					class="text-emerald-400"
+					onclick={() => runAction(() => api.startService(id))}
+				>
+					<Play class="mr-1.5 h-4 w-4" /> Start
+				</Button.Root>
+				<Button.Root
+					variant="outline"
+					size="sm"
+					class="text-red-400"
+					onclick={() => runAction(() => api.stopService(id))}
+				>
+					<Square class="mr-1.5 h-4 w-4" /> Stop
+				</Button.Root>
+				<Button.Root
+					variant="outline"
+					size="sm"
+					class="text-amber-400"
+					onclick={() => runAction(() => api.restartService(id))}
+				>
+					<RefreshCw class="mr-1.5 h-4 w-4" /> Restart
+				</Button.Root>
+				<Button.Root variant="outline" size="sm" class="text-blue-400" onclick={checkHealth}>
+					<Heart class="mr-1.5 h-4 w-4" /> Health
+				</Button.Root>
+			</div>
+		{/if}
+	</div>
+
+	{#if error}
+		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+			<AlertCircle class="mr-2 inline h-4 w-4" />
+			{error}
+		</div>
+	{/if}
+
+	{#if actionMsg}
+		<div class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400">
+			{actionMsg}
+		</div>
+	{/if}
+
+	{#if service}
+		<!-- Service Info Card -->
+		<Card.Root class="border-border bg-card">
+			<Card.Content class="grid gap-4 p-6 sm:grid-cols-4">
+				<div>
+					<p class="text-xs text-muted-foreground">Binary</p>
+					<p class="mt-1 font-mono text-sm">{service.binary_name}</p>
+				</div>
+				<div>
+					<p class="text-xs text-muted-foreground">Env File</p>
+					<p class="mt-1 font-mono text-sm">{service.env_file || '—'}</p>
+				</div>
+				<div>
+					<p class="text-xs text-muted-foreground">Health URL</p>
+					<p class="mt-1 font-mono text-sm">{service.health_check_url || '—'}</p>
+				</div>
+				<div>
+					<p class="text-xs text-muted-foreground">Install Dir</p>
+					<p class="mt-1 font-mono text-sm">{watcher?.install_dir ?? '—'}</p>
+				</div>
+			</Card.Content>
+		</Card.Root>
+
+		<Tabs.Root value="health">
+			<Tabs.List>
+				<Tabs.Trigger value="health">Health History ({healthHistory.length})</Tabs.Trigger>
+				<Tabs.Trigger value="logs">Logs</Tabs.Trigger>
+				<Tabs.Trigger value="deploys">Deploys ({deploys.length})</Tabs.Trigger>
+			</Tabs.List>
+
+			<!-- Health History -->
+			<Tabs.Content value="health" class="mt-4">
+				{#if healthHistory.length > 0}
+					<Card.Root class="border-border bg-card">
+						<Table.Root>
+							<Table.Header>
+								<Table.Row class="border-border hover:bg-transparent">
+									<Table.Head>Status</Table.Head>
+									<Table.Head>HTTP</Table.Head>
+									<Table.Head>Error</Table.Head>
+									<Table.Head>Checked At</Table.Head>
+								</Table.Row>
+							</Table.Header>
+							<Table.Body>
+								{#each healthHistory as h (h.id)}
+									<Table.Row class="border-border">
+										<Table.Cell>
+											<span
+												class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize {healthBadgeColor(
+													h.status
+												)}"
+											>
+												{#if h.status === 'healthy'}<CheckCircle2 class="h-3 w-3" />{:else}<XCircle
+														class="h-3 w-3"
+													/>{/if}
+												{h.status}
+											</span>
+										</Table.Cell>
+										<Table.Cell class="font-mono text-sm text-muted-foreground"
+											>{h.http_status || '—'}</Table.Cell
+										>
+										<Table.Cell class="max-w-[250px] truncate text-xs text-red-400"
+											>{h.error || ''}</Table.Cell
+										>
+										<Table.Cell class="text-muted-foreground">{formatDate(h.checked_at)}</Table.Cell
+										>
+									</Table.Row>
+								{/each}
+							</Table.Body>
+						</Table.Root>
+					</Card.Root>
+				{:else}
+					<Card.Root class="border-dashed border-border bg-card">
+						<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
+							<Heart class="mb-3 h-8 w-8 text-muted-foreground/40" />
+							<p class="text-sm text-muted-foreground">No health checks recorded</p>
+							<p class="mt-1 text-xs text-muted-foreground/60">Click "Health" to run a check</p>
+						</Card.Content>
+					</Card.Root>
+				{/if}
+			</Tabs.Content>
+
+			<!-- Logs -->
+			<Tabs.Content value="logs" class="mt-4">
+				<div class="mb-3 flex items-center gap-2">
+					<select
+						class="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+						bind:value={logType}
+						onchange={() => loadLogs()}
+					>
+						<option value="out">stdout</option>
+						<option value="err">stderr</option>
+					</select>
+					<select
+						class="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+						bind:value={logCount}
+						onchange={() => loadLogs()}
+					>
+						<option value={50}>50 lines</option>
+						<option value={100}>100 lines</option>
+						<option value={200}>200 lines</option>
+						<option value={500}>500 lines</option>
+					</select>
+					<Button.Root variant="outline" size="sm" onclick={loadLogs}>
+						<RefreshCw class="mr-2 h-4 w-4" /> Refresh
+					</Button.Root>
+				</div>
+
+				{#if logError}
+					<div
+						class="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-400"
+					>
+						{logError}
+					</div>
+				{/if}
+
+				<Card.Root class="border-border bg-card">
+					<Card.Content class="p-0">
+						{#if logLines.length > 0}
+							<div class="max-h-[500px] overflow-auto">
+								<pre
+									class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">{#each logLines as line, i (i)}{line}
+									{/each}</pre>
+							</div>
+						{:else if !logError}
+							<div class="flex flex-col items-center justify-center py-12 text-center">
+								<FileText class="mb-3 h-8 w-8 text-muted-foreground/40" />
+								<p class="text-sm text-muted-foreground">No log output</p>
+							</div>
+						{/if}
+					</Card.Content>
+				</Card.Root>
+			</Tabs.Content>
+
+			<!-- Deploys -->
+			<Tabs.Content value="deploys" class="mt-4">
+				{#if deploys.length > 0}
+					<Card.Root class="border-border bg-card">
+						<Table.Root>
+							<Table.Header>
+								<Table.Row class="border-border hover:bg-transparent">
+									<Table.Head>Status</Table.Head>
+									<Table.Head>Version</Table.Head>
+									<Table.Head>From</Table.Head>
+									<Table.Head>Duration</Table.Head>
+									<Table.Head>Started</Table.Head>
+								</Table.Row>
+							</Table.Header>
+							<Table.Body>
+								{#each deploys as d (d.id)}
+									<Table.Row class="border-border">
+										<Table.Cell>
+											<span
+												class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize {statusColor(
+													d.status
+												)}"
+											>
+												{d.status}
+											</span>
+										</Table.Cell>
+										<Table.Cell class="font-mono text-sm">{d.version}</Table.Cell>
+										<Table.Cell class="font-mono text-xs text-muted-foreground"
+											>{d.from_version || '—'}</Table.Cell
+										>
+										<Table.Cell class="text-muted-foreground"
+											>{formatDuration(d.duration_ms)}</Table.Cell
+										>
+										<Table.Cell class="text-muted-foreground">{formatDate(d.started_at)}</Table.Cell
+										>
+									</Table.Row>
+								{/each}
+							</Table.Body>
+						</Table.Root>
+					</Card.Root>
+				{:else}
+					<Card.Root class="border-dashed border-border bg-card">
+						<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
+							<Activity class="mb-3 h-8 w-8 text-muted-foreground/40" />
+							<p class="text-sm text-muted-foreground">No deployments</p>
+						</Card.Content>
+					</Card.Root>
+				{/if}
+			</Tabs.Content>
+		</Tabs.Root>
+	{/if}
+</div>

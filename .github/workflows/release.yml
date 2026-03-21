@@ -17,6 +17,7 @@ on:
       - ".github/workflows/**"
       - "cmd/**"
       - "internal/**"
+      - "web/**"
       - "go.mod"
       - "go.sum"
       - "shell/**"
@@ -127,10 +128,37 @@ jobs:
             CHANGELOG="Manually triggered ($FORCE bump)\n"
           fi
 
+          # ── Fallback: important files changed but no commit pattern matched ──
+          # If all commits were unrecognized (SKIP_ONLY=true) but the workflow
+          # was triggered by a change to an important file, default to patch.
+          # This covers commits like "chore: use config.example.json" that touch
+          # real deliverables but don't follow a releasable pattern.
           if [ "$SKIP_ONLY" = "true" ] || [ -z "$BUMP" ]; then
-            echo "No releasable commits -- skipping"
-            echo "should_release=false" >> $GITHUB_OUTPUT
-            exit 0
+            CHANGED=$(git diff --name-only ${LATEST_TAG}..HEAD 2>/dev/null || git diff --name-only HEAD~1..HEAD 2>/dev/null)
+            echo "Checking changed files for important content:"
+            echo "$CHANGED"
+
+            IMPORTANT=false
+            while IFS= read -r file; do
+              case "$file" in
+                .github/workflows/*|cmd/*|internal/*|web/*|go.mod|go.sum|shell/*|config.example.json|INSTALL.md|README.md)
+                  IMPORTANT=true
+                  break
+                  ;;
+              esac
+            done <<< "$CHANGED"
+
+            if [ "$IMPORTANT" = "true" ]; then
+              echo "Important files changed but no commit pattern matched -- defaulting to patch bump"
+              BUMP="patch"
+              SKIP_ONLY=false
+              CHANGELOG="${COMMITS//$'\n'/$'\n* '}\n"
+              CHANGELOG="* ${CHANGELOG}"
+            else
+              echo "No releasable commits and no important file changes -- skipping release"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
           fi
 
           case $BUMP in
@@ -172,8 +200,21 @@ jobs:
 
       - run: go version
 
+      # ── Build SvelteKit SPA ──────────────────────────────────────────────
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build SvelteKit SPA
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+          echo "SPA build output:"
+          ls -la build/
+
       # ── Build watcher.exe for Windows ──────────────────────────────────────
-      - name: Build watcher.exe (Windows amd64)
+      - name: Build watcher.exe (Windows amd64, SPA embedded)
         run: |
           mkdir -p dist
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
@@ -187,7 +228,7 @@ jobs:
       #   watcher.exe             -- the agent binary
       #   shell/                  -- PowerShell scripts
       #     install-watcher.ps1   -- registers watcher as a Windows service
-      #   config.example.json     -- example config (copy to config.json and edit)
+      #   .env.example            -- example config (copy to .env and edit)
       #   INSTALL.md              -- step-by-step install guide
       - name: Assemble release package
         id: zip
@@ -199,7 +240,7 @@ jobs:
 
           cp dist/${{ env.WATCHER_BINARY }} "$STAGING/"
           cp shell/install-watcher.ps1      "$STAGING/shell/"
-          cp config.example.json            "$STAGING/"
+          cp .env.example                   "$STAGING/"
           cp INSTALL.md                     "$STAGING/"
 
           cd "$STAGING" && zip -r "../${ZIP_NAME}" . && cd ..

@@ -1,15 +1,15 @@
 # Watcher — Installation Guide
 
-This guide covers everything needed to get the watcher agent running on a fresh Windows Server 2022.
+This guide covers everything needed to get the watcher agent running on a Windows machine.
 
 The release zip contains:
 
 ```
 watcher-vX.Y.Z.zip
-  watcher.exe               the watcher agent binary
+  watcher.exe               the watcher agent binary (API + dashboard embedded)
   shell/
-    install-watcher.ps1     bootstrap script (registers watcher as a Windows service)
-  config.example.json       example config -- copy to config.json and edit before running
+    install-watcher.ps1     bootstrap script (installs dependencies, registers service)
+  .env.example              example config — copy to .env and edit
   INSTALL.md                this file
 ```
 
@@ -17,18 +17,43 @@ watcher-vX.Y.Z.zip
 
 ## Prerequisites
 
-- Windows Server 2022
-- RDP access to the server
+- Windows 10/11 or Windows Server 2022
+- Administrator access
+- Outbound HTTPS access to `github.com`
 - A GitHub PAT with `repo` scope (for private repos) or no token needed (public repos)
-- Outbound HTTPS access to `github.com` from the server
 
 ---
 
-## Part 1 -- Prepare the Windows server
+## Quick install (automated)
 
-Run all commands in **PowerShell as Administrator**.
+The install script handles everything. Run in **PowerShell as Administrator**:
 
-### Step 1 -- Install Chocolatey
+```powershell
+# 1. Extract the release zip to D:\apps\watcher\
+# 2. Run:
+cd D:\apps\watcher
+Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1
+```
+
+The script will:
+
+1. Install **Chocolatey** (if missing)
+2. Install **NSSM** via Chocolatey (if missing)
+3. Create `D:\apps\watcher\logs\` directory
+4. Generate a default **`.env`** config file (if missing)
+5. Secure `.env` permissions (SYSTEM + Administrators only)
+6. Verify outbound HTTPS to github.com
+7. Register `app-watcher` as a Windows service via NSSM
+8. Start the service
+9. Verify the API is responding
+
+After installation, open **http://localhost:8080** to access the dashboard.
+
+---
+
+## Manual install (step by step)
+
+### Step 1 — Install Chocolatey
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -36,322 +61,168 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 ```
 
-Verify:
-
-```powershell
-choco --version
-```
-
----
-
-### Step 2 -- Install NSSM
-
-NSSM manages the watcher and your app services as Windows services:
+### Step 2 — Install NSSM
 
 ```powershell
 choco install nssm -y
 ```
 
-Verify:
+### Step 3 — Extract release
+
+Extract `watcher-vX.Y.Z.zip` to `D:\apps\watcher\`.
+
+### Step 4 — Create `.env`
 
 ```powershell
-C:\ProgramData\chocolatey\bin\nssm.exe version
+Copy-Item D:\apps\watcher\.env.example D:\apps\watcher\.env
+notepad D:\apps\watcher\.env
 ```
 
----
-
-### Step 3 -- Create base directories
-
-```powershell
-New-Item -ItemType Directory -Path "D:\apps"         -Force
-New-Item -ItemType Directory -Path "D:\apps\watcher" -Force
-```
-
----
-
-### Step 4 -- Verify outbound HTTPS
-
-The watcher polls GitHub over HTTPS. Confirm it can reach GitHub:
-
-```powershell
-Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing | Select-Object StatusCode
-```
-
-Should return `StatusCode: 200`. If not, check your firewall or proxy settings before continuing.
-
----
-
-## Part 2 -- Install the watcher
-
-### Step 1 -- Extract the release zip
-
-Extract `watcher-vX.Y.Z.zip` into `D:\apps\watcher\`. You should have:
-
-```
-D:\apps\watcher\
-  watcher.exe
-  shell\
-    install-watcher.ps1
-  config.example.json
-  INSTALL.md
-```
-
----
-
-### Step 2 -- Create `config.json` from the example
-
-```powershell
-Copy-Item D:\apps\watcher\config.example.json D:\apps\watcher\config.json
-```
-
-Then open and fill in your values:
-
-```json
-{
-  "environment": "production",
-  "github_token": "ghp_your_actual_pat_here",
-  "log_dir": "D:\\apps\\watcher\\logs",
-  "nssm_path": "C:\\ProgramData\\chocolatey\\bin\\nssm.exe",
-
-  "watchers": [
-    {
-      "name": "my-service",
-      "service_name": "my-service",
-      "metadata_url": "https://github.com/your-org/your-repo/releases/latest/download/version.json",
-      "check_interval_sec": 60,
-      "install_dir": "D:\\apps\\my-service",
-      "health_check": {
-        "enabled": true,
-        "retries": 10,
-        "interval_sec": 3,
-        "timeout_sec": 5
-      },
-      "services": [
-        {
-          "windows_service_name": "my-service-web-1",
-          "binary_name": "web.exe",
-          "env_file": "D:\\apps\\my-service\\.env.web.1",
-          "health_check_url": "http://localhost:8000/health"
-        },
-        {
-          "windows_service_name": "my-service-worker-1",
-          "binary_name": "worker.exe",
-          "env_file": "D:\\apps\\my-service\\.env.worker.1"
-        }
-      ]
-    }
-  ]
-}
-```
-
-Key fields:
-
-| Field                             | Description                                                                                                                     |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `github_token`                    | PAT with `repo` scope. Leave empty `""` for public repos.                                                                       |
-| `metadata_url`                    | URL to `version.json` published by the service repo's release workflow. Always use `.../releases/latest/download/version.json`. |
-| `service_name`                    | Must match `APP_NAME` in the service repo's `release.yml`.                                                                      |
-| `install_dir`                     | Where the watcher extracts releases for this service.                                                                           |
-| `services[].windows_service_name` | The Windows service name. The watcher registers it automatically on first deploy.                                               |
-| `services[].binary_name`          | Filename inside the release zip (e.g. `web.exe`).                                                                               |
-| `services[].env_file`             | Path to the `.env` file for this service instance. Must exist before first deploy.                                              |
-
----
-
-### Step 3 -- Create `.env` files for your app services
-
-The watcher deploys binaries but does not manage `.env` files. Create them before the first deploy:
-
-```powershell
-New-Item -ItemType Directory -Path "D:\apps\my-service"      -Force
-New-Item -ItemType Directory -Path "D:\apps\my-service\logs" -Force
-
-notepad D:\apps\my-service\.env.web.1
-notepad D:\apps\my-service\.env.worker.1
-```
-
-Example `.env` content:
+Fill in your values:
 
 ```env
-PORT=8000
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=mydb
-DB_USER=myuser
-DB_PASSWORD=secret
+ENVIRONMENT=production
+GITHUB_TOKEN=ghp_your_pat_here
+LOG_DIR=D:\apps\watcher\logs
+NSSM_PATH=C:\ProgramData\chocolatey\bin\nssm.exe
+DB_PATH=D:\apps\watcher\watcher.db
+API_PORT=8080
 ```
 
-> `PORT` must match the `health_check_url` port for that service instance.
+| Variable       | Description                                                  |
+| -------------- | ------------------------------------------------------------ |
+| `ENVIRONMENT`  | Label for this environment (informational only)              |
+| `GITHUB_TOKEN` | PAT with `repo` scope. Leave empty for public repos          |
+| `LOG_DIR`      | Where agent writes its logs                                  |
+| `NSSM_PATH`    | Full path to nssm.exe                                        |
+| `DB_PATH`      | SQLite database file path                                    |
+| `API_PORT`     | Port for the API server and dashboard (default: `8080`)      |
 
----
-
-### Step 4 -- Edit `shell\install-watcher.ps1`
-
-Open `D:\apps\watcher\shell\install-watcher.ps1` and update the `$Config` block at the top to match your installation path:
+### Step 5 — Secure `.env` permissions
 
 ```powershell
-$Config = @{
-    ServiceName  = "app-watcher"
-    InstallDir   = "D:\apps\watcher"
-    WatcherExe   = "D:\apps\watcher\watcher.exe"
-    ConfigFile   = "D:\apps\watcher\config.json"
-    LogDir       = "D:\apps\watcher\logs"
-    NssmPath     = "C:\ProgramData\chocolatey\bin\nssm.exe"
-    RestartDelay = 5000
-}
+icacls D:\apps\watcher\.env /inheritance:r
+icacls D:\apps\watcher\.env /grant "SYSTEM:(F)"
+icacls D:\apps\watcher\.env /grant "BUILTIN\Administrators:(F)"
 ```
 
----
-
-### Step 5 -- Run the install script
+### Step 6 — Register as Windows service
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File D:\apps\watcher\shell\install-watcher.ps1
+$nssm = "C:\ProgramData\chocolatey\bin\nssm.exe"
+
+& $nssm install app-watcher "D:\apps\watcher\watcher.exe"
+& $nssm set app-watcher AppParameters "-config `"D:\apps\watcher\.env`""
+& $nssm set app-watcher AppDirectory "D:\apps\watcher"
+& $nssm set app-watcher Start SERVICE_AUTO_START
+& $nssm set app-watcher AppStdout "D:\apps\watcher\logs\watcher.out.log"
+& $nssm set app-watcher AppStderr "D:\apps\watcher\logs\watcher.err.log"
+& $nssm set app-watcher AppRotateFiles 1
+& $nssm set app-watcher AppRotateOnline 1
+& $nssm set app-watcher AppRestartDelay 5000
 ```
 
-The script will:
-
-1. Install Chocolatey if missing
-2. Install NSSM if missing
-3. Verify `watcher.exe` and `config.json` exist
-4. Verify outbound HTTPS to `github.com`
-5. Create log directories
-6. Restrict `config.json` permissions (protects your GitHub token)
-7. Register `app-watcher` as a Windows service via NSSM
-8. Start the service and confirm it is running
-
----
-
-### Step 6 -- Verify the watcher is running
+### Step 7 — Start the service
 
 ```powershell
-# Check service status
+nssm start app-watcher
+```
+
+### Step 8 — Verify
+
+```powershell
 Get-Service app-watcher
-
-# Watch live logs
-Get-Content D:\apps\watcher\logs\watcher.out.log -Wait
+Invoke-WebRequest -Uri "http://localhost:8080/api/status" -UseBasicParsing
 ```
 
-Expected output on first run:
-
-```json
-{"time":"...","level":"INFO","component":"agent","msg":"watcher agent starting"}
-{"time":"...","level":"INFO","component":"agent","msg":"config loaded","fields":{"watchers":1}}
-{"time":"...","level":"INFO","component":"my-service","msg":"check cycle"}
-{"time":"...","level":"INFO","component":"my-service","msg":"version mismatch, deploying","fields":{"from":"","to":"v1.0.0"}}
-{"time":"...","level":"INFO","component":"my-service","msg":"service not registered, installing via NSSM","fields":{"name":"my-service-web-1"}}
-{"time":"...","level":"INFO","component":"my-service","msg":"deploy complete","fields":{"version":"v1.0.0"}}
-```
-
-The watcher registers NSSM services automatically on first deploy -- no manual setup required.
+Open **http://localhost:8080** in a browser.
 
 ---
 
-## Part 3 -- Adding a new service
+## Adding a watched repo
 
-### Step 1 -- Ensure the service repo has a `release.yml` workflow
+After installation, use the **dashboard** at `http://localhost:8080`:
 
-The service repo must use the same `release.yml` workflow as this watcher repo. Copy it into `.github/workflows/release.yml` of the target repo and update the config block:
+1. Go to **Watchers** → click **Add Watcher**
+2. Fill in:
+   - **Name**: display name (e.g. `my-service`)
+   - **Service Name**: must match `APP_NAME` in the repo's `release.yml`
+   - **Metadata URL**: `https://github.com/your-org/your-repo/releases/latest/download/version.json`
+   - **Install Dir**: e.g. `D:\apps\my-service`
+   - **Check Interval**: poll frequency in seconds (default: 60)
+3. After creating the watcher, click into it and **Add Service**:
+   - **Windows Service Name**: NSSM service name (e.g. `my-service-web-1`)
+   - **Binary Name**: filename inside the release zip (e.g. `web.exe`)
+   - **Env File**: path to the `.env` file for this service instance
+   - **Health Check URL**: e.g. `http://localhost:3000/health`
 
-```yaml
-env:
-  APP_NAME: my-new-service # must match service_name in watcher config.json
-  GO_VERSION: "1.21"
-  WEB_BINARY: api.exe
-  WORKER_BINARY: worker.exe
-  WEB_ENTRY: cmd/api/main.go
-  WORKER_ENTRY: cmd/worker/main.go
-```
-
-Trigger the first release using a recognized commit pattern:
-
-```bash
-git commit -m "feat: initial release"
-git push origin main
-```
-
-The workflow auto-tags and publishes a release. Recognized patterns:
-
-| Pattern                          | Bump                  |
-| -------------------------------- | --------------------- |
-| `feat: <msg>`                    | minor                 |
-| `fix: / perf: / refactor: <msg>` | patch                 |
-| `feat!:` or `BREAKING CHANGE`    | major                 |
-| `minor: / patch: / major: <msg>` | respective            |
-| `bump: minor / patch / major`    | respective            |
-| `[release]` anywhere in message  | patch                 |
-| `chore: / docs: / ci:`           | **skip** (no release) |
-
-If you need to force a bump regardless of commit messages, go to **Actions → Release → Run workflow** and set `force_bump`.
-
----
-
-### Step 2 -- Create `.env` files on the server
+Alternatively, use the REST API:
 
 ```powershell
-New-Item -ItemType Directory -Path "D:\apps\my-new-service"      -Force
-New-Item -ItemType Directory -Path "D:\apps\my-new-service\logs" -Force
-
-notepad D:\apps\my-new-service\.env.1
-```
-
----
-
-### Step 3 -- Add a new entry to `config.json`
-
-Open `D:\apps\watcher\config.json` and append to the `watchers` array:
-
-```json
-{
-  "name": "my-new-service",
-  "service_name": "my-new-service",
-  "metadata_url": "https://github.com/your-org/my-new-service/releases/latest/download/version.json",
+# Create a watcher
+Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/watchers" -ContentType "application/json" -Body '{
+  "name": "my-service",
+  "service_name": "my-service",
+  "metadata_url": "https://github.com/your-org/your-repo/releases/latest/download/version.json",
+  "install_dir": "D:\\apps\\my-service",
   "check_interval_sec": 60,
-  "install_dir": "D:\\apps\\my-new-service",
-  "health_check": {
-    "enabled": true,
-    "retries": 10,
-    "interval_sec": 3,
-    "timeout_sec": 5
-  },
-  "services": [
-    {
-      "windows_service_name": "my-new-service-api-1",
-      "binary_name": "api.exe",
-      "env_file": "D:\\apps\\my-new-service\\.env.1",
-      "health_check_url": "http://localhost:9000/health"
-    }
-  ]
-}
+  "hc_enabled": true
+}'
+
+# Add a service to the watcher (use the watcher ID from above)
+Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/watchers/1/services" -ContentType "application/json" -Body '{
+  "windows_service_name": "my-service-web-1",
+  "binary_name": "web.exe",
+  "env_file": "D:\\apps\\my-service\\.env.web.1",
+  "health_check_url": "http://localhost:3000/health"
+}'
 ```
+
+> **Important**: Create the `.env` files for your app services before the first deploy. The watcher deploys binaries but does NOT manage `.env` files.
 
 ---
 
-### Step 4 -- Restart the watcher
+## Updating the watcher
 
-```powershell
-nssm restart app-watcher
-```
+1. Download the new release zip
+2. Stop the service: `nssm stop app-watcher`
+3. Replace `watcher.exe` in `D:\apps\watcher\`
+4. Start the service: `nssm start app-watcher`
 
-The watcher will immediately start polling the new service repo.
+The SQLite database and `.env` are preserved across updates.
 
 ---
 
 ## Useful commands
 
 ```powershell
-# Watcher service management
+# Service management
 Get-Service app-watcher
 nssm start   app-watcher
 nssm stop    app-watcher
 nssm restart app-watcher
-nssm remove  app-watcher confirm
+nssm remove  app-watcher confirm    # uninstall
 
 # Live logs
 Get-Content D:\apps\watcher\logs\watcher.out.log -Wait
 
-# Force manual rollback of a service
+# Force manual rollback of a watched service
 nssm stop app-watcher
 Set-Content D:\apps\my-service\version.txt "v1.0.0"
 nssm start app-watcher
+
+# Test without NSSM (run directly)
+.\watcher.exe -config .env
 ```
+
+---
+
+## Troubleshooting
+
+| Problem | Check |
+|---------|-------|
+| Service won't start | `Get-Content D:\apps\watcher\logs\watcher.err.log` |
+| Can't reach dashboard | Verify `API_PORT` in `.env`, check firewall |
+| Deploy fails | Check dashboard → Watcher Detail → Deploy History |
+| Health check fails | Verify `health_check_url` is correct, service is binding to the right port |
+| NSSM not found | Verify `NSSM_PATH` in `.env` matches actual install location |

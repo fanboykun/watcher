@@ -1,7 +1,6 @@
 # install-watcher.ps1
-# Full bootstrap: installs Chocolatey, NSSM, then registers
-# watcher.exe as a Windows service.
-# Copy watcher.exe + config.json to InstallDir, then run this script.
+# Full bootstrap: installs Chocolatey, NSSM, creates .env config,
+# then registers watcher.exe as a Windows service.
 # Run as Administrator.
 
 # ==============================================================
@@ -9,11 +8,13 @@
 # ==============================================================
 $Config = @{
     ServiceName  = "app-watcher"
-    InstallDir   = "D:\apps\watcher"
-    WatcherExe   = "D:\apps\watcher\watcher.exe"
-    ConfigFile   = "D:\apps\watcher\config.json"
-    LogDir       = "D:\apps\watcher\logs"
+    InstallDir   = "C:\apps\watcher"
+    WatcherExe   = "C:\apps\watcher\watcher.exe"
+    EnvFile      = "C:\apps\watcher\.env"
+    LogDir       = "C:\apps\watcher\logs"
     NssmPath     = "C:\ProgramData\chocolatey\bin\nssm.exe"
+    DBPath       = "C:\apps\watcher\watcher.db"
+    APIPort      = "8080"
     RestartDelay = 5000
 }
 # ==============================================================
@@ -34,6 +35,7 @@ Write-Host "`n============================================================" -For
 Write-Host "  WATCHER BOOTSTRAP" -ForegroundColor Cyan
 Write-Host "  Service : $($Config.ServiceName)" -ForegroundColor Gray
 Write-Host "  Dir     : $($Config.InstallDir)" -ForegroundColor Gray
+Write-Host "  API     : http://localhost:$($Config.APIPort)" -ForegroundColor Gray
 Write-Host "============================================================`n" -ForegroundColor Cyan
 
 
@@ -76,8 +78,21 @@ if (Test-Path $Config.NssmPath) {
 }
 
 
-# [3] Preflight checks
-Write-Step "[3] Preflight checks"
+# [3] Create directories
+Write-Step "[3] Creating directories"
+
+@($Config.InstallDir, $Config.LogDir) | ForEach-Object {
+    if (Test-Path $_) {
+        Write-Skip $_
+    } else {
+        New-Item -ItemType Directory -Path $_ -Force | Out-Null
+        Write-OK "Created $_"
+    }
+}
+
+
+# [4] Preflight: watcher.exe
+Write-Step "[4] Preflight checks"
 
 if (-not (Test-Path $Config.WatcherExe)) {
     Write-Fail "watcher.exe not found at $($Config.WatcherExe)"
@@ -86,16 +101,39 @@ if (-not (Test-Path $Config.WatcherExe)) {
 }
 Write-OK "watcher.exe found"
 
-if (-not (Test-Path $Config.ConfigFile)) {
-    Write-Fail "config.json not found at $($Config.ConfigFile)"
-    Write-Host "  Copy and fill in config.json to $($Config.InstallDir) before running this script" -ForegroundColor Yellow
-    exit 1
+
+# [5] Create .env if it doesn't exist
+Write-Step "[5] Environment config (.env)"
+
+if (Test-Path $Config.EnvFile) {
+    Write-Skip ".env already exists at $($Config.EnvFile)"
+} else {
+    Write-Host "  Creating default .env..." -ForegroundColor Yellow
+    $envContent = @"
+ENVIRONMENT=production
+GITHUB_TOKEN=
+LOG_DIR=$($Config.LogDir)
+NSSM_PATH=$($Config.NssmPath)
+DB_PATH=$($Config.DBPath)
+API_PORT=$($Config.APIPort)
+"@
+    Set-Content -Path $Config.EnvFile -Value $envContent -Encoding UTF8
+    Write-OK ".env created at $($Config.EnvFile)"
+    Write-Host "  Edit .env to set your GITHUB_TOKEN if using private repos" -ForegroundColor Yellow
 }
-Write-OK "config.json found"
 
 
-# [4] Outbound HTTPS check
-Write-Step "[4] Outbound HTTPS to github.com"
+# [6] Secure .env permissions
+Write-Step "[6] Securing .env permissions"
+
+icacls $Config.EnvFile /inheritance:r | Out-Null
+icacls $Config.EnvFile /grant "SYSTEM:(F)" | Out-Null
+icacls $Config.EnvFile /grant "BUILTIN\Administrators:(F)" | Out-Null
+Write-OK ".env restricted to SYSTEM and Administrators only"
+
+
+# [7] Outbound HTTPS check
+Write-Step "[7] Outbound HTTPS to github.com"
 
 try {
     $resp = Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing -TimeoutSec 10
@@ -112,30 +150,8 @@ try {
 }
 
 
-# [5] Create directories
-Write-Step "[5] Creating directories"
-
-@($Config.InstallDir, $Config.LogDir) | ForEach-Object {
-    if (Test-Path $_) {
-        Write-Skip $_
-    } else {
-        New-Item -ItemType Directory -Path $_ -Force | Out-Null
-        Write-OK "Created $_"
-    }
-}
-
-
-# [6] Secure config.json
-Write-Step "[6] Securing config.json permissions"
-
-icacls $Config.ConfigFile /inheritance:r | Out-Null
-icacls $Config.ConfigFile /grant "SYSTEM:(F)" | Out-Null
-icacls $Config.ConfigFile /grant "BUILTIN\Administrators:(F)" | Out-Null
-Write-OK "config.json restricted to SYSTEM and Administrators only"
-
-
-# [7] Register NSSM service
-Write-Step "[7] Configuring NSSM service: $($Config.ServiceName)"
+# [8] Register NSSM service
+Write-Step "[8] Configuring NSSM service: $($Config.ServiceName)"
 
 $existing = Get-Service $Config.ServiceName -ErrorAction SilentlyContinue
 
@@ -163,7 +179,7 @@ if ($existing) {
     Write-OK "Service registered"
 }
 
-& $Config.NssmPath set $Config.ServiceName AppParameters   "-config `"$($Config.ConfigFile)`"" | Out-Null
+& $Config.NssmPath set $Config.ServiceName AppParameters   "-config `"$($Config.EnvFile)`"" | Out-Null
 & $Config.NssmPath set $Config.ServiceName AppDirectory    $Config.InstallDir | Out-Null
 & $Config.NssmPath set $Config.ServiceName Start           SERVICE_AUTO_START | Out-Null
 & $Config.NssmPath set $Config.ServiceName AppStdout       "$($Config.LogDir)\watcher.out.log" | Out-Null
@@ -175,8 +191,8 @@ if ($existing) {
 Write-OK "NSSM service configured"
 
 
-# [8] Start service
-Write-Step "[8] Starting $($Config.ServiceName)"
+# [9] Start service
+Write-Step "[9] Starting $($Config.ServiceName)"
 
 & $Config.NssmPath start $Config.ServiceName
 Start-Sleep 4
@@ -190,12 +206,26 @@ if ($svc -and $svc.Status -eq "Running") {
 }
 
 
+# [10] Health check
+Write-Step "[10] Verifying API is responding"
+
+Start-Sleep 2
+try {
+    $resp = Invoke-WebRequest -Uri "http://localhost:$($Config.APIPort)/api/status" -UseBasicParsing -TimeoutSec 5
+    Write-OK "API is up (HTTP $($resp.StatusCode))"
+} catch {
+    Write-Host "  WARN: API not responding yet -- check logs" -ForegroundColor Yellow
+}
+
+
 Write-Host "`n============================================================" -ForegroundColor Cyan
 Write-Host "  WATCHER INSTALLED SUCCESSFULLY" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Logs    : $($Config.LogDir)\watcher.out.log" -ForegroundColor Yellow
-Write-Host "Config  : $($Config.ConfigFile)" -ForegroundColor Yellow
+Write-Host "Dashboard : http://localhost:$($Config.APIPort)" -ForegroundColor Yellow
+Write-Host "Logs      : $($Config.LogDir)\watcher.out.log" -ForegroundColor Yellow
+Write-Host "Config    : $($Config.EnvFile)" -ForegroundColor Yellow
+Write-Host "Database  : $($Config.DBPath)" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Commands:" -ForegroundColor Yellow
 Write-Host "  Status    : Get-Service $($Config.ServiceName)"

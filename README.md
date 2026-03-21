@@ -1,23 +1,52 @@
 # Watcher Agent
 
+[![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8?logo=go)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
+
 A pull-based deployment agent for Go services on private Windows servers with no inbound network access.
 
-The watcher runs as a Windows service, polls GitHub Releases on a configurable interval, and deploys new versions automatically — no SSH, no VPN, no push access required.
+The watcher runs as a Windows service, polls GitHub Releases on a configurable interval, and deploys new versions automatically — no SSH, no VPN, no push access required. Includes a built-in web dashboard for managing watchers, services, and viewing deploy history.
 
 ---
 
 ## Table of contents
 
+- [Features](#features)
+- [Screenshots](#screenshots)
 - [How it works](#how-it-works)
 - [Requirements for watched services](#requirements-for-watched-services)
 - [Project structure](#project-structure)
 - [Installation](#installation)
-- [Triggering a release](#triggering-a-release)
+- [Dashboard](#dashboard)
 - [Rollback](#rollback)
 - [Disk layout](#disk-layout)
-- [state.json reference](#statejson-reference)
-- [Logs](#logs)
-- [config.json reference](#configjson-reference)
+- [Configuration reference](#configuration-reference)
+- [Development & Contributing](#development--contributing)
+
+---
+
+## Features
+
+- **Pull-based deployment** — polls GitHub Releases over HTTPS, no inbound access required
+- **Multi-watcher** — watch multiple repos from a single agent
+- **NSSM service management** — auto-registers, starts, stops, and restarts Windows services
+- **Health checks** — validates deploys with HTTP health endpoints, auto-rollbacks on failure
+- **Web dashboard** — embedded SvelteKit SPA served from the single binary
+- **REST API** — full API for managing watchers, services, deploys, and logs
+- **SQLite database** — stores watchers, services, deploy history, and health events
+- **Single binary** — one `.exe` file contains the agent, API server, and dashboard
+- **Zero-downtime swap** — uses NTFS junctions (`mklink /J`) for atomic directory switching
+
+---
+
+## Screenshots
+
+![Dashboard View](assets/dashboard.png)
+
+![Watcher Details](assets/watcher.png)
+
+![Service Deployments](assets/service.png)
 
 ---
 
@@ -58,37 +87,19 @@ my-service-v1.2.0.zip
 
 ### How to set up `release.yml` in a new service repo
 
-1. Copy `release.yml` from this repo into `.github/workflows/release.yml` of the target service repo
-2. Edit only the config block at the top of the file:
+1. Copy `workflows/release.yml` from this repo into `.github/workflows/release.yml` of the target service repo
+2. Edit only the config block at the top of the file
+3. Add the same secrets to the repo's `production` environment
 
-```yaml
-env:
-  APP_NAME:
-    my-service # must be unique across all watched services
-    # must match "service_name" in watcher's config.json
-  GO_VERSION: "1.21"
-  GO_PRIVATE: github.com/your-org/*
-  WEB_BINARY: my-service.exe # must match "binary_name" in watcher's config.json
-  WORKER_BINARY: "" # leave empty if no worker binary
-  WEB_ENTRY: cmd/api/main.go
-  WORKER_ENTRY: "" # leave empty if no worker
-```
+### The contract between `release.yml` and the watcher database
 
-3. Add the same secrets to the repo's `production` environment:
-   - `GH_ACCESS_TOKEN` — PAT for pulling private Go packages
-   - `GITHUB_TOKEN` — automatically available, used for creating releases
+These values must stay in sync between the service repo's `release.yml` and the watcher's configuration (managed via the dashboard or API):
 
-### The contract between `release.yml` and `config.json`
-
-These values must stay in sync between the service repo's `release.yml` and the watcher's `config.json`:
-
-| `release.yml`   | `config.json`             | Must match                                             |
-| --------------- | ------------------------- | ------------------------------------------------------ |
-| `APP_NAME`      | `watchers[].service_name` | Exact string match — this is the key in `version.json` |
-| `WEB_BINARY`    | `services[].binary_name`  | Exact filename inside the zip                          |
-| `WORKER_BINARY` | `services[].binary_name`  | Exact filename inside the zip                          |
-
-If these are out of sync the watcher will either fail to find the service in `version.json`, or fail to find the binary inside the zip after extraction.
+| `release.yml`   | Watcher config              | Must match                                             |
+| --------------- | --------------------------- | ------------------------------------------------------ |
+| `APP_NAME`      | Watcher `service_name`      | Exact string match — this is the key in `version.json` |
+| `WEB_BINARY`    | Service `binary_name`       | Exact filename inside the zip                          |
+| `WORKER_BINARY` | Service `binary_name`       | Exact filename inside the zip                          |
 
 ---
 
@@ -96,39 +107,27 @@ If these are out of sync the watcher will either fail to find the service in `ve
 
 ```
 Developer
-  └── git commit -m "feat: add new endpoint"
   └── git push origin main
         ↓
 GitHub Actions (release.yml in app repo)
-  └── detects feat: → minor bump
-  └── pushes tag v1.2.0
-  └── builds web.exe + worker.exe for Windows
-  └── packages into admin-be-v1.2.0.zip
-  └── creates GitHub Release v1.2.0
-  └── uploads admin-be-v1.2.0.zip + version.json as release assets
-        ↓  (accessible over HTTPS using GitHub PAT)
-version.json
-  {
-    "services": {
-      "admin-be": {
-        "version": "v1.2.0",
-        "artifact_url": "https://github.com/.../releases/download/v1.2.0/admin-be-v1.2.0.zip"
-      }
-    }
-  }
-        ↑  (polls every 60s via HTTPS)
-Watcher Agent  [Windows Service on private server]
-  └── reads local version.txt → "v1.1.0"
-  └── sees remote target "v1.2.0" → mismatch detected
-  └── downloads admin-be-v1.2.0.zip
-  └── extracts to D:\apps\admin-be\releases\v1.2.0\
+  └── auto-tags + builds + creates GitHub Release
+  └── uploads artifact.zip + version.json
+        ↓  (HTTPS poll)
+Watcher Agent  [Windows Service]
+  └── polls version.json → detects new version
+  └── downloads artifact zip
+  └── extracts to releases/<version>/
   └── stops NSSM services
-  └── swaps D:\apps\admin-be\current\ → releases\v1.2.0\
+  └── swaps current/ junction → new release
   └── starts NSSM services
-  └── polls /health until HTTP 200
-  └── on failure: automatically rolls back to releases\v1.1.0\
-  └── writes version.txt → "v1.2.0"
-  └── updates state.json → status: healthy
+  └── health check → rollback on failure
+  └── records deploy in SQLite database
+        ↓
+Dashboard  [http://localhost:8080]
+  └── view deploy status, history, service health
+  └── manage watchers and services
+  └── trigger immediate checks
+  └── start/stop/restart services
 ```
 
 ---
@@ -137,227 +136,218 @@ Watcher Agent  [Windows Service on private server]
 
 ```
 watcher/
-  cmd/watcher/main.go         entrypoint — signal handling, starts Agent
+  cmd/watcher/main.go             entrypoint — signal handling, starts Agent + API server
   internal/
-    config.go                 config loader + validation
-    github.go                 fetch version.json, download artifact (private repo)
-    deploy.go                 extract zip, swap junction, NSSM management, rollback
-    state.go                  atomic read/write of version.txt + state.json
-    watcher.go                Agent + RepoWatcher — one goroutine per watched repo
-    logger.go                 structured JSON logger with per-component context
-    ticker.go                 ticker helper
-  config.json                 example config
-  install-watcher.ps1         first-time Windows service bootstrap
-  go.mod
+    agent/
+      watcher.go                   Agent + RepoWatcher — one goroutine per watched repo
+      deploy.go                    extract zip, swap junction, NSSM management, rollback
+      github.go                    fetch version.json, download artifact (public/private)
+      github_test.go               httptest-based tests for GitHubClient
+      state.go                     deploy state tracking via SQLite
+      logger.go                    structured JSON logger with per-component context
+      ticker.go                    ticker helper
+    api/
+      router.go                    Gin router — API routes + embedded SPA serving
+      handlers.go                  watcher CRUD handlers
+      service_handlers.go          service management handlers (start/stop/restart/health)
+      system_handlers.go           system status + log tail endpoints
+      dto.go                       request/response DTOs
+    config/
+      config.go                    LoadConfig() from .env file
+    database/
+      database.go                  SQLite via GORM (pure-Go driver, no CGO)
+      models.go                    Watcher, Service, DeployLog, HealthEvent models
+  web/
+    embed.go                       go:embed directive for the SPA
+    build/                         SvelteKit build output (embedded into binary)
+    src/                           SvelteKit source
+    package.json                   SvelteKit + Tailwind + shadcn-svelte
+  shell/
+    install-watcher.ps1            bootstrap script — installs Chocolatey, NSSM, registers service
+  workflows/
+    release.yml                    template release workflow for watched app repos
+  .github/workflows/
+    release.yml                    this repo's release workflow (builds SPA + Go binary)
+  .env.example                     example config
+  Makefile                         build, test, dev targets
 ```
+
+---
 
 ## Installation
 
-For step-by-step instructions on how to set up the server, install the watcher, and add new services, see:
+For step-by-step instructions, see **[INSTALL.md](./INSTALL.md)**.
 
-**[INSTALL.md](./INSTALL.md)**
+Quick start:
 
-The release zip already includes `INSTALL.md` alongside `watcher.exe` and `shell/install-watcher.ps1` so you have everything in one place after downloading.
+```powershell
+# On Windows, as Administrator:
+# 1. Copy watcher.exe + shell/ to D:\apps\watcher\
+# 2. Run the bootstrap script:
+Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1
+# 3. Open http://localhost:8080
+```
+
+The install script handles Chocolatey, NSSM, `.env` creation, service registration, and startup automatically.
 
 ---
 
+## Dashboard
+
+The web dashboard is embedded in the binary and served at `http://localhost:<API_PORT>` (default: 8080).
+
+### Pages
+
+- **Dashboard** — system overview with watcher status cards
+- **Watchers** — list, add, edit, delete watchers; trigger immediate checks
+- **Watcher Detail** — configuration, deploy state, services list, deploy history
+- **Services** — list all services with start/stop/restart/health actions
+- **Service Detail** — health history, log viewer (stdout/stderr), deploy history
+- **Logs** — agent log viewer
+
+### REST API
+
+All dashboard operations are available via the REST API at `/api/*`:
+
+| Method   | Endpoint                          | Description                |
+|----------|-----------------------------------|----------------------------|
+| `GET`    | `/api/status`                     | System status              |
+| `GET`    | `/api/logs`                       | Agent log tail             |
+| `GET`    | `/api/watchers`                   | List watchers              |
+| `POST`   | `/api/watchers`                   | Create watcher             |
+| `GET`    | `/api/watchers/:id`               | Get watcher detail         |
+| `PUT`    | `/api/watchers/:id`               | Update watcher             |
+| `DELETE` | `/api/watchers/:id`               | Delete watcher             |
+| `POST`   | `/api/watchers/:id/check`         | Trigger immediate check    |
+| `GET`    | `/api/watchers/:id/deploys`       | Watcher deploy history     |
+| `GET`    | `/api/watchers/:id/services`      | List watcher's services    |
+| `POST`   | `/api/watchers/:id/services`      | Add service to watcher     |
+| `GET`    | `/api/services`                   | List all services          |
+| `GET`    | `/api/services/:id`               | Service detail             |
+| `POST`   | `/api/services/:id/start`         | Start service (NSSM)       |
+| `POST`   | `/api/services/:id/stop`          | Stop service (NSSM)        |
+| `POST`   | `/api/services/:id/restart`       | Restart service (NSSM)     |
+| `GET`    | `/api/services/:id/health`        | Run health check           |
+| `GET`    | `/api/services/:id/health/history`| Health check history       |
+| `GET`    | `/api/services/:id/logs`          | Service log tail           |
+| `GET`    | `/api/services/:id/deploys`       | Service deploy history     |
+
 ---
 
-## Triggering a release
+## Development & Contributing
 
-The watcher uses **auto-tagging via semantic versioning**. You never create tags manually — just push a commit to `main` with a recognized message pattern and the release workflow handles the rest.
+### Prerequisites
 
-### How it works
+- Go 1.21+
+- Bun (for SvelteKit)
+- Air (auto-installed by `make dev`)
 
-When a push lands on `main`, the `release.yml` workflow:
+### Dev workflow
 
-1. Reads all commit messages since the last tag
-2. Classifies each commit and determines the highest bump type
-3. If any releasable commits exist, bumps the version, pushes a new tag, builds `watcher.exe`, packages the zip, and creates a GitHub Release
-4. If no releasable commits exist (e.g. only `chore:` or `docs:`), the workflow exits early with no release
-
-### Commit patterns
-
-**Conventional commits (spec):**
-
-| Pattern                                 | Bump     | Example                                     |
-| --------------------------------------- | -------- | ------------------------------------------- |
-| `feat: <msg>`                           | minor    | `feat: add health check endpoint`           |
-| `fix: <msg>`                            | patch    | `fix: nil pointer on startup`               |
-| `perf: <msg>`                           | patch    | `perf: reduce polling overhead`             |
-| `refactor: <msg>`                       | patch    | `refactor: split deploy logic`              |
-| `feat!: <msg>`                          | major    | `feat!: redesign config format`             |
-| `BREAKING CHANGE: <msg>`                | major    | `BREAKING CHANGE: drop config.json support` |
-| `chore: / docs: / ci: / style: / test:` | **skip** | no release triggered                        |
-
-**Shortcut patterns (forgiving aliases):**
-
-| Pattern                         | Bump  | Example                               |
-| ------------------------------- | ----- | ------------------------------------- |
-| `minor: <msg>`                  | minor | `minor: bump go version`              |
-| `patch: <msg>`                  | patch | `patch: update deps`                  |
-| `major: <msg>`                  | major | `major: new config format`            |
-| `bump: minor`                   | minor | `bump: minor`                         |
-| `bump: patch`                   | patch | `bump: patch`                         |
-| `bump: major`                   | major | `bump: major`                         |
-| `release: <msg>`                | patch | `release: deploy hotfix`              |
-| `release(minor): <msg>`         | minor | `release(minor): new watcher feature` |
-| `release(major): <msg>`         | major | `release(major): breaking change`     |
-| `[release]` anywhere in message | patch | `update readme [release]`             |
-| `[release:minor]` anywhere      | minor | `update readme [release:minor]`       |
-| `[release:major]` anywhere      | major | `update readme [release:major]`       |
-
-**Unrecognized patterns are skipped** — if none of your commits since the last tag match any pattern above, no release is created. This is intentional: it prevents accidental releases from noise commits.
-
-### Version bump priority
-
-When multiple commits exist since the last tag, the highest bump wins:
-
-```
-major > minor > patch > skip
-```
-
-For example, if you push three commits:
-
-```
-chore: update dependencies    -> skip
-fix: handle timeout errors    -> patch
-feat: add multi-repo support  -> minor
-```
-
-The result is a **minor** bump.
-
-### Manual trigger
-
-If you forgot the right pattern or need to force a specific bump, go to:
-
-**Actions → Release Watcher → Run workflow** → set `force_bump` to `patch`, `minor`, or `major`
-
-This bypasses commit analysis entirely and creates a release with the specified bump.
-
-### Skip release entirely
-
-Add `[skip ci]` anywhere in a commit message to skip the workflow completely:
+Run the Go backend and SvelteKit dev server in two terminals:
 
 ```bash
-git commit -m "chore: internal notes [skip ci]"
+# Terminal 1: Go backend with hot reload
+make dev
+
+# Terminal 2: SvelteKit dev server (with API proxy to :8080)
+cd web && bun run dev
 ```
+
+### Build targets
+
+```bash
+make build         # Build SPA + cross-compile watcher.exe for Windows
+make build-web     # Build SvelteKit SPA only
+make test          # Run all Go tests
+make test-verbose  # Run tests with -v
+make test-github   # Run only GitHub client tests
+make dev           # Start Air hot-reload for Go backend
+make package       # Build + zip for distribution
+make clean         # Remove bin/ and web/build/
+make info          # Print Go environment
+make help          # Show all targets
+```
+
+### Releasing the Watcher (Internal)
+
+The watcher uses **auto-tagging via semantic versioning**. Push a commit to `main` with a recognized pattern:
+
+#### Commit patterns
+
+| Pattern                                 | Bump     |
+| --------------------------------------- | -------- |
+| `feat: <msg>`                           | minor    |
+| `fix: / perf: / refactor: <msg>`        | patch    |
+| `feat!: <msg>` / `BREAKING CHANGE`      | major    |
+| `chore: / docs: / ci: / test:`          | skip     |
+| `minor: / patch: / major: <msg>`        | respective |
+| `bump: minor / patch / major`           | respective |
+| `release: <msg>` / `[release]`          | patch    |
+
+**Fallback**: If only skip-pattern commits exist but important files changed (code, workflows, config), the workflow defaults to a **patch** bump.
+
+#### Manual trigger
+
+**Actions → Release Watcher → Run workflow** → set `force_bump` to `patch`, `minor`, or `major`.
+
+#### Skip release
+
+Add `[skip ci]` anywhere in a commit message.
 
 ---
 
 ## Rollback
 
-Rollback is automatic when a health check fails after deploy. The watcher swaps `current/` back to the previous release and restarts services without any intervention.
+Rollback is automatic when a health check fails after deploy.
 
 For manual rollback, stop the watcher, edit `version.txt`, then restart:
 
 ```powershell
 nssm stop app-watcher
-Set-Content D:\apps\admin-be\version.txt "v1.1.0"
+Set-Content D:\apps\my-service\version.txt "v1.0.0"
 nssm start app-watcher
 ```
-
-The watcher detects the mismatch and re-deploys `v1.1.0` on the next tick.
 
 ---
 
 ## Disk layout
 
-After the first deploy, the install directory looks like this:
-
 ```
-D:\apps\admin-be\
-  current\                  ← junction pointing to active release
-    web.exe
-    worker.exe
+D:\apps\watcher\                    ← watcher agent home
+  watcher.exe                       ← single binary (agent + API + dashboard)
+  .env                              ← SECURED (SYSTEM + Admins only)
+  watcher.db                        ← SQLite database
+  shell\install-watcher.ps1
+  logs\
+    watcher.out.log                 ← NSSM stdout redirect
+    watcher.err.log                 ← NSSM stderr redirect
+
+D:\apps\<service>\                  ← per-service install directory
+  current\                          ← junction → releases/<version>/
   releases\
-    v1.1.0\                 ← previous version (kept for rollback)
-      web.exe
-      worker.exe
-    v1.2.0\                 ← current version
-      web.exe
-      worker.exe
-  .env.web.1
-  .env.web.2
-  .env.worker.1
-  .env.worker.2
-  version.txt               ← "v1.2.0"
-  state.json                ← deployment status
+    v1.0.0\                         ← previous version (kept for rollback)
+    v1.1.0\                         ← current version
+  version.txt                       ← "v1.1.0"
+  state.json                        ← deploy status
+  .env.web.1                        ← service env file (not managed by watcher)
   logs\
-    admin-be-web-1.out.log
-    admin-be-web-1.err.log
-    ...
-
-D:\apps\watcher\
-  watcher.exe
-  config.json
-  install-watcher.ps1
-  logs\
-    watcher.out.log
-    watcher.err.log
+    <service>-web-1.out.log
 ```
 
 ---
 
-## state.json reference
+## Configuration reference
 
-Written after every check and deploy:
+Configuration is via `.env` file (passed with `-config .env`):
 
-```json
-{
-  "current_version": "v1.2.0",
-  "status": "healthy",
-  "last_checked": "2024-01-15T10:01:00Z",
-  "last_deployed": "2024-01-15T10:00:15Z",
-  "last_error": ""
-}
-```
+| Variable       | Required | Default                                  | Description                             |
+| -------------- | -------- | ---------------------------------------- | --------------------------------------- |
+| `ENVIRONMENT`  | no       | —                                        | Human-readable label (logs only)        |
+| `GITHUB_TOKEN` | no       | —                                        | PAT for private repos. Empty for public |
+| `LOG_DIR`      | no       | `D:\apps\watcher\logs`                   | Agent log directory                     |
+| `NSSM_PATH`    | no       | `C:\ProgramData\chocolatey\bin\nssm.exe` | Full path to nssm.exe                   |
+| `DB_PATH`      | no       | `watcher.db`                             | SQLite database file path               |
+| `API_PORT`     | no       | `8080`                                   | API + dashboard port                    |
 
-| Status      | Meaning                                       |
-| ----------- | --------------------------------------------- |
-| `unknown`   | Watcher has never deployed to this server     |
-| `deploying` | Deploy in progress                            |
-| `healthy`   | Last deploy succeeded and health check passed |
-| `failed`    | Deploy failed — see `last_error`              |
-| `rollback`  | Rolled back to a previous version             |
-
----
-
-## Logs
-
-All logs are structured JSON written to `D:\apps\watcher\logs\watcher.out.log`.
-
-```json
-{"time":"2024-01-15T10:00:00Z","level":"INFO","component":"admin-be","msg":"check cycle","fields":{"metadata_url":"https://..."}}
-{"time":"2024-01-15T10:00:01Z","level":"INFO","component":"admin-be","msg":"version mismatch, deploying","fields":{"from":"v1.1.0","to":"v1.2.0"}}
-{"time":"2024-01-15T10:00:15Z","level":"INFO","component":"admin-be","msg":"health check passed","fields":{"service":"admin-be-web-1","attempt":2}}
-{"time":"2024-01-15T10:00:17Z","level":"INFO","component":"admin-be","msg":"deploy complete","fields":{"version":"v1.2.0"}}
-```
-
-The `component` field always matches the `name` set in `config.json` — useful for filtering logs when watching multiple repos.
-
----
-
-## config.json reference
-
-| Field                                        | Required | Default                                  | Description                                       |
-| -------------------------------------------- | -------- | ---------------------------------------- | ------------------------------------------------- |
-| `environment`                                | no       | —                                        | Human-readable server label (logs only)           |
-| `github_token`                               | yes      | —                                        | PAT with `repo` scope for private repos           |
-| `log_dir`                                    | no       | `D:\apps\watcher\logs`                   | Where watcher writes its own logs                 |
-| `nssm_path`                                  | no       | `C:\ProgramData\chocolatey\bin\nssm.exe` | Full path to nssm.exe                             |
-| `watchers[].name`                            | no       | same as `service_name`                   | Label used in log output                          |
-| `watchers[].service_name`                    | yes      | —                                        | Must match `APP_NAME` in the repo's `release.yml` |
-| `watchers[].metadata_url`                    | yes      | —                                        | URL to `version.json` on GitHub Releases          |
-| `watchers[].check_interval_sec`              | no       | 60                                       | Poll frequency in seconds                         |
-| `watchers[].install_dir`                     | yes      | —                                        | Base directory for releases on this machine       |
-| `watchers[].download_retries`                | no       | 3                                        | Retry attempts with exponential backoff           |
-| `watchers[].health_check.enabled`            | no       | false                                    | Set `true` to validate after deploy               |
-| `watchers[].health_check.url`                | no       | —                                        | Default health endpoint (overridable per service) |
-| `watchers[].health_check.retries`            | no       | 10                                       | Attempts before rollback                          |
-| `watchers[].health_check.interval_sec`       | no       | 3                                        | Seconds between retries                           |
-| `watchers[].health_check.timeout_sec`        | no       | 5                                        | Per-request HTTP timeout                          |
-| `watchers[].services[].windows_service_name` | yes      | —                                        | NSSM-managed Windows service name                 |
-| `watchers[].services[].binary_name`          | yes      | —                                        | Filename inside the release zip                   |
-| `watchers[].services[].env_file`             | yes      | —                                        | Path to the `.env` file for this instance         |
-| `watchers[].services[].health_check_url`     | no       | —                                        | Overrides watcher-level health check URL          |
+Watchers and services are managed via the dashboard or REST API, stored in the SQLite database.
