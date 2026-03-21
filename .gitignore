@@ -5,6 +5,9 @@ bin/*
 !.env.example
 config*.json
 !config.example.json
+tmp
+*.db*
+logs
 
 # OS
 .DS_Store

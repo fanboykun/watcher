@@ -40,10 +40,19 @@ OUT := $(BIN_DIR)/$(BINARY_NAME)
 # Targets
 # ==============================================================
 
-.PHONY: all build package test test-github test-verbose run clean info help
+.PHONY: all build package test test-github test-verbose run dev clean info help
 
 ## all: run tests then build
 all: test build
+
+## dev: start air hot-reload (install air if missing)
+dev:
+	@command -v air > /dev/null 2>&1 || (echo "Installing air..." && $(GO) install github.com/air-verse/air@latest)
+	@echo ""
+	@echo "  ▸ Starting dev server with hot reload..."
+	@echo "  ▸ API at http://localhost:$${API_PORT:-8080}"
+	@echo ""
+	CGO_ENABLED=1 air -c .air.toml
 
 ## build: cross-compile watcher.exe for Windows (amd64)
 build:
