@@ -170,53 +170,124 @@ func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVer
 
 // ── Agent — runs all RepoWatchers concurrently ────────────────────────────────
 
+type watcherHandle struct {
+	cancel    context.CancelFunc
+	trigger   chan struct{}
+	updatedAt int64
+}
+
 // Agent manages all RepoWatcher instances, one goroutine per watcher entry.
 type Agent struct {
 	db           *gorm.DB
 	appCfg       *config.AppConfig
 	log          *Logger
 	checkTrigger chan uint
+	syncTrigger  chan struct{}
+
+	mu       sync.Mutex
+	watchers map[uint]watcherHandle
 }
 
-func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, checkTrigger chan uint) *Agent {
-	return &Agent{db: db, appCfg: appCfg, log: log, checkTrigger: checkTrigger}
+func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, checkTrigger chan uint, syncTrigger chan struct{}) *Agent {
+	return &Agent{
+		db:           db, 
+		appCfg:       appCfg, 
+		log:          log, 
+		checkTrigger: checkTrigger,
+		syncTrigger:  syncTrigger,
+		watchers:     make(map[uint]watcherHandle),
+	}
 }
 
 // Run loads all watchers from the database, starts one goroutine per watcher,
 // and blocks until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) {
-	var watchers []database.Watcher
-	if err := a.db.Preload("Services").Find(&watchers).Error; err != nil {
+	// Initial load
+	a.syncWatchers(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			a.mu.Lock()
+			for _, h := range a.watchers {
+				h.cancel()
+			}
+			a.mu.Unlock()
+			a.log.Info("all watchers stopped")
+			return
+		case <-a.syncTrigger:
+			a.log.Info("syncing watchers from database")
+			a.syncWatchers(ctx)
+		case triggerID := <-a.checkTrigger:
+			a.mu.Lock()
+			h, ok := a.watchers[triggerID]
+			a.mu.Unlock()
+			if ok {
+				select {
+				case h.trigger <- struct{}{}:
+				default:
+				}
+			} else {
+				a.log.Warn("check trigger for unknown watcher", "id", triggerID)
+			}
+		}
+	}
+}
+
+func (a *Agent) syncWatchers(ctx context.Context) {
+	var dbWatchers []database.Watcher
+	if err := a.db.Preload("Services").Find(&dbWatchers).Error; err != nil {
 		a.log.Error("failed to load watchers from database", "error", err)
 		return
 	}
 
-	if len(watchers) == 0 {
-		a.log.Warn("no watchers configured in database -- add watchers via the API")
-		// Block until cancelled so the API server stays up
-		<-ctx.Done()
-		return
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	currentIDs := make(map[uint]bool)
+	for _, w := range dbWatchers {
+		currentIDs[w.ID] = true
 	}
 
-	a.log.Info("watchers loaded", "count", len(watchers))
-
-	var wg sync.WaitGroup
-
-	for i := range watchers {
-		w := &watchers[i]
-		wg.Add(1)
-
-		go func(w *database.Watcher) {
-			defer wg.Done()
-			a.runWatcher(ctx, w)
-		}(w)
+	// Stop removed watchers
+	for id, h := range a.watchers {
+		if !currentIDs[id] {
+			a.log.Info("stopping removed watcher", "id", id)
+			h.cancel()
+			delete(a.watchers, id)
+		}
 	}
 
-	wg.Wait()
-	a.log.Info("all watchers stopped")
+	// Start or update watchers
+	for i := range dbWatchers {
+		w := &dbWatchers[i]
+		h, exists := a.watchers[w.ID]
+
+		updatedAt := w.UpdatedAt.UnixNano()
+		if exists && h.updatedAt == updatedAt {
+			continue // Unchanged
+		}
+
+		if exists {
+			a.log.Info("restarting updated watcher", "id", w.ID)
+			h.cancel()
+		} else {
+			a.log.Info("starting new watcher", "id", w.ID)
+		}
+
+		wCtx, cancel := context.WithCancel(ctx)
+		trigger := make(chan struct{}, 1)
+		a.watchers[w.ID] = watcherHandle{
+			cancel:    cancel,
+			trigger:   trigger,
+			updatedAt: updatedAt,
+		}
+
+		go a.runWatcher(wCtx, w, trigger)
+	}
 }
 
-func (a *Agent) runWatcher(ctx context.Context, dbWatcher *database.Watcher) {
+func (a *Agent) runWatcher(ctx context.Context, dbWatcher *database.Watcher, trigger chan struct{}) {
 	log := a.log.WithComponent(dbWatcher.Name)
 	rw := NewRepoWatcher(dbWatcher, a.db, a.appCfg, a.log)
 
@@ -244,12 +315,10 @@ func (a *Agent) runWatcher(ctx context.Context, dbWatcher *database.Watcher) {
 			if err := rw.Run(ctx); err != nil && err != context.Canceled {
 				log.Error("check cycle failed", "error", err)
 			}
-		case triggerID := <-a.checkTrigger:
-			if triggerID == dbWatcher.ID {
-				log.Info("immediate check triggered via API")
-				if err := rw.Run(ctx); err != nil && err != context.Canceled {
-					log.Error("triggered check failed", "error", err)
-				}
+		case <-trigger:
+			log.Info("immediate check triggered via API")
+			if err := rw.Run(ctx); err != nil && err != context.Canceled {
+				log.Error("triggered check failed", "error", err)
 			}
 		}
 	}

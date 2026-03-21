@@ -17,11 +17,12 @@ type Handler struct {
 	logDir       string
 	version      string
 	startTime    time.Time
-	checkTrigger chan uint // send watcher ID for immediate poll
+	checkTrigger chan uint    // send watcher ID for immediate poll
+	syncTrigger  chan struct{} // trigger background agent to sync DB
 }
 
 // NewHandler creates a new Handler with the given dependencies.
-func NewHandler(db *gorm.DB, nssmPath, logDir, version string, checkTrigger chan uint) *Handler {
+func NewHandler(db *gorm.DB, nssmPath, logDir, version string, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
 	return &Handler{
 		db:           db,
 		nssmPath:     nssmPath,
@@ -29,6 +30,7 @@ func NewHandler(db *gorm.DB, nssmPath, logDir, version string, checkTrigger chan
 		version:      version,
 		startTime:    time.Now(),
 		checkTrigger: checkTrigger,
+		syncTrigger:  syncTrigger,
 	}
 }
 
@@ -97,6 +99,8 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		}
 	}
 
+	h.triggerSync()
+
 	// Reload with services
 	h.db.Preload("Services").First(&watcher, watcher.ID)
 	c.JSON(http.StatusCreated, watcher)
@@ -157,6 +161,8 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 		}
 	}
 
+	h.triggerSync()
+
 	// Reload
 	h.db.Preload("Services").First(watcher, watcher.ID)
 	c.JSON(http.StatusOK, watcher)
@@ -176,6 +182,7 @@ func (h *Handler) DeleteWatcher(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	h.triggerSync()
 	c.JSON(http.StatusOK, MessageResponse{Message: "watcher deleted"})
 }
 // ── Service CRUD (nested under watcher) ───────────────────────
@@ -239,6 +246,10 @@ func (h *Handler) CreateService(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	
+	h.db.Model(&database.Watcher{}).Where("id = ?", watcher.ID).UpdateColumn("updated_at", time.Now())
+	h.triggerSync()
+
 	c.JSON(http.StatusCreated, svc)
 }
 
@@ -276,6 +287,9 @@ func (h *Handler) UpdateService(c *gin.Context) {
 		}
 	}
 
+	h.db.Model(&database.Watcher{}).Where("id = ?", svc.WatcherID).UpdateColumn("updated_at", time.Now())
+	h.triggerSync()
+
 	h.db.First(svc, svc.ID)
 	c.JSON(http.StatusOK, svc)
 }
@@ -291,6 +305,10 @@ func (h *Handler) DeleteService(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+
+	h.db.Model(&database.Watcher{}).Where("id = ?", svc.WatcherID).UpdateColumn("updated_at", time.Now())
+	h.triggerSync()
+
 	c.JSON(http.StatusOK, MessageResponse{Message: "service deleted"})
 }
 
@@ -359,4 +377,11 @@ func withDefault(val, def int) int {
 func timeNow() *time.Time {
 	t := time.Now().UTC()
 	return &t
+}
+
+func (h *Handler) triggerSync() {
+	select {
+	case h.syncTrigger <- struct{}{}:
+	default:
+	}
 }

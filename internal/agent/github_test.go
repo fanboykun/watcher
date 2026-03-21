@@ -239,8 +239,8 @@ func TestFetchMetadata_PublicRepo_Unauthorized(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "github_token") {
-		t.Errorf("expected hint about github_token in error, got: %v", err)
+	if !strings.Contains(err.Error(), "GITHUB_TOKEN") {
+		t.Errorf("expected hint about GITHUB_TOKEN in error, got: %v", err)
 	}
 }
 

@@ -60,9 +60,9 @@ func NewGitHubClient(token string, log *Logger) *GitHubClient {
 //
 // For PRIVATE repos:
 //   Uses the GitHub API to find the asset, then downloads via the asset API URL.
-//   Requires github_token with repo scope in config.json.
+//   Requires github_token in .env with repo scope.
 //
-// The metadata_url in config.json should always be:
+// The metadata_url configuration should always be:
 //   https://github.com/{owner}/{repo}/releases/latest/download/version.json
 // This function handles routing to the correct method automatically.
 func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionMetadata, error) {
@@ -186,7 +186,7 @@ func (g *GitHubClient) fetchDirect(ctx context.Context, url string) ([]byte, err
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("HTTP %d -- repo may be private, set github_token in config.json", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d -- repo may be private, set GITHUB_TOKEN in .env", resp.StatusCode)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("HTTP 404 -- confirm a release exists and version.json was uploaded as a release asset")

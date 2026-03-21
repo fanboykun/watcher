@@ -62,7 +62,21 @@ func LoadConfig(envPath string) (*AppConfig, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
+	// Fix viper/gotenv unescaping Windows paths containing \n, \t, etc.
+	cfg.NssmPath = cleanWindowsPath(cfg.NssmPath)
+	cfg.LogDir = cleanWindowsPath(cfg.LogDir)
+	cfg.DBPath = cleanWindowsPath(cfg.DBPath)
+
 	return &cfg, cfg.validate()
+}
+
+func cleanWindowsPath(s string) string {
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\t", "\\t")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\b", "\\b")
+	s = strings.ReplaceAll(s, "\f", "\\f")
+	return s
 }
 
 func (c *AppConfig) validate() error {
