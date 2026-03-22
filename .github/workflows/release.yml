@@ -68,14 +68,15 @@ jobs:
           echo "Latest tag: ${LATEST_TAG:-none}"
 
           if [ -z "$LATEST_TAG" ]; then
-            # No tags at all -- start search from the first commit
-            COMMITS=$(git log --pretty=format:"%s" 2>/dev/null)
+            # No tags yet -- only look at the most recent commit to avoid
+            # scanning all history and over-bumping on first release
+            COMMITS=$(git log -1 --pretty=format:"%s" 2>/dev/null)
           else
             COMMITS=$(git log "${LATEST_TAG}..HEAD" --pretty=format:"%s" 2>/dev/null)
           fi
 
           if [ -z "$COMMITS" ]; then
-            echo "No commits since $LATEST_TAG"
+            echo "No commits since ${LATEST_TAG:-beginning}"
             echo "should_release=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -85,7 +86,7 @@ jobs:
           MINOR=$(echo "${VERSION:-0.0.0}" | cut -d. -f2)
           PATCH=$(echo "${VERSION:-0.0.0}" | cut -d. -f3)
 
-          echo "Commits since $LATEST_TAG:"
+          echo "Commits since ${LATEST_TAG:-beginning}:"
           echo "$COMMITS"
 
           classify_commit() {
@@ -109,10 +110,6 @@ jobs:
             echo "skip"
           }
 
-          BUMP=""
-          CHANGELOG=""
-          SKIP_ONLY=true
-
           bump_priority() {
             case "$1" in
               major) echo 3 ;;
@@ -122,19 +119,23 @@ jobs:
             esac
           }
 
+          BUMP=""
           BUMP_LEVEL=0
+          CHANGELOG=""
+          SKIP_ONLY=true
 
           while IFS= read -r msg; do
             [ -z "$msg" ] && continue
             RESULT=$(classify_commit "$msg")
             RESULT_LEVEL=$(bump_priority "$RESULT")
 
+            # Only upgrade bump level -- never downgrade
             if [ "$RESULT_LEVEL" -gt "$BUMP_LEVEL" ]; then
               BUMP_LEVEL=$RESULT_LEVEL
               BUMP=$RESULT
             fi
 
-            if [ "$RESULT" != "skip" ] && [ "$RESULT_LEVEL" -gt 0 ]; then
+            if [ "$RESULT_LEVEL" -gt 0 ]; then
               CHANGELOG="${CHANGELOG}* ${msg}\n"
               SKIP_ONLY=false
             fi
@@ -147,12 +148,12 @@ jobs:
             CHANGELOG="Manually triggered ($FORCE bump)\n"
           fi
 
+          # ── Fallback: important files changed but no releasable commit ──────
+          # Covers commits like "chore: update deps" that touch real deliverables
+          # but don't follow a releasable pattern. Defaults to patch.
           if [ "$SKIP_ONLY" = "true" ] || [ -z "$BUMP" ]; then
-            # If no tags yet, diff against start of history
-            RANGE=${LATEST_TAG:+"${LATEST_TAG}..HEAD"}
-            [ -z "$RANGE" ] && RANGE="HEAD"
-            
-            CHANGED=$(git diff --name-only $RANGE 2>/dev/null || git diff --name-only HEAD~1..HEAD 2>/dev/null)
+            # Always diff committed changes -- never unstaged working tree
+            CHANGED=$(git diff --name-only "${LATEST_TAG}..HEAD" 2>/dev/null || git diff --name-only HEAD~1..HEAD 2>/dev/null)
             echo "Checking changed files for important content:"
             echo "$CHANGED"
 
@@ -167,11 +168,10 @@ jobs:
             done <<< "$CHANGED"
 
             if [ "$IMPORTANT" = "true" ]; then
-              echo "Important files changed but no commit pattern matched -- defaulting to patch bump"
+              echo "Important files changed but no commit pattern matched -- defaulting to patch"
               BUMP="patch"
               SKIP_ONLY=false
-              CHANGELOG="${COMMITS//$'\n'/$'\n* '}\n"
-              CHANGELOG="* ${CHANGELOG}"
+              CHANGELOG="* ${COMMITS//$'\n'/$'\n* '}\n"
             else
               echo "No releasable commits and no important file changes -- skipping release"
               echo "should_release=false" >> $GITHUB_OUTPUT
@@ -242,6 +242,13 @@ jobs:
           echo "Built: $(ls -lh dist/${{ env.WATCHER_BINARY }})"
 
       # ── Assemble release package ────────────────────────────────────────────
+      # The zip contains everything the user needs to bootstrap a server:
+      #   watcher.exe             -- the agent binary (SPA embedded)
+      #   install.bat             -- double-click to launch the GUI wizard
+      #   shell/
+      #     install-watcher.ps1   -- wizard + automated install script
+      #   .env.example            -- example config (copy to .env and edit)
+      #   INSTALL.md              -- step-by-step install guide
       - name: Assemble release package
         id: zip
         run: |
@@ -263,6 +270,7 @@ jobs:
           unzip -l "${ZIP_NAME}"
 
       # ── Generate version.json ───────────────────────────────────────────────
+      # Allows a meta-watcher to auto-update the watcher itself in the future
       - name: Generate version.json
         run: |
           VERSION="${{ needs.tag.outputs.new_tag }}"
@@ -301,8 +309,7 @@ jobs:
 
             1. Download `${{ steps.zip.outputs.zip_name }}`
             2. Extract to `D:\apps\watcher\` on your Windows server
-            3. Copy `.env.example` to `.env` and edit with your settings
-            4. Run `install.bat` as Administrator to launch the GUI wizard
+            3. Double-click `install.bat` to launch the setup wizard
 
             See `INSTALL.md` inside the zip for the full guide.
           files: |

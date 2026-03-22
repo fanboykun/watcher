@@ -53,6 +53,7 @@ type Service struct {
 	IISAppPool         string `gorm:"not null;default:''" json:"iis_app_pool"`  // Static only
 	IISSiteName        string `gorm:"not null;default:''" json:"iis_site_name"` // Static only
 	PublicURL          string `gorm:"not null;default:''" json:"public_url"`
+	EnvContent         string `gorm:"type:text" json:"env_content"`
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`

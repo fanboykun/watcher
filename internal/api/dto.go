@@ -47,6 +47,7 @@ type CreateServiceRequest struct {
 	IISAppPool         string `json:"iis_app_pool"`                              // Static only
 	IISSiteName        string `json:"iis_site_name"`                             // Static only
 	PublicURL          string `json:"public_url"`
+	EnvContent         string `json:"env_content"`
 }
 
 // UpdateServiceRequest is the body for PUT /api/watchers/:id/services/:sid
@@ -59,6 +60,7 @@ type UpdateServiceRequest struct {
 	IISAppPool         *string `json:"iis_app_pool"`
 	IISSiteName        *string `json:"iis_site_name"`
 	PublicURL          *string `json:"public_url"`
+	EnvContent         *string `json:"env_content"`
 }
 
 // ── Response helpers ──────────────────────────────────────────

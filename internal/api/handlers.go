@@ -1,7 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -263,12 +266,15 @@ func (h *Handler) CreateService(c *gin.Context) {
 		IISAppPool:         req.IISAppPool,
 		IISSiteName:        req.IISSiteName,
 		PublicURL:          req.PublicURL,
+		EnvContent:         req.EnvContent,
 	}
 
 	if err := h.db.Create(&svc).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+
+	h.syncServiceEnvFile(&svc, watcher.InstallDir)
 	
 	h.db.Model(&database.Watcher{}).Where("id = ?", watcher.ID).UpdateColumn("updated_at", time.Now())
 	h.triggerSync()
@@ -314,6 +320,9 @@ func (h *Handler) UpdateService(c *gin.Context) {
 	if req.PublicURL != nil {
 		updates["public_url"] = *req.PublicURL
 	}
+	if req.EnvContent != nil {
+		updates["env_content"] = *req.EnvContent
+	}
 
 	if len(updates) > 0 {
 		if err := h.db.Model(svc).Updates(updates).Error; err != nil {
@@ -321,6 +330,10 @@ func (h *Handler) UpdateService(c *gin.Context) {
 			return
 		}
 	}
+
+	var watcher database.Watcher
+	h.db.First(&watcher, svc.WatcherID)
+	h.syncServiceEnvFile(svc, watcher.InstallDir)
 
 	h.db.Model(&database.Watcher{}).Where("id = ?", svc.WatcherID).UpdateColumn("updated_at", time.Now())
 	h.triggerSync()
@@ -568,4 +581,50 @@ func (h *Handler) InspectGitHubRepo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// SyncServiceEnv updates the .env content for a service and syncs it to disk.
+func (h *Handler) SyncServiceEnv(c *gin.Context) {
+	svc, err := h.findService(c)
+	if err != nil {
+		return
+	}
+
+	var req struct {
+		EnvContent string `json:"env_content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.db.Model(svc).Update("env_content", req.EnvContent).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	var watcher database.Watcher
+	h.db.First(&watcher, svc.WatcherID)
+	h.syncServiceEnvFile(svc, watcher.InstallDir)
+
+	c.JSON(http.StatusOK, MessageResponse{Message: "Environment file updated and synced"})
+}
+
+func (h *Handler) syncServiceEnvFile(svc *database.Service, installDir string) {
+	if svc.EnvFile == "" || svc.EnvContent == "" {
+		return
+	}
+
+	// .env files are usually relative to the install directory
+	envPath := filepath.Join(installDir, svc.EnvFile)
+
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(envPath), 0755); err != nil {
+		fmt.Printf("Error creating env dir %s: %v\n", envPath, err)
+		return
+	}
+
+	if err := os.WriteFile(envPath, []byte(svc.EnvContent), 0600); err != nil {
+		fmt.Printf("Error writing env file %s: %v\n", envPath, err)
+	}
 }

@@ -33,6 +33,7 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken string, check
 			services.POST("/:id/start", h.StartService)
 			services.POST("/:id/stop", h.StopService)
 			services.POST("/:id/restart", h.RestartService)
+			services.PUT("/:id/env", h.SyncServiceEnv)
 			services.GET("/:id/health", h.GetServiceHealth)
 			services.GET("/:id/health/history", h.GetHealthHistory)
 			services.GET("/:id/logs", h.GetServiceLogs)

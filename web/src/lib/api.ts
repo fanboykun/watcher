@@ -56,6 +56,7 @@ export interface Service {
 	iis_app_pool: string;
 	iis_site_name: string;
 	public_url: string;
+	env_content: string;
 	created_at: string;
 	updated_at: string;
 }
@@ -134,6 +135,7 @@ export const api = {
 	healthHistory: (id: number, limit = 50) => request<HealthEvent[]>(`/services/${id}/health/history?limit=${limit}`),
 	serviceLogs: (id: number, lines = 100, type = 'out') => request<{ lines: string[] }>(`/services/${id}/logs?lines=${lines}&type=${type}`),
 	serviceDeploys: (id: number) => request<DeployLog[]>(`/services/${id}/deploys`),
+	syncServiceEnv: (id: number, envContent: string) => request<{ message: string }>(`/services/${id}/env`, { method: 'PUT', body: JSON.stringify({ env_content: envContent }) }),
 
 	// Services (nested under watcher)
 	createService: (watcherId: number, data: Partial<Service>) => request<Service>(`/watchers/${watcherId}/services`, { method: 'POST', body: JSON.stringify(data) }),
