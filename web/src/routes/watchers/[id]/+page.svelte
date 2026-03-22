@@ -24,9 +24,11 @@
 		Pencil,
 		Trash2,
 		Save,
-		X
+		X,
+		ExternalLink
 	} from '@lucide/svelte';
 	import { resolve } from '$app/paths';
+	import { goto } from '$app/navigation';
 
 	let watcher = $state<Watcher | null>(null);
 	let deploys = $state<DeployLog[]>([]);
@@ -45,6 +47,7 @@
 	let svcHealthURL = $state('');
 	let svcIISAppPool = $state('');
 	let svcIISSiteName = $state('');
+	let svcPublicURL = $state('');
 
 	// Edit form
 	let editInterval = $state(60);
@@ -53,14 +56,70 @@
 	let editHcEnabled = $state(false);
 	let editHcURL = $state('');
 
+	let activeTab = $state(page.url.searchParams.get('tab') || 'overview');
+
+	let liveLogLines = $state<string[]>([]);
+	let liveLogSource: EventSource | null = null;
+	let logContainer: HTMLElement | undefined = $state();
+
 	const id = Number(page.params.id);
 
-	onMount(async () => {
-		try {
-			[watcher, deploys] = await Promise.all([api.getWatcher(id), api.watcherDeploys(id)]);
-			syncEditForm();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load watcher';
+	onMount(() => {
+		const init = async () => {
+			try {
+				[watcher, deploys] = await Promise.all([api.getWatcher(id), api.watcherDeploys(id)]);
+				syncEditForm();
+			} catch (e) {
+				error = e instanceof Error ? e.message : 'Failed to load watcher';
+			}
+		};
+		init();
+
+		const poll = setInterval(async () => {
+			if (!watcher) return;
+			try {
+				watcher = await api.getWatcher(id);
+				// Optionally refresh deploys array if status changed from deploying to something else
+				// but Svelte will just rerender watcher properties nicely.
+			} catch (err) {
+				// ignore polling errors
+			}
+		}, 3000);
+
+		return () => clearInterval(poll);
+	});
+
+	$effect(() => {
+		if (watcher?.status === 'deploying') {
+			if (!liveLogSource) {
+				liveLogLines = [];
+				liveLogSource = new EventSource('/api/logs/stream?type=out');
+				liveLogSource.onmessage = (e) => {
+					liveLogLines = [...liveLogLines, e.data];
+				};
+				liveLogSource.onerror = () => {
+					// Fallback or retry logic (browser auto-retries SSE)
+				};
+			}
+		} else {
+			if (liveLogSource) {
+				liveLogSource.close();
+				liveLogSource = null;
+			}
+		}
+
+		return () => {
+			if (liveLogSource) {
+				liveLogSource.close();
+				liveLogSource = null;
+			}
+		};
+	});
+
+	$effect(() => {
+		// Auto-scroll logic
+		if (logContainer && liveLogLines.length > 0) {
+			logContainer.scrollTop = logContainer.scrollHeight;
 		}
 	});
 
@@ -101,11 +160,12 @@
 				env_file: svcEnvFile,
 				health_check_url: svcHealthURL,
 				iis_app_pool: svcIISAppPool,
-				iis_site_name: svcIISSiteName
+				iis_site_name: svcIISSiteName,
+				public_url: svcPublicURL
 			});
 			showAddService = false;
 			svcType = 'nssm';
-			svcName = svcBinary = svcEnvFile = svcHealthURL = svcIISAppPool = svcIISSiteName = '';
+			svcName = svcBinary = svcEnvFile = svcHealthURL = svcIISAppPool = svcIISSiteName = svcPublicURL = '';
 			watcher = await api.getWatcher(id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to add service';
@@ -295,7 +355,29 @@
 			</Card.Root>
 		{/if}
 
-		<Tabs.Root value="overview">
+		{#if watcher.status === 'deploying'}
+			<Card.Root class="border-blue-500/30 bg-blue-500/5 mb-6">
+				<Card.Header class="pb-3 border-b border-border/50">
+					<Card.Title class="text-sm font-medium flex items-center gap-2 text-blue-400">
+						<Loader2 class="h-4 w-4 animate-spin" />
+						Deployment in Progress...
+					</Card.Title>
+				</Card.Header>
+				<Card.Content class="p-0">
+					<div class="h-[300px] w-full bg-[#0a0a0a] overflow-y-auto p-4 font-mono text-xs text-blue-300 leading-relaxed scroll-smooth" bind:this={logContainer}>
+						{#if liveLogLines.length === 0}
+							<div class="text-muted-foreground">Connecting to agent stream...</div>
+						{/if}
+						{#each liveLogLines as line, i (i)}
+							<div class="whitespace-pre-wrap break-all">{line}</div>
+						{/each}
+					</div>
+				</Card.Content>
+			</Card.Root>
+		{/if}
+
+		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+		<Tabs.Root bind:value={activeTab} onValueChange={(v) => { if (v) goto(`?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true }); }}>
 			<Tabs.List>
 				<Tabs.Trigger value="overview">Overview</Tabs.Trigger>
 				<Tabs.Trigger value="services">Services ({watcher.services.length})</Tabs.Trigger>
@@ -397,6 +479,12 @@
 											<a href={resolve(`/services/${svc.id}`)} class="font-medium hover:underline"
 												>{svc.windows_service_name}</a
 											>
+											{#if svc.public_url}
+												<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+												<a href={svc.public_url} target="_blank" rel="noopener noreferrer" class="ml-1.5 inline-flex items-center text-muted-foreground hover:text-foreground" title="Open Public URL">
+													<ExternalLink class="h-3 w-3" />
+												</a>
+											{/if}
 										</Table.Cell>
 										<Table.Cell>
 											<span class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {svc.service_type === 'static' ? 'border-blue-500/30 bg-blue-500/10 text-blue-400' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'}">
@@ -552,6 +640,14 @@
 					id="svcHealthURL"
 					placeholder="http://localhost:3000/health"
 					bind:value={svcHealthURL}
+				/>
+			</div>
+			<div class="space-y-2">
+				<Label for="svcPublicURL">Public URL (optional)</Label>
+				<Input
+					id="svcPublicURL"
+					placeholder="https://my-app.example.com"
+					bind:value={svcPublicURL}
 				/>
 			</div>
 			<Dialog.Footer>

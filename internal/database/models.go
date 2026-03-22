@@ -53,6 +53,7 @@ type Service struct {
 	HealthCheckURL     string `gorm:"not null;default:''" json:"health_check_url"`
 	IISAppPool         string `gorm:"not null;default:''" json:"iis_app_pool"`  // Static only
 	IISSiteName        string `gorm:"not null;default:''" json:"iis_site_name"` // Static only
+	PublicURL          string `gorm:"not null;default:''" json:"public_url"`
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`

@@ -6,18 +6,8 @@
 	import * as Table from '$lib/components/ui/table';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import * as Button from '$lib/components/ui/button';
-	import {
-		ArrowLeft,
-		Play,
-		Square,
-		RefreshCw,
-		Heart,
-		AlertCircle,
-		CheckCircle2,
-		XCircle,
-		Activity,
-		FileText
-	} from '@lucide/svelte';
+	import { ArrowLeft, Play, Square, RefreshCw, Heart, AlertCircle, CheckCircle2, XCircle, Activity, FileText, ExternalLink, TerminalSquare } from '@lucide/svelte';
+	import { goto } from '$app/navigation';
 
 	let service = $state<Service | null>(null);
 	let watcher = $state<Watcher | null>(null);
@@ -29,6 +19,8 @@
 	let logError = $state('');
 	let logType = $state<'out' | 'err'>('out');
 	let logCount = $state(100);
+	
+	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
 	const id = Number(page.params.id);
 
@@ -211,10 +203,46 @@
 					<p class="text-xs text-muted-foreground">Install Dir</p>
 					<p class="mt-1 font-mono text-sm">{watcher?.install_dir ?? '—'}</p>
 				</div>
+				<div>
+					<p class="text-xs text-muted-foreground">Public URL</p>
+					<p class="mt-1 font-mono text-sm">
+						{#if service.public_url}
+							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+							<a href={service.public_url} target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 hover:underline text-blue-400">
+								{service.public_url} <ExternalLink class="h-3 w-3" />
+							</a>
+						{:else}
+							—
+						{/if}
+					</p>
+				</div>
 			</Card.Content>
 		</Card.Root>
 
-		<Tabs.Root value="health">
+		{#if service.service_type === 'static'}
+			<div class="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
+				<div class="flex items-center gap-2 mb-2 text-blue-400 font-medium">
+					<TerminalSquare class="h-5 w-5" />
+					IIS Configuration Required
+				</div>
+				<p class="text-sm text-foreground/80 mb-4">
+					The Watcher automatically manages extracting releases and updating target junctions for static sites, but it does <strong>not</strong> create the IIS website itself. Run these commands once in an Administrator PowerShell to link IIS to this deployment:
+				</p>
+				<div class="bg-black/50 p-3 rounded-md overflow-x-auto border border-border">
+					<pre class="font-mono text-xs text-blue-300 leading-relaxed max-w-full"><span class="text-muted-foreground"># 1. Create the application pool</span>
+appcmd.exe add apppool /name:"{service.iis_app_pool}"
+
+<span class="text-muted-foreground"># 2. Create the site (change the port/host binding as needed)</span>
+appcmd.exe add site /name:"{service.iis_site_name}" /bindings:http/*:8080: /physicalPath:"{watcher?.install_dir}\current"
+
+<span class="text-muted-foreground"># 3. Assign the site to the application pool</span>
+appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app_pool}"</pre>
+				</div>
+			</div>
+		{/if}
+
+		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+		<Tabs.Root bind:value={activeTab} onValueChange={(v) => { if (v) goto(`?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true }); }}>
 			<Tabs.List>
 				<Tabs.Trigger value="health">Health History ({healthHistory.length})</Tabs.Trigger>
 				<Tabs.Trigger value="logs">Logs</Tabs.Trigger>

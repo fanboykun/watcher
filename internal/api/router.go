@@ -22,6 +22,7 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version string, checkTrigger chan 
 		// System
 		apiGroup.GET("/status", h.SystemStatus)
 		apiGroup.GET("/logs", h.AgentLogs)
+		apiGroup.GET("/logs/stream", h.StreamAgentLogs)
 
 		// ── Services (flat, across all watchers) ──────────────
 		services := apiGroup.Group("/services")

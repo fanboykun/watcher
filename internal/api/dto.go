@@ -44,6 +44,7 @@ type CreateServiceRequest struct {
 	HealthCheckURL     string `json:"health_check_url"`
 	IISAppPool         string `json:"iis_app_pool"`                              // Static only
 	IISSiteName        string `json:"iis_site_name"`                             // Static only
+	PublicURL          string `json:"public_url"`
 }
 
 // UpdateServiceRequest is the body for PUT /api/watchers/:id/services/:sid
@@ -55,6 +56,7 @@ type UpdateServiceRequest struct {
 	HealthCheckURL     *string `json:"health_check_url"`
 	IISAppPool         *string `json:"iis_app_pool"`
 	IISSiteName        *string `json:"iis_site_name"`
+	PublicURL          *string `json:"public_url"`
 }
 
 // ── Response helpers ──────────────────────────────────────────

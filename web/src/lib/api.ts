@@ -48,6 +48,7 @@ export interface Service {
 	health_check_url: string;
 	iis_app_pool: string;
 	iis_site_name: string;
+	public_url: string;
 	created_at: string;
 	updated_at: string;
 }

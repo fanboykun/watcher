@@ -254,6 +254,7 @@ func (h *Handler) CreateService(c *gin.Context) {
 		HealthCheckURL:     req.HealthCheckURL,
 		IISAppPool:         req.IISAppPool,
 		IISSiteName:        req.IISSiteName,
+		PublicURL:          req.PublicURL,
 	}
 
 	if err := h.db.Create(&svc).Error; err != nil {
@@ -301,6 +302,9 @@ func (h *Handler) UpdateService(c *gin.Context) {
 	}
 	if req.IISSiteName != nil {
 		updates["iis_site_name"] = *req.IISSiteName
+	}
+	if req.PublicURL != nil {
+		updates["public_url"] = *req.PublicURL
 	}
 
 	if len(updates) > 0 {
