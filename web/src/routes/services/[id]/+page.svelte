@@ -6,7 +6,21 @@
 	import * as Table from '$lib/components/ui/table';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import * as Button from '$lib/components/ui/button';
-	import { ArrowLeft, Play, Square, RefreshCw, Heart, AlertCircle, CheckCircle2, XCircle, Activity, FileText, ExternalLink, TerminalSquare, Save } from '@lucide/svelte';
+	import {
+		ArrowLeft,
+		Play,
+		Square,
+		RefreshCw,
+		Heart,
+		AlertCircle,
+		CheckCircle2,
+		XCircle,
+		Activity,
+		FileText,
+		ExternalLink,
+		TerminalSquare,
+		Save
+	} from '@lucide/svelte';
 	import { goto } from '$app/navigation';
 
 	let service = $state<Service | null>(null);
@@ -19,10 +33,10 @@
 	let logError = $state('');
 	let logType = $state<'out' | 'err'>('out');
 	let logCount = $state(100);
-	
+
 	let envContent = $state('');
 	let savingEnv = $state(false);
-	
+
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
 	const id = Number(page.params.id);
@@ -231,8 +245,14 @@
 					<p class="mt-1 font-mono text-sm">
 						{#if service.public_url}
 							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-							<a href={service.public_url} target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 hover:underline text-blue-400">
-								{service.public_url} <ExternalLink class="h-3 w-3" />
+							<a
+								href={service.public_url}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="inline-flex items-center gap-1.5 text-blue-400 hover:underline"
+							>
+								{service.public_url}
+								<ExternalLink class="h-3 w-3" />
 							</a>
 						{:else}
 							—
@@ -244,18 +264,24 @@
 
 		{#if service.service_type === 'static'}
 			<div class="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
-				<div class="flex items-center gap-2 mb-2 text-blue-400 font-medium">
+				<div class="mb-2 flex items-center gap-2 font-medium text-blue-400">
 					<TerminalSquare class="h-5 w-5" />
 					IIS Configuration Required
 				</div>
-				<p class="text-sm text-foreground/80 mb-4">
-					The Watcher automatically manages extracting releases and updating target junctions for static sites, but it does <strong>not</strong> create the IIS website itself. Run these commands once in an Administrator PowerShell to link IIS to this deployment:
+				<p class="mb-4 text-sm text-foreground/80">
+					The Watcher automatically manages extracting releases and updating target junctions for
+					static sites, but it does <strong>not</strong> create the IIS website itself. Run these commands
+					once in an Administrator PowerShell to link IIS to this deployment:
 				</p>
-				<div class="bg-black/50 p-3 rounded-md overflow-x-auto border border-border">
-					<pre class="font-mono text-xs text-blue-300 leading-relaxed max-w-full"><span class="text-muted-foreground"># 1. Create the application pool</span>
+				<div class="overflow-x-auto rounded-md border border-border bg-black/50 p-3">
+					<pre class="max-w-full font-mono text-xs leading-relaxed text-blue-300"><span
+							class="text-muted-foreground"># 1. Create the application pool</span
+						>
 appcmd.exe add apppool /name:"{service.iis_app_pool}"
 
-<span class="text-muted-foreground"># 2. Create the site (change the port/host binding as needed)</span>
+<span class="text-muted-foreground"
+							># 2. Create the site (change the port/host binding as needed)</span
+						>
 appcmd.exe add site /name:"{service.iis_site_name}" /bindings:http/*:8080: /physicalPath:"{watcher?.install_dir}\current"
 
 <span class="text-muted-foreground"># 3. Assign the site to the application pool</span>
@@ -265,7 +291,12 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 		{/if}
 
 		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-		<Tabs.Root bind:value={activeTab} onValueChange={(v) => { if (v) goto(`?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true }); }}>
+		<Tabs.Root
+			bind:value={activeTab}
+			onValueChange={(v) => {
+				if (v) goto(`?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true });
+			}}
+		>
 			<Tabs.List>
 				<Tabs.Trigger value="health">Health History ({healthHistory.length})</Tabs.Trigger>
 				<Tabs.Trigger value="logs">Logs</Tabs.Trigger>
@@ -376,7 +407,7 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 					</Card.Content>
 				</Card.Root>
 			</Tabs.Content>
-|
+
 			<!-- Environment -->
 			<Tabs.Content value="env" class="mt-4">
 				<Card.Root class="border-border bg-card">
@@ -384,21 +415,25 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 						<div class="flex items-center justify-between">
 							<div class="space-y-1">
 								<Card.Title class="text-lg">Environment Variables</Card.Title>
-								<Card.Description>Edit the <code>{service.env_file || '.env'}</code> file for this service.</Card.Description>
+								<Card.Description
+									>Edit the <code>{service.env_file || '.env'}</code> file for this service.</Card.Description
+								>
 							</div>
 							<div class="flex items-center gap-2">
 								<Button.Root variant="outline" size="sm" onclick={saveEnv} disabled={savingEnv}>
-									{#if savingEnv}<RefreshCw class="mr-2 h-4 w-4 animate-spin" />{:else}<Save class="mr-2 h-4 w-4" />{/if}
+									{#if savingEnv}<RefreshCw class="mr-2 h-4 w-4 animate-spin" />{:else}<Save
+											class="mr-2 h-4 w-4"
+										/>{/if}
 									Save
 								</Button.Root>
-								<Button.Root 
-									variant="default" 
-									size="sm" 
-									onclick={() => { 
+								<Button.Root
+									variant="default"
+									size="sm"
+									onclick={() => {
 										saveEnv().then(() => runAction(() => api.restartService(id)));
-									}} 
+									}}
 									disabled={savingEnv}
-									class="bg-amber-600 hover:bg-amber-700 text-white"
+									class="bg-amber-600 text-white hover:bg-amber-700"
 								>
 									<RefreshCw class="mr-2 h-4 w-4" /> Save & Restart
 								</Button.Root>
@@ -408,16 +443,17 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 					<Card.Content>
 						<textarea
 							bind:value={envContent}
-							class="min-h-[400px] w-full rounded-md border border-border bg-black/50 p-4 font-mono text-sm text-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+							class="min-h-[400px] w-full rounded-md border border-border bg-black/50 p-4 font-mono text-sm text-blue-300 focus:ring-1 focus:ring-blue-500/50 focus:outline-none"
 							placeholder="KEY=VALUE"
 						></textarea>
 						<p class="mt-2 text-xs text-muted-foreground italic">
-							Note: Environment variables are written to <code>{service.env_file}</code> in the service's installation directory.
+							Note: Environment variables are written to <code>{service.env_file}</code> in the service's
+							installation directory.
 						</p>
 					</Card.Content>
 				</Card.Root>
 			</Tabs.Content>
-|
+
 			<!-- Deploys -->
 			<Tabs.Content value="deploys" class="mt-4">
 				{#if deploys.length > 0}

@@ -247,7 +247,19 @@ func (d *Deployer) ensureServiceByType(svc ServiceConfig, currentDir string) err
 		d.l("static service -- no NSSM registration needed", "name", svc.WindowsServiceName)
 		return nil
 	default: // "nssm"
+		if svc.BinaryName == "" {
+			return fmt.Errorf("binary_name is empty for service %s — cannot register with NSSM", svc.WindowsServiceName)
+		}
 		newBin := filepath.Join(currentDir, svc.BinaryName)
+		if _, err := os.Stat(newBin); os.IsNotExist(err) {
+			// List what's actually in the directory to help debug
+			entries, _ := os.ReadDir(currentDir)
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			return fmt.Errorf("binary %q not found in %s (available: %v)", svc.BinaryName, currentDir, names)
+		}
 		return d.ensureService(svc, newBin)
 	}
 }
