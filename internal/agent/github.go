@@ -26,13 +26,16 @@ type ServiceMeta struct {
 
 // githubRelease is the subset of the GitHub releases API response we need
 type githubRelease struct {
-	Assets []githubAsset `json:"assets"`
+	TagName     string        `json:"tag_name"`
+	PublishedAt string        `json:"published_at"`
+	Assets      []githubAsset `json:"assets"`
 }
 
 type githubAsset struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-	URL  string `json:"url"` // API download URL — works for private repos
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	URL                string `json:"url"`                  // API download URL — works for private repos
+	BrowserDownloadURL string `json:"browser_download_url"` // Direct download URL — for reference
 }
 
 type GitHubClient struct {
@@ -71,8 +74,13 @@ func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionM
 	var data []byte
 	var err error
 
+	if g.token != "" && !strings.HasSuffix(url, "version.json") {
+		// Native repo polling: use GitHub API to find latest release and build metadata
+		return g.FetchMetadataFromRepo(ctx, url)
+	}
+
 	if g.token != "" {
-		// Private repo: use GitHub API to resolve and download the asset
+		// Private repo with version.json: use GitHub API to resolve and download the asset
 		owner, repo, err := ParseGitHubURL(url)
 		if err != nil {
 			return nil, fmt.Errorf("parse metadata URL: %w", err)
@@ -82,7 +90,10 @@ func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionM
 			return nil, fmt.Errorf("fetch version.json via API: %w", err)
 		}
 	} else {
-		// Public repo: fetch directly
+		// Public repo: fetch directly (can be either version.json or repo URL)
+		if !strings.HasSuffix(url, "version.json") {
+			return g.FetchMetadataFromRepo(ctx, url)
+		}
 		data, err = g.fetchDirect(ctx, url)
 		if err != nil {
 			return nil, fmt.Errorf("fetch metadata directly: %w", err)
@@ -342,11 +353,25 @@ type InspectRepoResponse struct {
 	LatestVersion string   `json:"latest_version"`
 	PublishedAt   string   `json:"published_at"`
 	Assets        []string `json:"assets"`
+}// InspectRepository fetches the latest release from a GitHub repository to preview assets.
+func (g *GitHubClient) InspectRepository(ctx context.Context, url string) (*InspectRepoResponse, error) {
+	meta, err := g.FetchMetadataFromRepo(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &InspectRepoResponse{}
+	for _, svc := range meta.Services {
+		res.LatestVersion = svc.Version
+		res.PublishedAt = svc.PublishedAt
+		res.Assets = append(res.Assets, svc.Artifact)
+	}
+	return res, nil
 }
 
-// InspectRepository fetches the latest release from a GitHub repository to preview assets.
-func (g *GitHubClient) InspectRepository(ctx context.Context, url string) (*InspectRepoResponse, error) {
-	owner, repo, err := ParseGitHubURL(url)
+// FetchMetadataFromRepo builds a VersionMetadata object directly from GitHub release data.
+func (g *GitHubClient) FetchMetadataFromRepo(ctx context.Context, repoURL string) (*VersionMetadata, error) {
+	owner, repo, err := ParseGitHubURL(repoURL)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +386,7 @@ func (g *GitHubClient) InspectRepository(ctx context.Context, url string) (*Insp
 
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("http get: %w", err)
+		return nil, fmt.Errorf("fetch latest release: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -369,25 +394,39 @@ func (g *GitHubClient) InspectRepository(ctx context.Context, url string) (*Insp
 		return nil, fmt.Errorf("releases API returned HTTP %d", resp.StatusCode)
 	}
 
-	var release struct {
-		TagName     string `json:"tag_name"`
-		PublishedAt string `json:"published_at"`
-		Assets      []struct {
-			Name string `json:"name"`
-		} `json:"assets"`
-	}
-
+	var release githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, fmt.Errorf("decode release JSON: %w", err)
 	}
 
-	res := &InspectRepoResponse{
-		LatestVersion: release.TagName,
-		PublishedAt:   release.PublishedAt,
-	}
-	for _, a := range release.Assets {
-		res.Assets = append(res.Assets, a.Name)
+	meta := &VersionMetadata{
+		Services: make(map[string]ServiceMeta),
 	}
 
-	return res, nil
+	for _, asset := range release.Assets {
+		// Map asset name to a "service". We strip common extensions for matching.
+		name := asset.Name
+		name = strings.TrimSuffix(name, ".zip")
+		name = strings.TrimSuffix(name, ".exe")
+
+		// Also try to strip version suffixes like -v1.2.3 or -1.2.3
+		// We look for a hyphen followed by 'v' and a digit, or just a hyphen and a digit.
+		serviceName := name
+		if idx := strings.LastIndex(name, "-"); idx != -1 {
+			suffix := name[idx+1:]
+			if len(suffix) > 0 && (suffix[0] == 'v' || (suffix[0] >= '0' && suffix[0] <= '9')) {
+				serviceName = name[:idx]
+			}
+		}
+
+		meta.Services[serviceName] = ServiceMeta{
+			Version:     release.TagName,
+			Artifact:    asset.Name,
+			ArtifactURL: asset.BrowserDownloadURL,
+			PublishedAt: release.PublishedAt,
+		}
+	}
+
+	return meta, nil
 }
+

@@ -212,33 +212,6 @@ jobs:
           echo "Packaged: ${ZIP_NAME} ($(du -sh ${ZIP_NAME} | cut -f1))"
 
       # ===============================
-      # GENERATE version.json
-      # ===============================
-      - name: Generate version.json
-        run: |
-          VERSION="${{ needs.tag.outputs.new_tag }}"
-          ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
-          REPO="${{ github.repository }}"
-          ARTIFACT_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ZIP_NAME}"
-          PUBLISHED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          cat > version.json << EOF
-          {
-            "services": {
-              "${{ env.APP_NAME }}": {
-                "version": "${VERSION}",
-                "artifact": "${ZIP_NAME}",
-                "artifact_url": "${ARTIFACT_URL}",
-                "published_at": "${PUBLISHED_AT}"
-              }
-            }
-          }
-          EOF
-
-          echo "version.json:"
-          cat version.json
-
-      # ===============================
       # CREATE GITHUB RELEASE
       # ===============================
       - name: Create GitHub Release
@@ -252,10 +225,9 @@ jobs:
             ${{ needs.tag.outputs.changelog }}
 
             ---
-            *Deployed automatically by the watcher agent within \`check_interval_sec\` seconds.*
+            *Deployed automatically by the watcher agent within `check_interval_sec` seconds.*
           files: |
             ${{ steps.zip.outputs.zip_name }}
-            version.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -273,10 +245,14 @@ jobs:
           echo " Released: $VERSION (${{ needs.tag.outputs.bump_type }} bump)"
           echo "========================================"
           echo ""
-          echo "Watcher metadata URL (use in dashboard):"
-          echo "  https://github.com/${REPO}/releases/latest/download/version.json"
+          echo "Watcher Metadata URL (Zero-Config):"
+          echo "  https://github.com/${REPO}"
           echo ""
-          echo "Direct artifact URL:"
+          echo "Instruction:"
+          echo "  Use the Repository URL above in your Watcher dashboard."
+          echo "  The agent will automatically detect the latest release assets."
+          echo ""
+          echo "Direct artifact URL (for reference):"
           echo "  https://github.com/${REPO}/releases/download/${VERSION}/${ZIP_NAME}"
           echo ""
           echo "The watcher will pick this up within check_interval_sec seconds."

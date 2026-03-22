@@ -125,7 +125,7 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 
 	svcMeta, ok := meta.Services[r.wcfg.ServiceName]
 	if !ok {
-		err := fmt.Errorf("service %q not in version.json (available: %v)", r.wcfg.ServiceName, keys(meta.Services))
+		err := fmt.Errorf("service %q not found in release metadata (available: %v)", r.wcfg.ServiceName, keys(meta.Services))
 		r.state.RecordPollEvent("error", "", err.Error())
 		return err
 	}
