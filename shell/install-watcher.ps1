@@ -29,12 +29,30 @@ $Defaults = @{
 function Write-Step { param($msg) Write-Host "`n>>> $msg" -ForegroundColor Cyan }
 function Write-OK   { param($msg) Write-Host "  OK: $msg" -ForegroundColor Green }
 function Write-Skip { param($msg) Write-Host "  SKIP: $msg (already done)" -ForegroundColor Yellow }
-function Write-Fail { param($msg) Write-Host "  FAIL: $msg" -ForegroundColor Red }
+function Write-Fail {
+    param($msg)
+    Write-Host "  FAIL: $msg" -ForegroundColor Red
+    if (-not $Silent) {
+        Write-Host "`nPress any key to exit..." -ForegroundColor Gray
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    }
+}
 
 # ── Admin check ───────────────────────────────────────────────
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Fail "Run as Administrator"
-    exit 1
+    if (-not $Silent) {
+        Write-Host "Elevating to Administrator..." -ForegroundColor Yellow
+        try {
+            Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+            exit 0
+        } catch {
+            Write-Fail "Failed to elevate to Administrator. Please right-click and 'Run as Administrator'."
+            exit 1
+        }
+    } else {
+        Write-Fail "Run as Administrator"
+        exit 1
+    }
 }
 
 # ── Detect OS type ────────────────────────────────────────────
