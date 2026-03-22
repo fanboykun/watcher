@@ -1,12 +1,11 @@
 # ==============================================================
 # install-watcher.ps1
-# Interactive bootstrap: user selects features via terminal menu,
-# then configures installation paths via a GUI wizard.
+# Interactive bootstrap: configures installation via a GUI wizard.
 # Run as Administrator on Windows 10/11 or Windows Server 2022.
 # ==============================================================
 
 param(
-    [switch]$Silent  # Skip all prompts and use config block defaults (CI use)
+    [switch]$Silent  # Skip the GUI and use config block defaults (CI use)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,6 +14,7 @@ $ErrorActionPreference = 'Stop'
 # DEFAULTS -- used by wizard pre-fill and silent mode
 # ==============================================================
 $Defaults = @{
+    Profile     = 0 # 0=Binary, 1=Static, 2=Both, 3=Full Stack
     ServiceName = "app-watcher"
     InstallDir  = "C:\apps\watcher"
     LogDir      = "C:\apps\watcher\logs"
@@ -65,63 +65,7 @@ $ParentDir = Split-Path -Parent $ScriptDir
 
 
 # ==============================================================
-# STAGE 1 -- FEATURE SELECTION (terminal menu)
-# ==============================================================
-$installNSSM = $false
-$installIIS  = $false
-$installARR  = $false
-
-if ($Silent) {
-    # Silent mode: install everything
-    $installNSSM = $true
-    $installIIS  = $true
-    $installARR  = $false
-} else {
-    Write-Host ""
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "  WATCHER BOOTSTRAP" -ForegroundColor Cyan
-    Write-Host "  OS: $osLabel" -ForegroundColor Gray
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "What will this watcher manage?" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  [1] Binary services only (NSSM)" -ForegroundColor White
-    Write-Host "      Installs: Chocolatey, NSSM" -ForegroundColor Gray
-    Write-Host "      For: Go APIs, background workers, any .exe" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  [2] Static sites only (IIS)" -ForegroundColor White
-    Write-Host "      Installs: IIS features, URL Rewrite" -ForegroundColor Gray
-    Write-Host "      For: SvelteKit builds, React apps, docs" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  [3] Both binaries + static sites" -ForegroundColor White
-    Write-Host "      Installs: Chocolatey, NSSM, IIS, URL Rewrite" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  [4] Full stack (binaries + IIS + ARR reverse proxy)" -ForegroundColor White
-    Write-Host "      Installs: Everything above + ARR" -ForegroundColor Gray
-    Write-Host "      For: IIS as front door proxying to NSSM backends" -ForegroundColor Gray
-    Write-Host ""
-
-    $choice = Read-Host "Select [1-4]"
-    while ($choice -notin @("1","2","3","4")) {
-        $choice = Read-Host "Invalid choice. Select [1-4]"
-    }
-
-    $installNSSM = $choice -in @("1","3","4")
-    $installIIS  = $choice -in @("2","3","4")
-    $installARR  = $choice -eq "4"
-
-    Write-Host ""
-    Write-Host "  Install plan:" -ForegroundColor Yellow
-    if ($installNSSM) { Write-Host "    + Chocolatey + NSSM" -ForegroundColor Green }
-    if ($installIIS)  { Write-Host "    + IIS features + URL Rewrite" -ForegroundColor Green }
-    if ($installARR)  { Write-Host "    + ARR (Application Request Routing)" -ForegroundColor Green }
-    Write-Host "    + Watcher agent service" -ForegroundColor Green
-    Write-Host ""
-}
-
-
-# ==============================================================
-# STAGE 2 -- CONFIGURATION WIZARD (GUI)
+# CONFIGURATION WIZARD (GUI)
 # ==============================================================
 function Show-Wizard {
     Add-Type -AssemblyName System.Windows.Forms
@@ -168,8 +112,8 @@ function Show-Wizard {
 
     # ── Form ──────────────────────────────────────────────────
     $form = New-Object System.Windows.Forms.Form
-    $form.Text            = "Watcher -- Configuration"
-    $form.Size            = New-Object System.Drawing.Size(520, 600)
+    $form.Text            = "Watcher -- Installation Wizard"
+    $form.Size            = New-Object System.Drawing.Size(520, 700)
     $form.StartPosition   = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox     = $false
@@ -199,6 +143,21 @@ function Show-Wizard {
     $header.Controls.Add($hs)
 
     $y = 80
+
+    # Installation Profile
+    $form.Controls.Add((New-Label "Installation Profile" 20 $y))
+    $cbProfile = New-Object System.Windows.Forms.ComboBox
+    $cbProfile.Items.Add("1. Binary services only (Choco + NSSM)") | Out-Null
+    $cbProfile.Items.Add("2. Static sites only (IIS + URL Rewrite)") | Out-Null
+    $cbProfile.Items.Add("3. Both binaries + static sites") | Out-Null
+    $cbProfile.Items.Add("4. Full stack (Binaries + IIS + ARR proxy)") | Out-Null
+    $cbProfile.SelectedIndex = $Defaults.Profile
+    $cbProfile.Location = New-Object System.Drawing.Point(20, ($y + 22))
+    $cbProfile.Size = New-Object System.Drawing.Size(320, 24)
+    $cbProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $cbProfile.DropDownStyle = "DropDownList"
+    $form.Controls.Add($cbProfile)
+    $y += 64
 
     # Install directory
     $form.Controls.Add((New-Label "Install directory" 20 $y))
@@ -257,26 +216,39 @@ function Show-Wizard {
     })
     $y += 56
 
-    # NSSM path (only shown if NSSM was selected)
-    $tbNssm = $null
-    $lblNssmErr = $null
-    if ($installNSSM) {
-        $form.Controls.Add((New-Label "NSSM path" 20 $y))
-        $tbNssm = New-TextBox $Defaults.NssmPath 20 ($y + 22)
-        $form.Controls.Add($tbNssm)
-        $btnBN = New-Object System.Windows.Forms.Button
-        $btnBN.Text = "..."; $btnBN.Location = New-Object System.Drawing.Point(305, ($y+22))
-        $btnBN.Size = New-Object System.Drawing.Size(32, 24); $btnBN.FlatStyle = "Flat"
-        $btnBN.Add_Click({
-            $d = New-Object System.Windows.Forms.OpenFileDialog
-            $d.Filter = "NSSM executable|nssm.exe"
-            if ($d.ShowDialog() -eq "OK") { $tbNssm.Text = $d.FileName }
-        })
-        $form.Controls.Add($btnBN)
-        $lblNssmErr = New-StatusLabel 20 ($y + 50)
-        $form.Controls.Add($lblNssmErr)
-        $y += 74
-    }
+    # NSSM path
+    $lblNssm = New-Label "NSSM path" 20 $y
+    $form.Controls.Add($lblNssm)
+    $tbNssm = New-TextBox $Defaults.NssmPath 20 ($y + 22)
+    $form.Controls.Add($tbNssm)
+    $btnBN = New-Object System.Windows.Forms.Button
+    $btnBN.Text = "..."; $btnBN.Location = New-Object System.Drawing.Point(305, ($y+22))
+    $btnBN.Size = New-Object System.Drawing.Size(32, 24); $btnBN.FlatStyle = "Flat"
+    $btnBN.Add_Click({
+        $d = New-Object System.Windows.Forms.OpenFileDialog
+        $d.Filter = "NSSM executable|nssm.exe"
+        if ($d.ShowDialog() -eq "OK") { $tbNssm.Text = $d.FileName }
+    })
+    $form.Controls.Add($btnBN)
+    $lblNssmErr = New-StatusLabel 20 ($y + 50)
+    $form.Controls.Add($lblNssmErr)
+
+    # Dynamically toggle NSSM fields
+    $cbProfile.Add_SelectedIndexChanged({
+        $needsNSSM = ($cbProfile.SelectedIndex -in @(0, 2, 3))
+        $tbNssm.Enabled = $needsNSSM
+        $btnBN.Enabled  = $needsNSSM
+        if (-not $needsNSSM) {
+            $lblNssm.ForeColor = [System.Drawing.Color]::Gray
+            $lblNssmErr.Text = ""
+        } else {
+            $lblNssm.ForeColor = [System.Drawing.Color]::Black
+        }
+    })
+    # Trigger initial state
+    $cbProfile.SelectedIndex = $Defaults.Profile
+
+    $y += 74
 
     # GitHub token
     $form.Controls.Add((New-Label "GitHub token (PAT)" 20 $y))
@@ -309,19 +281,6 @@ function Show-Wizard {
     $sep.Location = New-Object System.Drawing.Point(20, ($y + 8))
     $sep.BackColor = [System.Drawing.Color]::FromArgb(220, 220, 220)
     $form.Controls.Add($sep)
-
-    # Feature summary label
-    $featureSummary = @()
-    if ($installNSSM) { $featureSummary += "NSSM" }
-    if ($installIIS)  { $featureSummary += "IIS" }
-    if ($installARR)  { $featureSummary += "ARR" }
-    $fLabel = New-Object System.Windows.Forms.Label
-    $fLabel.Text = "Installing: " + ($featureSummary -join " + ")
-    $fLabel.Location = New-Object System.Drawing.Point(20, ($y + 18))
-    $fLabel.Size = New-Object System.Drawing.Size(260, 20)
-    $fLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    $fLabel.ForeColor = [System.Drawing.Color]::FromArgb(0, 130, 0)
-    $form.Controls.Add($fLabel)
 
     # Buttons
     $btnInstall = New-Object System.Windows.Forms.Button
@@ -370,7 +329,7 @@ function Show-Wizard {
             }
         }
 
-        if ($null -ne $lblNssmErr) {
+        if ($cbProfile.SelectedIndex -in @(0, 2, 3)) {
             $lblNssmErr.Text = ""
             if ([string]::IsNullOrWhiteSpace($tbNssm.Text)) {
                 $lblNssmErr.Text = "NSSM path is required"
@@ -401,10 +360,11 @@ function Show-Wizard {
     }
 
     return @{
+        Profile     = $cbProfile.SelectedIndex
         ServiceName = $tbService.Text.Trim()
         InstallDir  = $tbInstall.Text.Trim().TrimEnd("\")
         LogDir      = $tbLog.Text.Trim().TrimEnd("\")
-        NssmPath    = if ($tbNssm) { $tbNssm.Text.Trim() } else { $Defaults.NssmPath }
+        NssmPath    = $tbNssm.Text.Trim()
         APIPort     = [int]$tbPort.Text.Trim()
         GitHubToken = $tbToken.Text
     }
@@ -412,17 +372,14 @@ function Show-Wizard {
 
 # Collect config
 if ($Silent) {
-    $Config = @{
-        ServiceName = $Defaults.ServiceName
-        InstallDir  = $Defaults.InstallDir
-        LogDir      = $Defaults.LogDir
-        NssmPath    = $Defaults.NssmPath
-        APIPort     = [int]$Defaults.APIPort
-        GitHubToken = $Defaults.GitHubToken
-    }
+    $Config = $Defaults
 } else {
     $Config = Show-Wizard
 }
+
+$installNSSM = $Config.Profile -in @(0, 2, 3)
+$installIIS  = $Config.Profile -in @(1, 2, 3)
+$installARR  = $Config.Profile -eq 3
 
 # Derive paths
 $Config.WatcherExe   = Join-Path $Config.InstallDir "watcher.exe"
