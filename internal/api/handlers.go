@@ -3,8 +3,10 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -24,18 +26,20 @@ type Handler struct {
 	nssmPath     string
 	logDir       string
 	version      string
+	githubToken  string
 	startTime    time.Time
 	checkTrigger chan uint    // send watcher ID for immediate poll
 	syncTrigger  chan struct{} // trigger background agent to sync DB
 }
 
 // NewHandler creates a new Handler with the given dependencies.
-func NewHandler(db *gorm.DB, nssmPath, logDir, version string, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
+func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken string, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
 	return &Handler{
 		db:           db,
 		nssmPath:     nssmPath,
 		logDir:       logDir,
 		version:      version,
+		githubToken:  githubToken,
 		startTime:    time.Now(),
 		checkTrigger: checkTrigger,
 		syncTrigger:  syncTrigger,
@@ -387,6 +391,59 @@ func (h *Handler) ListDeployLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, logs)
 }
 
+// StreamDeployLogs stream the deployment log for the watcher via SSE.
+func (h *Handler) StreamDeployLogs(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+
+	var dLog database.DeployLog
+	if err := h.db.Where("watcher_id = ?", watcher.ID).Order("id desc").First(&dLog).Error; err != nil {
+		c.SSEvent("error", "No deployment logs found.")
+		return
+	}
+
+	var lastLen int
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-ticker.C:
+			var currentLog database.DeployLog
+			if err := h.db.First(&currentLog, dLog.ID).Error; err != nil {
+				return
+			}
+
+			if len(currentLog.Logs) > lastLen {
+				newText := currentLog.Logs[lastLen:]
+				lastLen = len(currentLog.Logs)
+
+				lines := strings.Split(strings.TrimSuffix(newText, "\n"), "\n")
+				for _, line := range lines {
+					if line != "" {
+						c.SSEvent("message", line)
+					}
+				}
+				c.Writer.Flush()
+			}
+
+			if currentLog.CompletedAt != nil {
+				c.SSEvent("message", "DONE")
+				c.Writer.Flush()
+				return
+			}
+		}
+	}
+}
+
 // ListPollEvents returns the recent polling history for a watcher.
 func (h *Handler) ListPollEvents(c *gin.Context) {
 	watcher, err := h.findWatcher(c)
@@ -394,12 +451,42 @@ func (h *Handler) ListPollEvents(c *gin.Context) {
 		return
 	}
 
-	var events []database.PollEvent
-	if err := h.db.Where("watcher_id = ?", watcher.ID).Order("id desc").Limit(50).Find(&events).Error; err != nil {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 10
+	}
+
+	status := c.Query("status")
+
+	query := h.db.Model(&database.PollEvent{}).Where("watcher_id = ?", watcher.ID)
+	if status != "" && status != "all" {
+		query = query.Where("status = ?", status)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, events)
+
+	offset := (page - 1) * pageSize
+	var events []database.PollEvent
+	if err := query.Order("id desc").Limit(pageSize).Offset(offset).Find(&events).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":     events,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -457,4 +544,28 @@ func (h *Handler) triggerSync() {
 	case h.syncTrigger <- struct{}{}:
 	default:
 	}
+}
+
+type inspectRequest struct {
+	RepoURL string `json:"repo_url" binding:"required"`
+}
+
+// InspectGitHubRepo uses the configured GitHub token to check a repository's latest release.
+func (h *Handler) InspectGitHubRepo(c *gin.Context) {
+	var req inspectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Invalid request payload"})
+		return
+	}
+
+	logger := agent.NewLogger("") // Temporary logger to stdout
+	client := agent.NewGitHubClient(h.githubToken, logger)
+
+	resp, err := client.InspectRepository(c.Request.Context(), req.RepoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
 }

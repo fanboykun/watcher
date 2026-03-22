@@ -37,6 +37,12 @@
 	let watcher = $state<Watcher | null>(null);
 	let deploys = $state<DeployLog[]>([]);
 	let polls = $state<import('$lib/api').PollEvent[]>([]);
+	let pollPage = $state(1);
+	let pollPageSize = $state(10);
+	let pollStatus = $state('all');
+	let pollTotal = $state(0);
+	let selectedDeployLog = $state<DeployLog | null>(null);
+	let showDeployLog = $state(false);
 	let error = $state('');
 	let triggerMsg = $state('');
 	let showAddService = $state(false);
@@ -69,14 +75,24 @@
 
 	const id = Number(page.params.id);
 
+	const loadPolls = async () => {
+		try {
+			const res = await api.watcherPolls(id, pollPage, pollPageSize, pollStatus);
+			polls = res.data;
+			pollTotal = res.total;
+		} catch (err) {
+			// ignore logs
+		}
+	};
+
 	onMount(() => {
 		const init = async () => {
 			try {
-				[watcher, deploys, polls] = await Promise.all([
+				[watcher, deploys] = await Promise.all([
 					api.getWatcher(id),
-					api.watcherDeploys(id),
-					api.watcherPolls(id)
+					api.watcherDeploys(id)
 				]);
+				await loadPolls();
 				syncEditForm();
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to load watcher';
@@ -89,7 +105,7 @@
 			try {
 				watcher = await api.getWatcher(id);
 				if (activeTab === 'polling') {
-					polls = await api.watcherPolls(id);
+					await loadPolls();
 				}
 			} catch (err) {
 				// ignore polling errors
@@ -103,8 +119,14 @@
 		if (watcher?.status === 'deploying') {
 			if (!liveLogSource) {
 				liveLogLines = [];
-				liveLogSource = new EventSource('/api/logs/stream?type=out');
+				liveLogSource = new EventSource(`/api/watchers/${id}/deploy/stream`);
 				liveLogSource.onmessage = (e) => {
+					if (e.data === 'DONE') {
+						liveLogSource?.close();
+						liveLogSource = null;
+						api.getWatcher(id).then(w => watcher = w);
+						return;
+					}
 					liveLogLines = [...liveLogLines, e.data];
 				};
 				liveLogSource.onerror = () => {
@@ -570,6 +592,7 @@
 									<Table.Head>Duration</Table.Head>
 									<Table.Head>Started</Table.Head>
 									<Table.Head>Error</Table.Head>
+									<Table.Head class="text-right">Action</Table.Head>
 								</Table.Row>
 							</Table.Header>
 							<Table.Body>
@@ -598,6 +621,16 @@
 										<Table.Cell class="max-w-[200px] truncate text-xs text-red-400"
 											>{d.error || ''}</Table.Cell
 										>
+										<Table.Cell class="text-right">
+											{#if d.logs}
+												<Button.Root variant="ghost" size="sm" onclick={() => {
+													selectedDeployLog = d;
+													showDeployLog = true;
+												}}>
+													View Logs
+												</Button.Root>
+											{/if}
+										</Table.Cell>
 									</Table.Row>
 								{/each}
 							</Table.Body>
@@ -649,6 +682,35 @@
 								{/each}
 							</Table.Body>
 						</Table.Root>
+						<div class="flex items-center justify-between px-4 py-4 border-t border-border mt-auto">
+							<div class="text-xs text-muted-foreground flex items-center gap-2">
+								<span>Status Filter:</span>
+								<select
+									class="h-7 rounded border border-input bg-transparent px-2 text-xs focus:ring-1 focus:ring-ring"
+									bind:value={pollStatus}
+									onchange={() => { pollPage = 1; loadPolls() }}
+								>
+									<option value="all">All</option>
+									<option value="new_release">New Release</option>
+									<option value="up_to_date">Up To Date</option>
+									<option value="error">Error</option>
+								</select>
+							</div>
+							<div class="flex items-center gap-4 text-xs">
+								<span class="text-muted-foreground">
+									Page {pollPage} of {Math.ceil(pollTotal / pollPageSize) || 1} 
+									({pollTotal} total)
+								</span>
+								<div class="flex items-center gap-1.5">
+									<Button.Root variant="outline" size="sm" class="h-7 px-2" disabled={pollPage <= 1} onclick={() => { pollPage--; loadPolls() }}>
+										Prev
+									</Button.Root>
+									<Button.Root variant="outline" size="sm" class="h-7 px-2" disabled={pollPage * pollPageSize >= pollTotal} onclick={() => { pollPage++; loadPolls() }}>
+										Next
+									</Button.Root>
+								</div>
+							</div>
+						</div>
 					</Card.Root>
 				{:else}
 					<Card.Root class="border-dashed border-border bg-card">
@@ -741,3 +803,24 @@
 	</Dialog.Content>
 </Dialog.Root>
 
+
+<!-- Deploy Log Dialog -->
+<Dialog.Root bind:open={showDeployLog}>
+	<Dialog.Content class="sm:max-w-[700px] max-h-[85vh] flex flex-col">
+		<Dialog.Header>
+			<Dialog.Title>Deployment Logs: {selectedDeployLog?.version}</Dialog.Title>
+		</Dialog.Header>
+		
+		<div class="flex-1 min-h-0 overflow-y-auto rounded bg-muted/50 p-4 font-mono text-xs mt-4">
+			<div class="h-full whitespace-pre-wrap text-muted-foreground break-words">
+				{selectedDeployLog?.logs || 'No logs available.'}
+			</div>
+		</div>
+
+		<Dialog.Footer class="mt-4">
+			<Button.Root variant="outline" onclick={() => (showDeployLog = false)}>
+				Close
+			</Button.Root>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>

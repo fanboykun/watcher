@@ -10,12 +10,12 @@ import (
 )
 
 // NewRouter creates a Gin engine with all API routes and embedded SPA.
-func NewRouter(db *gorm.DB, nssmPath, logDir, version string, checkTrigger chan uint, syncTrigger chan struct{}) *gin.Engine {
+func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken string, checkTrigger chan uint, syncTrigger chan struct{}) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	h := NewHandler(db, nssmPath, logDir, version, checkTrigger, syncTrigger)
+	h := NewHandler(db, nssmPath, logDir, version, githubToken, checkTrigger, syncTrigger)
 
 	apiGroup := r.Group("/api")
 	{
@@ -23,6 +23,7 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version string, checkTrigger chan 
 		apiGroup.GET("/status", h.SystemStatus)
 		apiGroup.GET("/logs", h.AgentLogs)
 		apiGroup.GET("/logs/stream", h.StreamAgentLogs)
+		apiGroup.POST("/github/inspect", h.InspectGitHubRepo)
 
 		// ── Services (flat, across all watchers) ──────────────
 		services := apiGroup.Group("/services")
@@ -55,6 +56,7 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version string, checkTrigger chan 
 
 			// Deploy logs and trigger
 			watchers.GET("/:id/deploys", h.ListDeployLogs)
+			watchers.GET("/:id/deploy/stream", h.StreamDeployLogs)
 			watchers.GET("/:id/polls", h.ListPollEvents)
 			watchers.POST("/:id/check", h.TriggerCheck)
 			watchers.POST("/:id/redeploy", h.RedeployWatcher)

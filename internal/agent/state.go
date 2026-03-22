@@ -152,6 +152,15 @@ func (s *StateManager) SetRolledBack(version string) error {
 		}).Error
 }
 
+func (s *StateManager) AppendDeployLog(text string) {
+	err := s.db.Model(&database.DeployLog{}).
+		Where("watcher_id = ? AND completed_at IS NULL", s.watcherID).
+		UpdateColumn("logs", gorm.Expr("COALESCE(logs, '') || ?", text+"\n")).Error
+	if err != nil {
+		s.log.Warn("failed to append deploy log", "error", err)
+	}
+}
+
 func (s *StateManager) RecordPollEvent(status, remoteVersion, errMsg string) {
 	evt := database.PollEvent{
 		WatcherID:     s.watcherID,

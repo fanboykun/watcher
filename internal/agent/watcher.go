@@ -95,13 +95,14 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.AppConfig, log *Logger) *RepoWatcher {
 	wcfg := WatcherConfigFromDB(dbWatcher)
 	componentLog := log.WithComponent(wcfg.Name)
+	state := NewStateManager(db, dbWatcher.ID, componentLog)
 	return &RepoWatcher{
 		wcfg:     wcfg,
 		global:   appCfg,
 		log:      componentLog,
 		github:   NewGitHubClient(appCfg.GitHubToken, componentLog),
-		state:    NewStateManager(db, dbWatcher.ID, componentLog),
-		deployer: NewDeployer(wcfg, appCfg.NssmPath, componentLog),
+		state:    state,
+		deployer: NewDeployer(wcfg, appCfg.NssmPath, componentLog, state.AppendDeployLog),
 	}
 }
 
