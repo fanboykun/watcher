@@ -8,6 +8,7 @@ config*.json
 tmp
 *.db*
 logs
+!web/src/routes/logs
 
 # OS
 .DS_Store
