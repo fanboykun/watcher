@@ -32,6 +32,7 @@ type WatcherConfig struct {
 	CheckIntervalSec int
 	DownloadRetries  int
 	InstallDir       string
+	Paused           bool
 	HealthCheck      HealthCheckConfig
 	Services         []ServiceConfig
 }
@@ -45,10 +46,13 @@ type HealthCheckConfig struct {
 }
 
 type ServiceConfig struct {
+	ServiceType        string // "nssm" or "static"
 	WindowsServiceName string
 	BinaryName         string
 	EnvFile            string
 	HealthCheckURL     string
+	IISAppPool         string
+	IISSiteName        string
 }
 
 // WatcherConfigFromDB converts a database.Watcher into the in-memory WatcherConfig
@@ -61,6 +65,7 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 		CheckIntervalSec: w.CheckIntervalSec,
 		DownloadRetries:  w.DownloadRetries,
 		InstallDir:       w.InstallDir,
+		Paused:           w.Paused,
 		HealthCheck: HealthCheckConfig{
 			Enabled:     w.HcEnabled,
 			URL:         w.HcURL,
@@ -70,11 +75,18 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 		},
 	}
 	for _, s := range w.Services {
+		svcType := s.ServiceType
+		if svcType == "" {
+			svcType = "nssm" // default for backwards compatibility
+		}
 		cfg.Services = append(cfg.Services, ServiceConfig{
+			ServiceType:        svcType,
 			WindowsServiceName: s.WindowsServiceName,
 			BinaryName:         s.BinaryName,
 			EnvFile:            s.EnvFile,
 			HealthCheckURL:     s.HealthCheckURL,
+			IISAppPool:         s.IISAppPool,
+			IISSiteName:        s.IISSiteName,
 		})
 	}
 	return cfg
@@ -95,18 +107,26 @@ func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.App
 
 // Run performs one check-and-deploy cycle for this repo.
 func (r *RepoWatcher) Run(ctx context.Context) error {
+	if r.wcfg.Paused {
+		r.log.Debug("watcher is paused, skipping check")
+		return nil
+	}
+
 	r.log.Info("check cycle", "metadata_url", r.wcfg.MetadataURL)
 
 	_ = r.state.SetChecked()
 
 	meta, err := r.github.FetchMetadata(ctx, r.wcfg.MetadataURL)
 	if err != nil {
+		r.state.RecordPollEvent("error", "", err.Error())
 		return fmt.Errorf("fetch metadata: %w", err)
 	}
 
 	svcMeta, ok := meta.Services[r.wcfg.ServiceName]
 	if !ok {
-		return fmt.Errorf("service %q not in version.json (available: %v)", r.wcfg.ServiceName, keys(meta.Services))
+		err := fmt.Errorf("service %q not in version.json (available: %v)", r.wcfg.ServiceName, keys(meta.Services))
+		r.state.RecordPollEvent("error", "", err.Error())
+		return err
 	}
 
 	targetVersion := svcMeta.Version
@@ -114,15 +134,18 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 
 	localVersion, err := r.state.ReadVersion()
 	if err != nil {
+		r.state.RecordPollEvent("error", targetVersion, "read local version: "+err.Error())
 		return fmt.Errorf("read local version: %w", err)
 	}
 	r.log.Info("local version", "current", localVersion)
 
 	if localVersion == targetVersion {
 		r.log.Info("already up to date")
+		r.state.RecordPollEvent("no_update", targetVersion, "")
 		return nil
 	}
 
+	r.state.RecordPollEvent("new_release", targetVersion, "")
 	r.log.Info("version mismatch, deploying", "from", localVersion, "to", targetVersion)
 
 	if err := r.deploy(ctx, svcMeta, targetVersion, localVersion); err != nil {

@@ -39,7 +39,7 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 
 	d.log.Info("stopping services")
 	for _, svc := range d.wcfg.Services {
-		d.stopService(svc.WindowsServiceName)
+		d.stopServiceByType(svc)
 	}
 
 	// Now that services are stopped, safely remove the old releaseDir if it exists (for redeploys)
@@ -62,14 +62,12 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 
 	d.log.Info("starting services")
 	for _, svc := range d.wcfg.Services {
-		newBin := filepath.Join(currentDir, svc.BinaryName)
-
-		if err := d.ensureService(svc, newBin); err != nil {
+		if err := d.ensureServiceByType(svc, currentDir); err != nil {
 			return d.tryRollback(ctx, previousVersion,
 				fmt.Errorf("ensure service %s: %w", svc.WindowsServiceName, err))
 		}
 
-		if err := d.startService(svc.WindowsServiceName); err != nil {
+		if err := d.startServiceByType(svc); err != nil {
 			return d.tryRollback(ctx, previousVersion,
 				fmt.Errorf("start %s: %w", svc.WindowsServiceName, err))
 		}
@@ -106,7 +104,7 @@ func (d *Deployer) Rollback(ctx context.Context, version string) error {
 	}
 
 	for _, svc := range d.wcfg.Services {
-		d.stopService(svc.WindowsServiceName)
+		d.stopServiceByType(svc)
 	}
 
 	if err := d.swapCurrent(releaseDir, currentDir); err != nil {
@@ -114,11 +112,10 @@ func (d *Deployer) Rollback(ctx context.Context, version string) error {
 	}
 
 	for _, svc := range d.wcfg.Services {
-		newBin := filepath.Join(currentDir, svc.BinaryName)
-		if err := d.ensureService(svc, newBin); err != nil {
+		if err := d.ensureServiceByType(svc, currentDir); err != nil {
 			return fmt.Errorf("ensure service %s during rollback: %w", svc.WindowsServiceName, err)
 		}
-		if err := d.startService(svc.WindowsServiceName); err != nil {
+		if err := d.startServiceByType(svc); err != nil {
 			return fmt.Errorf("start %s during rollback: %w", svc.WindowsServiceName, err)
 		}
 	}
@@ -214,6 +211,18 @@ func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
 	return nil
 }
 
+// ensureServiceByType dispatches to the correct ensure logic based on ServiceType.
+func (d *Deployer) ensureServiceByType(svc ServiceConfig, currentDir string) error {
+	switch svc.ServiceType {
+	case "static":
+		d.log.Info("static service -- no NSSM registration needed", "name", svc.WindowsServiceName)
+		return nil
+	default: // "nssm"
+		newBin := filepath.Join(currentDir, svc.BinaryName)
+		return d.ensureService(svc, newBin)
+	}
+}
+
 // ensureService registers the service with NSSM if it does not exist yet,
 // or updates the binary path if it already exists.
 // This means you never need to manually register services -- the watcher
@@ -284,6 +293,19 @@ func (d *Deployer) serviceExists(name string) bool {
 	return true
 }
 
+// stopServiceByType dispatches to the correct stop logic based on ServiceType.
+func (d *Deployer) stopServiceByType(svc ServiceConfig) {
+	switch svc.ServiceType {
+	case "static":
+		// Static services don't have a process to stop.
+		// Optionally stop the IIS app pool, but usually unnecessary
+		// since we just swap the junction.
+		d.log.Info("static service -- skipping stop", "name", svc.WindowsServiceName)
+	default: // "nssm"
+		d.stopService(svc.WindowsServiceName)
+	}
+}
+
 func (d *Deployer) stopService(name string) {
 	d.log.Info("stopping service", "name", name)
 	out, err := exec.Command(d.nssmPath, "stop", name, "confirm").CombinedOutput()
@@ -291,6 +313,16 @@ func (d *Deployer) stopService(name string) {
 		d.log.Debug("stop returned non-zero (may already be stopped)", "name", name, "output", string(out))
 	}
 	time.Sleep(2 * time.Second)
+}
+
+// startServiceByType dispatches to the correct start logic based on ServiceType.
+func (d *Deployer) startServiceByType(svc ServiceConfig) error {
+	switch svc.ServiceType {
+	case "static":
+		return d.recycleAppPool(svc)
+	default: // "nssm"
+		return d.startService(svc.WindowsServiceName)
+	}
 }
 
 func (d *Deployer) startService(name string) error {
@@ -306,6 +338,27 @@ func (d *Deployer) startService(name string) error {
 	}
 
 	time.Sleep(2 * time.Second)
+	return nil
+}
+
+// recycleAppPool recycles an IIS app pool via appcmd.exe.
+// This clears cached content and picks up the newly swapped junction files.
+func (d *Deployer) recycleAppPool(svc ServiceConfig) error {
+	if svc.IISAppPool == "" {
+		d.log.Info("no IIS app pool configured, skipping recycle", "name", svc.WindowsServiceName)
+		return nil
+	}
+
+	appcmd := `C:\Windows\System32\inetsrv\appcmd.exe`
+	d.log.Info("recycling IIS app pool", "pool", svc.IISAppPool)
+
+	out, err := exec.Command(appcmd, "recycle", "apppool", svc.IISAppPool).CombinedOutput()
+	if err != nil {
+		d.log.Warn("app pool recycle failed", "pool", svc.IISAppPool, "error", err, "output", string(out))
+		return fmt.Errorf("recycle apppool %s: %w (output: %s)", svc.IISAppPool, err, string(out))
+	}
+
+	d.log.Info("app pool recycled", "pool", svc.IISAppPool)
 	return nil
 }
 

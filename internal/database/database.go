@@ -25,8 +25,9 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 		&Service{},
 		&DeployLog{},
 		&HealthEvent{},
+		&PollEvent{},
 	); err != nil {
-		return nil, fmt.Errorf("auto migrate: %w", err)
+		return nil, fmt.Errorf("failed to auto migrate tables: %w", err)
 	}
 
 	return db, nil

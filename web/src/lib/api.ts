@@ -28,6 +28,7 @@ export interface Watcher {
 	hc_retries: number;
 	hc_interval_sec: number;
 	hc_timeout_sec: number;
+	paused: boolean;
 	current_version: string;
 	status: string;
 	last_checked: string | null;
@@ -41,10 +42,14 @@ export interface Watcher {
 export interface Service {
 	id: number;
 	watcher_id: number;
+	service_type: 'nssm' | 'static';
 	windows_service_name: string;
 	binary_name: string;
 	env_file: string;
 	health_check_url: string;
+	iis_app_pool: string;
+	iis_site_name: string;
+	public_url: string;
 	created_at: string;
 	updated_at: string;
 }
@@ -75,6 +80,15 @@ export interface HealthEvent {
 	checked_at: string | null;
 }
 
+export interface PollEvent {
+	id: number;
+	watcher_id: number;
+	checked_at: string;
+	status: string;
+	remote_version: string;
+	error: string;
+}
+
 export interface SystemStatus {
 	status: string;
 	version: string;
@@ -101,6 +115,7 @@ export const api = {
 	triggerCheck: (id: number) => request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
 	redeployWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}/redeploy`, { method: 'POST' }),
 	watcherDeploys: (id: number) => request<DeployLog[]>(`/watchers/${id}/deploys`),
+	watcherPolls: (id: number) => request<PollEvent[]>(`/watchers/${id}/polls`),
 
 	// Services (flat)
 	listServices: () => request<ServiceWithWatcher[]>('/services'),
