@@ -45,10 +45,13 @@ type HealthCheckConfig struct {
 }
 
 type ServiceConfig struct {
+	ServiceType        string // "nssm" or "static"
 	WindowsServiceName string
 	BinaryName         string
 	EnvFile            string
 	HealthCheckURL     string
+	IISAppPool         string
+	IISSiteName        string
 }
 
 // WatcherConfigFromDB converts a database.Watcher into the in-memory WatcherConfig
@@ -70,11 +73,18 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 		},
 	}
 	for _, s := range w.Services {
+		svcType := s.ServiceType
+		if svcType == "" {
+			svcType = "nssm" // default for backwards compatibility
+		}
 		cfg.Services = append(cfg.Services, ServiceConfig{
+			ServiceType:        svcType,
 			WindowsServiceName: s.WindowsServiceName,
 			BinaryName:         s.BinaryName,
 			EnvFile:            s.EnvFile,
 			HealthCheckURL:     s.HealthCheckURL,
+			IISAppPool:         s.IISAppPool,
+			IISSiteName:        s.IISSiteName,
 		})
 	}
 	return cfg

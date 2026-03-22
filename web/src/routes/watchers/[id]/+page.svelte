@@ -38,10 +38,13 @@
 	let saving = $state(false);
 
 	// Add service form
+	let svcType = $state<'nssm' | 'static'>('nssm');
 	let svcName = $state('');
 	let svcBinary = $state('');
 	let svcEnvFile = $state('');
 	let svcHealthURL = $state('');
+	let svcIISAppPool = $state('');
+	let svcIISSiteName = $state('');
 
 	// Edit form
 	let editInterval = $state(60);
@@ -92,13 +95,17 @@
 		addingService = true;
 		try {
 			await api.createService(id, {
+				service_type: svcType,
 				windows_service_name: svcName,
 				binary_name: svcBinary,
 				env_file: svcEnvFile,
-				health_check_url: svcHealthURL
+				health_check_url: svcHealthURL,
+				iis_app_pool: svcIISAppPool,
+				iis_site_name: svcIISSiteName
 			});
 			showAddService = false;
-			svcName = svcBinary = svcEnvFile = svcHealthURL = '';
+			svcType = 'nssm';
+			svcName = svcBinary = svcEnvFile = svcHealthURL = svcIISAppPool = svcIISSiteName = '';
 			watcher = await api.getWatcher(id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to add service';
@@ -377,8 +384,8 @@
 							<Table.Header>
 								<Table.Row class="border-border hover:bg-transparent">
 									<Table.Head>Service Name</Table.Head>
-									<Table.Head>Binary</Table.Head>
-									<Table.Head>Env File</Table.Head>
+									<Table.Head>Type</Table.Head>
+									<Table.Head>Binary / App Pool</Table.Head>
 									<Table.Head>Health URL</Table.Head>
 									<Table.Head class="text-right">Actions</Table.Head>
 								</Table.Row>
@@ -391,12 +398,14 @@
 												>{svc.windows_service_name}</a
 											>
 										</Table.Cell>
-										<Table.Cell class="font-mono text-xs text-muted-foreground"
-											>{svc.binary_name}</Table.Cell
-										>
-										<Table.Cell class="font-mono text-xs text-muted-foreground"
-											>{svc.env_file || '—'}</Table.Cell
-										>
+										<Table.Cell>
+											<span class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {svc.service_type === 'static' ? 'border-blue-500/30 bg-blue-500/10 text-blue-400' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'}">
+												{svc.service_type === 'static' ? 'Static (IIS)' : 'Binary (NSSM)'}
+											</span>
+										</Table.Cell>
+										<Table.Cell class="font-mono text-xs text-muted-foreground">
+											{svc.service_type === 'static' ? (svc.iis_app_pool || '—') : svc.binary_name}
+										</Table.Cell>
 										<Table.Cell class="font-mono text-xs text-muted-foreground"
 											>{svc.health_check_url || '—'}</Table.Cell
 										>
@@ -492,7 +501,7 @@
 	<Dialog.Content class="sm:max-w-[450px]">
 		<Dialog.Header>
 			<Dialog.Title>Add Service</Dialog.Title>
-			<Dialog.Description>Register a Windows service for this watcher</Dialog.Description>
+			<Dialog.Description>Register a service for this watcher to manage</Dialog.Description>
 		</Dialog.Header>
 		<form
 			class="space-y-4"
@@ -502,17 +511,41 @@
 			}}
 		>
 			<div class="space-y-2">
-				<Label for="svcName">Windows Service Name</Label>
-				<Input id="svcName" placeholder="my-app-web-1" bind:value={svcName} required />
+				<Label for="svcType">Service Type</Label>
+				<select
+					id="svcType"
+					class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+					bind:value={svcType}
+				>
+					<option value="nssm">Binary (NSSM)</option>
+					<option value="static">Static Site (IIS)</option>
+				</select>
 			</div>
 			<div class="space-y-2">
-				<Label for="svcBinary">Binary Name</Label>
-				<Input id="svcBinary" placeholder="my-app.exe" bind:value={svcBinary} required />
+				<Label for="svcName">{svcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label>
+				<Input id="svcName" placeholder={svcType === 'static' ? 'my-frontend' : 'my-app-web-1'} bind:value={svcName} required />
 			</div>
-			<div class="space-y-2">
-				<Label for="svcEnvFile">Env File (optional)</Label>
-				<Input id="svcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={svcEnvFile} />
-			</div>
+
+			{#if svcType === 'nssm'}
+				<div class="space-y-2">
+					<Label for="svcBinary">Binary Name</Label>
+					<Input id="svcBinary" placeholder="my-app.exe" bind:value={svcBinary} required />
+				</div>
+				<div class="space-y-2">
+					<Label for="svcEnvFile">Env File (optional)</Label>
+					<Input id="svcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={svcEnvFile} />
+				</div>
+			{:else}
+				<div class="space-y-2">
+					<Label for="svcIISAppPool">IIS App Pool Name</Label>
+					<Input id="svcIISAppPool" placeholder="my-frontend" bind:value={svcIISAppPool} />
+				</div>
+				<div class="space-y-2">
+					<Label for="svcIISSiteName">IIS Site Name</Label>
+					<Input id="svcIISSiteName" placeholder="my-frontend" bind:value={svcIISSiteName} />
+				</div>
+			{/if}
+
 			<div class="space-y-2">
 				<Label for="svcHealthURL">Health Check URL (optional)</Label>
 				<Input
@@ -532,3 +565,4 @@
 		</form>
 	</Dialog.Content>
 </Dialog.Root>
+

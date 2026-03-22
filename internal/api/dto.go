@@ -37,18 +37,24 @@ type UpdateWatcherRequest struct {
 
 // CreateServiceRequest is the body for POST /api/watchers/:id/services
 type CreateServiceRequest struct {
+	ServiceType        string `json:"service_type"`                              // "nssm" (default) or "static"
 	WindowsServiceName string `json:"windows_service_name" binding:"required"`
-	BinaryName         string `json:"binary_name" binding:"required"`
-	EnvFile            string `json:"env_file" binding:"required"`
+	BinaryName         string `json:"binary_name"`                               // NSSM only
+	EnvFile            string `json:"env_file"`                                  // NSSM only
 	HealthCheckURL     string `json:"health_check_url"`
+	IISAppPool         string `json:"iis_app_pool"`                              // Static only
+	IISSiteName        string `json:"iis_site_name"`                             // Static only
 }
 
 // UpdateServiceRequest is the body for PUT /api/watchers/:id/services/:sid
 type UpdateServiceRequest struct {
+	ServiceType        *string `json:"service_type"`
 	WindowsServiceName *string `json:"windows_service_name"`
 	BinaryName         *string `json:"binary_name"`
 	EnvFile            *string `json:"env_file"`
 	HealthCheckURL     *string `json:"health_check_url"`
+	IISAppPool         *string `json:"iis_app_pool"`
+	IISSiteName        *string `json:"iis_site_name"`
 }
 
 // ── Response helpers ──────────────────────────────────────────

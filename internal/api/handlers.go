@@ -10,6 +10,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// defaultServiceType returns "nssm" if the provided type is empty.
+func defaultServiceType(t string) string {
+	if t == "" {
+		return "nssm"
+	}
+	return t
+}
+
 // Handler holds dependencies for all API endpoints.
 type Handler struct {
 	db           *gorm.DB
@@ -88,10 +96,13 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 	for _, svcReq := range req.Services {
 		svc := database.Service{
 			WatcherID:          watcher.ID,
+			ServiceType:        defaultServiceType(svcReq.ServiceType),
 			WindowsServiceName: svcReq.WindowsServiceName,
 			BinaryName:         svcReq.BinaryName,
 			EnvFile:            svcReq.EnvFile,
 			HealthCheckURL:     svcReq.HealthCheckURL,
+			IISAppPool:         svcReq.IISAppPool,
+			IISSiteName:        svcReq.IISSiteName,
 		}
 		if err := h.db.Create(&svc).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
@@ -236,10 +247,13 @@ func (h *Handler) CreateService(c *gin.Context) {
 
 	svc := database.Service{
 		WatcherID:          watcher.ID,
+		ServiceType:        defaultServiceType(req.ServiceType),
 		WindowsServiceName: req.WindowsServiceName,
 		BinaryName:         req.BinaryName,
 		EnvFile:            req.EnvFile,
 		HealthCheckURL:     req.HealthCheckURL,
+		IISAppPool:         req.IISAppPool,
+		IISSiteName:        req.IISSiteName,
 	}
 
 	if err := h.db.Create(&svc).Error; err != nil {
@@ -267,6 +281,9 @@ func (h *Handler) UpdateService(c *gin.Context) {
 	}
 
 	updates := map[string]any{}
+	if req.ServiceType != nil {
+		updates["service_type"] = *req.ServiceType
+	}
 	if req.WindowsServiceName != nil {
 		updates["windows_service_name"] = *req.WindowsServiceName
 	}
@@ -278,6 +295,12 @@ func (h *Handler) UpdateService(c *gin.Context) {
 	}
 	if req.HealthCheckURL != nil {
 		updates["health_check_url"] = *req.HealthCheckURL
+	}
+	if req.IISAppPool != nil {
+		updates["iis_app_pool"] = *req.IISAppPool
+	}
+	if req.IISSiteName != nil {
+		updates["iis_site_name"] = *req.IISSiteName
 	}
 
 	if len(updates) > 0 {

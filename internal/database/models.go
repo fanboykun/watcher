@@ -39,14 +39,20 @@ type Watcher struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-// Service represents a single Windows service managed by NSSM under a watcher.
+// Service represents a deployable unit under a watcher.
+// ServiceType determines how the service is managed:
+//   - "nssm"   = binary process managed by NSSM (default)
+//   - "static" = static files served by IIS
 type Service struct {
 	ID                 uint   `gorm:"primaryKey" json:"id"`
 	WatcherID          uint   `gorm:"not null;index" json:"watcher_id"`
+	ServiceType        string `gorm:"not null;default:'nssm'" json:"service_type"` // "nssm" or "static"
 	WindowsServiceName string `gorm:"not null" json:"windows_service_name"`
-	BinaryName         string `gorm:"not null" json:"binary_name"`
-	EnvFile            string `gorm:"not null" json:"env_file"`
+	BinaryName         string `gorm:"not null;default:''" json:"binary_name"`  // NSSM only
+	EnvFile            string `gorm:"not null;default:''" json:"env_file"`     // NSSM only
 	HealthCheckURL     string `gorm:"not null;default:''" json:"health_check_url"`
+	IISAppPool         string `gorm:"not null;default:''" json:"iis_app_pool"`  // Static only
+	IISSiteName        string `gorm:"not null;default:''" json:"iis_site_name"` // Static only
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`

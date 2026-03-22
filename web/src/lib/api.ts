@@ -41,10 +41,13 @@ export interface Watcher {
 export interface Service {
 	id: number;
 	watcher_id: number;
+	service_type: 'nssm' | 'static';
 	windows_service_name: string;
 	binary_name: string;
 	env_file: string;
 	health_check_url: string;
+	iis_app_pool: string;
+	iis_site_name: string;
 	created_at: string;
 	updated_at: string;
 }
