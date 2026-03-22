@@ -296,7 +296,7 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 			{"AppRestartDelay", "5000"},
 		}
 		if svc.EnvFile != "" {
-			settings = append(settings, []string{"AppEnvExtra", "ENV_FILE=" + svc.EnvFile})
+			settings = append(settings, []string{"AppEnvironmentExtra", "ENV_FILE=" + svc.EnvFile})
 		}
 
 		for _, kv := range settings {
