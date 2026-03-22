@@ -55,6 +55,7 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version string, checkTrigger chan 
 
 			// Deploy logs and trigger
 			watchers.GET("/:id/deploys", h.ListDeployLogs)
+			watchers.GET("/:id/polls", h.ListPollEvents)
 			watchers.POST("/:id/check", h.TriggerCheck)
 			watchers.POST("/:id/redeploy", h.RedeployWatcher)
 		}

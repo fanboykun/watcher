@@ -28,6 +28,7 @@ export interface Watcher {
 	hc_retries: number;
 	hc_interval_sec: number;
 	hc_timeout_sec: number;
+	paused: boolean;
 	current_version: string;
 	status: string;
 	last_checked: string | null;
@@ -79,6 +80,15 @@ export interface HealthEvent {
 	checked_at: string | null;
 }
 
+export interface PollEvent {
+	id: number;
+	watcher_id: number;
+	checked_at: string;
+	status: string;
+	remote_version: string;
+	error: string;
+}
+
 export interface SystemStatus {
 	status: string;
 	version: string;
@@ -105,6 +115,7 @@ export const api = {
 	triggerCheck: (id: number) => request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
 	redeployWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}/redeploy`, { method: 'POST' }),
 	watcherDeploys: (id: number) => request<DeployLog[]>(`/watchers/${id}/deploys`),
+	watcherPolls: (id: number) => request<PollEvent[]>(`/watchers/${id}/polls`),
 
 	// Services (flat)
 	listServices: () => request<ServiceWithWatcher[]>('/services'),

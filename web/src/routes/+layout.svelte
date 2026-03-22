@@ -2,7 +2,7 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { page } from '$app/state';
-	import { Activity, LayoutDashboard, Eye, Server, Menu, X } from '@lucide/svelte';
+	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock } from '@lucide/svelte';
 	import * as Button from '$lib/components/ui/button';
 	import Separator from '$lib/components/ui/separator/separator.svelte';
 	import { resolve } from '$app/paths';
@@ -15,6 +15,7 @@
 		{ href: '/', label: 'Dashboard', icon: LayoutDashboard },
 		{ href: '/watchers', label: 'Watchers', icon: Eye },
 		{ href: '/services', label: 'Services', icon: Server },
+		{ href: '/polling', label: 'Polling', icon: Clock },
 		{ href: '/logs', label: 'Logs', icon: Activity }
 	] as const;
 

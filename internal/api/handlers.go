@@ -83,6 +83,7 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		HcRetries:        withDefault(req.HcRetries, 10),
 		HcIntervalSec:    withDefault(req.HcIntervalSec, 3),
 		HcTimeoutSec:     withDefault(req.HcTimeoutSec, 5),
+		Paused:           req.Paused,
 		Status:           "unknown",
 	}
 
@@ -163,6 +164,9 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	}
 	if req.HcTimeoutSec != nil {
 		updates["hc_timeout_sec"] = *req.HcTimeoutSec
+	}
+	if req.Paused != nil {
+		updates["paused"] = *req.Paused
 	}
 
 	if len(updates) > 0 {
@@ -381,6 +385,21 @@ func (h *Handler) ListDeployLogs(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, logs)
+}
+
+// ListPollEvents returns the recent polling history for a watcher.
+func (h *Handler) ListPollEvents(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	var events []database.PollEvent
+	if err := h.db.Where("watcher_id = ?", watcher.ID).Order("id desc").Limit(50).Find(&events).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, events)
 }
 
 // ── Helpers ───────────────────────────────────────────────────

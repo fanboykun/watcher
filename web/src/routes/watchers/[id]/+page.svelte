@@ -25,13 +25,18 @@
 		Trash2,
 		Save,
 		X,
-		ExternalLink
+		ExternalLink,
+		Pause,
+		Play,
+		RefreshCw
 	} from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
+	import { timeAgo } from '$lib/utils';
 
 	let watcher = $state<Watcher | null>(null);
 	let deploys = $state<DeployLog[]>([]);
+	let polls = $state<import('$lib/api').PollEvent[]>([]);
 	let error = $state('');
 	let triggerMsg = $state('');
 	let showAddService = $state(false);
@@ -67,7 +72,11 @@
 	onMount(() => {
 		const init = async () => {
 			try {
-				[watcher, deploys] = await Promise.all([api.getWatcher(id), api.watcherDeploys(id)]);
+				[watcher, deploys, polls] = await Promise.all([
+					api.getWatcher(id),
+					api.watcherDeploys(id),
+					api.watcherPolls(id)
+				]);
 				syncEditForm();
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to load watcher';
@@ -79,12 +88,13 @@
 			if (!watcher) return;
 			try {
 				watcher = await api.getWatcher(id);
-				// Optionally refresh deploys array if status changed from deploying to something else
-				// but Svelte will just rerender watcher properties nicely.
+				if (activeTab === 'polling') {
+					polls = await api.watcherPolls(id);
+				}
 			} catch (err) {
 				// ignore polling errors
 			}
-		}, 3000);
+		}, 5000);
 
 		return () => clearInterval(poll);
 	});
@@ -205,6 +215,16 @@
 		}
 	}
 
+	async function togglePause() {
+		if (!watcher) return;
+		const newPaused = !watcher.paused;
+		try {
+			watcher = await api.updateWatcher(id, { paused: newPaused });
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Toggle pause failed';
+		}
+	}
+
 	function statusColor(s: string) {
 		switch (s) {
 			case 'healthy':
@@ -279,8 +299,19 @@
 			>
 				{#if editing}<X class="mr-2 h-4 w-4" /> Cancel{:else}<Pencil class="mr-2 h-4 w-4" /> Edit{/if}
 			</Button.Root>
-			<Button.Root variant="outline" size="sm" onclick={triggerCheck}>
-				<Zap class="mr-2 h-4 w-4" /> Check Now
+
+			{#if watcher.paused}
+				<Button.Root variant="outline" size="sm" onclick={togglePause}>
+					<Play class="mr-2 h-4 w-4" /> Resume
+				</Button.Root>
+			{:else}
+				<Button.Root variant="outline" size="sm" onclick={togglePause}>
+					<Pause class="mr-2 h-4 w-4" /> Pause
+				</Button.Root>
+			{/if}
+
+			<Button.Root variant="outline" size="sm" onclick={triggerCheck} disabled={watcher.paused}>
+				<RefreshCw class="mr-2 h-4 w-4" /> Poll Now
 			</Button.Root>
 			<Button.Root variant="outline" size="sm" class="text-orange-500 hover:bg-orange-500/10 hover:text-orange-600 border-orange-500/30" onclick={triggerRedeploy}>
 				<RotateCcw class="mr-2 h-4 w-4" /> Redeploy
@@ -382,6 +413,7 @@
 				<Tabs.Trigger value="overview">Overview</Tabs.Trigger>
 				<Tabs.Trigger value="services">Services ({watcher.services.length})</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploy History ({deploys.length})</Tabs.Trigger>
+				<Tabs.Trigger value="polling">Polling History</Tabs.Trigger>
 			</Tabs.List>
 
 			<Tabs.Content value="overview" class="mt-4">
@@ -434,12 +466,12 @@
 							</div>
 							<div class="flex justify-between">
 								<span class="text-muted-foreground">Last Checked</span><span
-									>{formatDate(watcher.last_checked)}</span
+									>{watcher.last_checked ? timeAgo(watcher.last_checked) : 'Never'}</span
 								>
 							</div>
 							<div class="flex justify-between">
 								<span class="text-muted-foreground">Last Deployed</span><span
-									>{formatDate(watcher.last_deployed)}</span
+									>{watcher.last_deployed ? timeAgo(watcher.last_deployed) : 'Never'}</span
 								>
 							</div>
 							{#if watcher.last_error}
@@ -576,6 +608,53 @@
 						<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
 							<Rocket class="mb-3 h-8 w-8 text-muted-foreground/40" />
 							<p class="text-sm text-muted-foreground">No deployments yet</p>
+						</Card.Content>
+					</Card.Root>
+				{/if}
+			</Tabs.Content>
+
+			<Tabs.Content value="polling" class="mt-4">
+				{#if polls.length > 0}
+					<Card.Root class="border-border bg-card">
+						<Table.Root>
+							<Table.Header>
+								<Table.Row class="border-border hover:bg-transparent">
+									<Table.Head>Date</Table.Head>
+									<Table.Head>Status</Table.Head>
+									<Table.Head>Remote Version</Table.Head>
+									<Table.Head>Error</Table.Head>
+								</Table.Row>
+							</Table.Header>
+							<Table.Body>
+								{#each polls as p (p.id)}
+									<Table.Row class="border-border">
+										<Table.Cell class="text-muted-foreground">
+											<span title={p.checked_at}>{timeAgo(p.checked_at)}</span>
+										</Table.Cell>
+										<Table.Cell>
+											<span
+												class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize 
+												{p.status === 'new_release' ? 'bg-blue-500/15 text-blue-400 border-blue-500/30' : 
+												 p.status === 'error' ? 'bg-red-500/15 text-red-400 border-red-500/30' : 
+												 'bg-muted text-muted-foreground border-border'}"
+											>
+												{p.status.replace('_', ' ')}
+											</span>
+										</Table.Cell>
+										<Table.Cell class="font-mono text-sm">{p.remote_version || '—'}</Table.Cell>
+										<Table.Cell class="max-w-[300px] truncate text-xs text-red-400" title={p.error}
+											>{p.error || '—'}</Table.Cell
+										>
+									</Table.Row>
+								{/each}
+							</Table.Body>
+						</Table.Root>
+					</Card.Root>
+				{:else}
+					<Card.Root class="border-dashed border-border bg-card">
+						<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
+							<Clock class="mb-3 h-8 w-8 text-muted-foreground/40" />
+							<p class="text-sm text-muted-foreground">No polling history yet</p>
 						</Card.Content>
 					</Card.Root>
 				{/if}

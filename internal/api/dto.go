@@ -15,6 +15,7 @@ type CreateWatcherRequest struct {
 	HcRetries        int                    `json:"hc_retries"`
 	HcIntervalSec    int                    `json:"hc_interval_sec"`
 	HcTimeoutSec     int                    `json:"hc_timeout_sec"`
+	Paused           bool                   `json:"paused"`
 	Services         []CreateServiceRequest `json:"services"`
 }
 
@@ -31,6 +32,7 @@ type UpdateWatcherRequest struct {
 	HcRetries        *int    `json:"hc_retries"`
 	HcIntervalSec    *int    `json:"hc_interval_sec"`
 	HcTimeoutSec     *int    `json:"hc_timeout_sec"`
+	Paused           *bool   `json:"paused"`
 }
 
 // ── Service DTOs ──────────────────────────────────────────────

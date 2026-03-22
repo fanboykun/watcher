@@ -151,3 +151,26 @@ func (s *StateManager) SetRolledBack(version string) error {
 			"completed_at": &now,
 		}).Error
 }
+
+func (s *StateManager) RecordPollEvent(status, remoteVersion, errMsg string) {
+	evt := database.PollEvent{
+		WatcherID:     s.watcherID,
+		Status:        status,
+		RemoteVersion: remoteVersion,
+		Error:         errMsg,
+	}
+	if err := s.db.Create(&evt).Error; err != nil {
+		s.log.Warn("failed to record poll event", "error", err)
+	}
+
+	// Keep only the last 50 poll events for this watcher
+	s.db.Exec(`
+		DELETE FROM poll_events 
+		WHERE watcher_id = ? 
+		AND id NOT IN (
+			SELECT id FROM poll_events 
+			WHERE watcher_id = ? 
+			ORDER BY id DESC 
+			LIMIT 50
+		)`, s.watcherID, s.watcherID)
+}
