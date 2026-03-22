@@ -7,6 +7,7 @@ The release zip contains:
 ```
 watcher-vX.Y.Z.zip
   watcher.exe               the watcher agent binary (API + dashboard embedded)
+  install.bat               wrapper script to launch GUI wizard
   shell/
     install-watcher.ps1     bootstrap script (installs dependencies, registers service)
   .env.example              example config — copy to .env and edit
@@ -24,28 +25,24 @@ watcher-vX.Y.Z.zip
 
 ---
 
-## Run the Installer (Interactive)
+## Run the Installer (GUI Wizard)
 
-The install script handles everything through an interactive menu. Run in **PowerShell as Administrator**:
+The installation is driven by a clean, interactive Windows GUI that automatically requests Administrator privileges and handles execution policies.
 
-```powershell
-# 1. Extract the release zip to C:\apps\watcher\ (or your preferred directory)
-# 2. Run:
-cd C:\apps\watcher
-Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1
-```
+1. Extract the release zip to your preferred directory (e.g., `C:\apps\watcher\`)
+2. Double-click **`install.bat`**
 
-The script will prompt you with a menu:
+> **Note:** If you prefer running it from an existing Administrator PowerShell prompt, you can use:
+> `Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1`
 
-```
-[1] Binary services only (Chocolatey + NSSM)
-[2] Static sites only (IIS + URL Rewrite)
-[3] Both (NSSM + IIS + URL Rewrite)
-[4] Full stack (NSSM + IIS + URL Rewrite + ARR for reverse proxy)
-[Q] Quit
-```
+The GUI wizard will ask you to select an **Installation Profile**:
 
-Depending on your selection, the script will:
+1. **Binary services only**: Installs Chocolatey + NSSM
+2. **Static sites only**: Enables IIS + URL Rewrite
+3. **Both**: Installs NSSM + IIS + URL Rewrite
+4. **Full stack**: Installs everything above plus Application Request Routing (ARR) for reverse proxying
+
+Depending on your profile selection, the wizard will:
 
 1. Install **Chocolatey** and **NSSM**
 2. Enable **IIS** Windows features, download and install **URL Rewrite** / **ARR**
@@ -55,7 +52,7 @@ Depending on your selection, the script will:
 6. Register the watcher agent as a Windows service (`app-watcher`)
 7. Start the service and verify the API is responding
 
-After installation, open **http://localhost:8080** to access the dashboard.
+After installation, the dashboard will open automatically in your default browser at **http://localhost:8080** (or your chosen port).
 
 ---
 

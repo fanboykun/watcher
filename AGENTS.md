@@ -77,8 +77,9 @@ watcher/
       routes/                       SvelteKit pages (dashboard, watchers, services, logs)
       lib/api.ts                    Typed API client
       lib/components/ui/            shadcn-svelte components
+  install.bat                       Wrapper to auto-elevate and launch the GUI wizard
   shell/
-    install-watcher.ps1             Bootstrap — installs Chocolatey, NSSM, registers service
+    install-watcher.ps1             GUI Bootstrap — installs dependencies, registers service
   workflows/
     release.yml                     Template release workflow for watched app repos
   .github/workflows/

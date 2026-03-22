@@ -180,16 +180,15 @@ For step-by-step instructions, see **[INSTALL.md](./INSTALL.md)**.
 
 Quick start:
 
-```powershell
-# On Windows, as Administrator:
-# 1. Copy watcher.exe + shell/ to C:\apps\watcher\
-# 2. Run the bootstrap script:
-Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1
-# 3. Follow the interactive menu to select desired features (NSSM, IIS, ARR)
+```cmd
+# On Windows:
+# 1. Copy watcher.exe and the shell/ directory to your target machine
+# 2. Double-click install.bat
+# 3. Follow the GUI wizard to select desired features (NSSM, IIS, ARR)
 # 4. Open http://localhost:8080
 ```
 
-The install script presents an interactive menu to safely install Chocolatey, NSSM, IIS features, and ARR depending on your deployment needs. It also handles `.env` creation, registration, and startup automatically.
+The installation script presents an interactive GUI wizard to safely install Chocolatey, NSSM, IIS features, and ARR depending on your deployment needs. It automatically requests Administrator privileges and handles `.env` creation, registration, and startup.
 
 ---
 
