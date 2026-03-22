@@ -25,7 +25,7 @@ func NewDeployer(wcfg *WatcherConfig, nssmPath string, log *Logger, logFn func(s
 }
 
 func (d *Deployer) l(msg string, args ...any) {
-	d.l(msg, args...)
+	d.log.Info(msg, args...)
 	if d.logFn != nil {
 		tz := time.Now().UTC().Format("15:04:05")
 		text := fmt.Sprintf("[%s] %s", tz, msg)
@@ -39,7 +39,7 @@ func (d *Deployer) l(msg string, args ...any) {
 }
 
 func (d *Deployer) lWarn(msg string, args ...any) {
-	d.lWarn(msg, args...)
+	d.log.Warn(msg, args...)
 	if d.logFn != nil {
 		tz := time.Now().UTC().Format("15:04:05")
 		text := fmt.Sprintf("[%s] WARN: %s", tz, msg)
