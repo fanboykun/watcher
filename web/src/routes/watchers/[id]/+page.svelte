@@ -88,10 +88,7 @@
 	onMount(() => {
 		const init = async () => {
 			try {
-				[watcher, deploys] = await Promise.all([
-					api.getWatcher(id),
-					api.watcherDeploys(id)
-				]);
+				[watcher, deploys] = await Promise.all([api.getWatcher(id), api.watcherDeploys(id)]);
 				await loadPolls();
 				syncEditForm();
 			} catch (e) {
@@ -124,7 +121,7 @@
 					if (e.data === 'DONE') {
 						liveLogSource?.close();
 						liveLogSource = null;
-						api.getWatcher(id).then(w => watcher = w);
+						api.getWatcher(id).then((w) => (watcher = w));
 						return;
 					}
 					liveLogLines = [...liveLogLines, e.data];
@@ -197,7 +194,14 @@
 			});
 			showAddService = false;
 			svcType = 'nssm';
-			svcName = svcBinary = svcEnvFile = svcHealthURL = svcIISAppPool = svcIISSiteName = svcPublicURL = '';
+			svcName =
+				svcBinary =
+				svcEnvFile =
+				svcHealthURL =
+				svcIISAppPool =
+				svcIISSiteName =
+				svcPublicURL =
+					'';
 			watcher = await api.getWatcher(id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to add service';
@@ -227,7 +231,12 @@
 	}
 
 	async function triggerRedeploy() {
-		if (!confirm(`Are you sure you want to force a redeployment for "${watcher?.name}"? This will restart its services.`)) return;
+		if (
+			!confirm(
+				`Are you sure you want to force a redeployment for "${watcher?.name}"? This will restart its services.`
+			)
+		)
+			return;
 		try {
 			const res = await api.redeployWatcher(id);
 			triggerMsg = res.message;
@@ -335,7 +344,12 @@
 			<Button.Root variant="outline" size="sm" onclick={triggerCheck} disabled={watcher.paused}>
 				<RefreshCw class="mr-2 h-4 w-4" /> Poll Now
 			</Button.Root>
-			<Button.Root variant="outline" size="sm" class="text-orange-500 hover:bg-orange-500/10 hover:text-orange-600 border-orange-500/30" onclick={triggerRedeploy}>
+			<Button.Root
+				variant="outline"
+				size="sm"
+				class="border-orange-500/30 text-orange-500 hover:bg-orange-500/10 hover:text-orange-600"
+				onclick={triggerRedeploy}
+			>
 				<RotateCcw class="mr-2 h-4 w-4" /> Redeploy
 			</Button.Root>
 		{/if}
@@ -409,20 +423,23 @@
 		{/if}
 
 		{#if watcher.status === 'deploying'}
-			<Card.Root class="border-blue-500/30 bg-blue-500/5 mb-6">
-				<Card.Header class="pb-3 border-b border-border/50">
-					<Card.Title class="text-sm font-medium flex items-center gap-2 text-blue-400">
+			<Card.Root class="mb-6 border-blue-500/30 bg-blue-500/5">
+				<Card.Header class="border-b border-border/50 pb-3">
+					<Card.Title class="flex items-center gap-2 text-sm font-medium text-blue-400">
 						<Loader2 class="h-4 w-4 animate-spin" />
 						Deployment in Progress...
 					</Card.Title>
 				</Card.Header>
 				<Card.Content class="p-0">
-					<div class="h-[300px] w-full bg-[#0a0a0a] overflow-y-auto p-4 font-mono text-xs text-blue-300 leading-relaxed scroll-smooth" bind:this={logContainer}>
+					<div
+						class="h-[300px] w-full overflow-y-auto scroll-smooth bg-[#0a0a0a] p-4 font-mono text-xs leading-relaxed text-blue-300"
+						bind:this={logContainer}
+					>
 						{#if liveLogLines.length === 0}
 							<div class="text-muted-foreground">Connecting to agent stream...</div>
 						{/if}
 						{#each liveLogLines as line, i (i)}
-							<div class="whitespace-pre-wrap break-all">{line}</div>
+							<div class="break-all whitespace-pre-wrap">{line}</div>
 						{/each}
 					</div>
 				</Card.Content>
@@ -430,7 +447,12 @@
 		{/if}
 
 		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-		<Tabs.Root bind:value={activeTab} onValueChange={(v) => { if (v) goto(`?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true }); }}>
+		<Tabs.Root
+			bind:value={activeTab}
+			onValueChange={(v) => {
+				if (v) goto(`?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true });
+			}}
+		>
 			<Tabs.List>
 				<Tabs.Trigger value="overview">Overview</Tabs.Trigger>
 				<Tabs.Trigger value="services">Services ({watcher.services.length})</Tabs.Trigger>
@@ -534,19 +556,28 @@
 												>{svc.windows_service_name}</a
 											>
 											{#if svc.public_url}
-												<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-												<a href={svc.public_url} target="_blank" rel="noopener noreferrer" class="ml-1.5 inline-flex items-center text-muted-foreground hover:text-foreground" title="Open Public URL">
+												<a href={resolve(svc.public_url)}
+													target="_blank"
+													rel="noopener noreferrer"
+													class="ml-1.5 inline-flex items-center text-muted-foreground hover:text-foreground"
+													title="Open Public URL"
+												>
 													<ExternalLink class="h-3 w-3" />
 												</a>
 											{/if}
 										</Table.Cell>
 										<Table.Cell>
-											<span class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {svc.service_type === 'static' ? 'border-blue-500/30 bg-blue-500/10 text-blue-400' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'}">
+											<span
+												class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {svc.service_type ===
+												'static'
+													? 'border-blue-500/30 bg-blue-500/10 text-blue-400'
+													: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'}"
+											>
 												{svc.service_type === 'static' ? 'Static (IIS)' : 'Binary (NSSM)'}
 											</span>
 										</Table.Cell>
 										<Table.Cell class="font-mono text-xs text-muted-foreground">
-											{svc.service_type === 'static' ? (svc.iis_app_pool || '—') : svc.binary_name}
+											{svc.service_type === 'static' ? svc.iis_app_pool || '—' : svc.binary_name}
 										</Table.Cell>
 										<Table.Cell class="font-mono text-xs text-muted-foreground"
 											>{svc.health_check_url || '—'}</Table.Cell
@@ -623,10 +654,14 @@
 										>
 										<Table.Cell class="text-right">
 											{#if d.logs}
-												<Button.Root variant="ghost" size="sm" onclick={() => {
-													selectedDeployLog = d;
-													showDeployLog = true;
-												}}>
+												<Button.Root
+													variant="ghost"
+													size="sm"
+													onclick={() => {
+														selectedDeployLog = d;
+														showDeployLog = true;
+													}}
+												>
 													View Logs
 												</Button.Root>
 											{/if}
@@ -666,10 +701,12 @@
 										</Table.Cell>
 										<Table.Cell>
 											<span
-												class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize 
-												{p.status === 'new_release' ? 'bg-blue-500/15 text-blue-400 border-blue-500/30' : 
-												 p.status === 'error' ? 'bg-red-500/15 text-red-400 border-red-500/30' : 
-												 'bg-muted text-muted-foreground border-border'}"
+												class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize
+												{p.status === 'new_release'
+													? 'border-blue-500/30 bg-blue-500/15 text-blue-400'
+													: p.status === 'error'
+														? 'border-red-500/30 bg-red-500/15 text-red-400'
+														: 'border-border bg-muted text-muted-foreground'}"
 											>
 												{p.status.replace('_', ' ')}
 											</span>
@@ -682,13 +719,16 @@
 								{/each}
 							</Table.Body>
 						</Table.Root>
-						<div class="flex items-center justify-between px-4 py-4 border-t border-border mt-auto">
-							<div class="text-xs text-muted-foreground flex items-center gap-2">
+						<div class="mt-auto flex items-center justify-between border-t border-border px-4 py-4">
+							<div class="flex items-center gap-2 text-xs text-muted-foreground">
 								<span>Status Filter:</span>
 								<select
 									class="h-7 rounded border border-input bg-transparent px-2 text-xs focus:ring-1 focus:ring-ring"
 									bind:value={pollStatus}
-									onchange={() => { pollPage = 1; loadPolls() }}
+									onchange={() => {
+										pollPage = 1;
+										loadPolls();
+									}}
 								>
 									<option value="all">All</option>
 									<option value="new_release">New Release</option>
@@ -698,14 +738,32 @@
 							</div>
 							<div class="flex items-center gap-4 text-xs">
 								<span class="text-muted-foreground">
-									Page {pollPage} of {Math.ceil(pollTotal / pollPageSize) || 1} 
+									Page {pollPage} of {Math.ceil(pollTotal / pollPageSize) || 1}
 									({pollTotal} total)
 								</span>
 								<div class="flex items-center gap-1.5">
-									<Button.Root variant="outline" size="sm" class="h-7 px-2" disabled={pollPage <= 1} onclick={() => { pollPage--; loadPolls() }}>
+									<Button.Root
+										variant="outline"
+										size="sm"
+										class="h-7 px-2"
+										disabled={pollPage <= 1}
+										onclick={() => {
+											pollPage--;
+											loadPolls();
+										}}
+									>
 										Prev
 									</Button.Root>
-									<Button.Root variant="outline" size="sm" class="h-7 px-2" disabled={pollPage * pollPageSize >= pollTotal} onclick={() => { pollPage++; loadPolls() }}>
+									<Button.Root
+										variant="outline"
+										size="sm"
+										class="h-7 px-2"
+										disabled={pollPage * pollPageSize >= pollTotal}
+										onclick={() => {
+											pollPage++;
+											loadPolls();
+										}}
+									>
 										Next
 									</Button.Root>
 								</div>
@@ -743,7 +801,7 @@
 				<Label for="svcType">Service Type</Label>
 				<select
 					id="svcType"
-					class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+					class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
 					bind:value={svcType}
 				>
 					<option value="nssm">Binary (NSSM)</option>
@@ -751,8 +809,15 @@
 				</select>
 			</div>
 			<div class="space-y-2">
-				<Label for="svcName">{svcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label>
-				<Input id="svcName" placeholder={svcType === 'static' ? 'my-frontend' : 'my-app-web-1'} bind:value={svcName} required />
+				<Label for="svcName"
+					>{svcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label
+				>
+				<Input
+					id="svcName"
+					placeholder={svcType === 'static' ? 'my-frontend' : 'my-app-web-1'}
+					bind:value={svcName}
+					required
+				/>
 			</div>
 
 			{#if svcType === 'nssm'}
@@ -803,24 +868,21 @@
 	</Dialog.Content>
 </Dialog.Root>
 
-
 <!-- Deploy Log Dialog -->
 <Dialog.Root bind:open={showDeployLog}>
-	<Dialog.Content class="sm:max-w-[700px] max-h-[85vh] flex flex-col">
+	<Dialog.Content class="flex max-h-[85vh] flex-col sm:max-w-[700px]">
 		<Dialog.Header>
 			<Dialog.Title>Deployment Logs: {selectedDeployLog?.version}</Dialog.Title>
 		</Dialog.Header>
-		
-		<div class="flex-1 min-h-0 overflow-y-auto rounded bg-muted/50 p-4 font-mono text-xs mt-4">
-			<div class="h-full whitespace-pre-wrap text-muted-foreground break-words">
+
+		<div class="mt-4 min-h-0 flex-1 overflow-y-auto rounded bg-muted/50 p-4 font-mono text-xs">
+			<div class="h-full wrap-break-word whitespace-pre-wrap text-muted-foreground">
 				{selectedDeployLog?.logs || 'No logs available.'}
 			</div>
 		</div>
 
 		<Dialog.Footer class="mt-4">
-			<Button.Root variant="outline" onclick={() => (showDeployLog = false)}>
-				Close
-			</Button.Root>
+			<Button.Root variant="outline" onclick={() => (showDeployLog = false)}>Close</Button.Root>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
