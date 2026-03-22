@@ -30,7 +30,7 @@ The watcher runs as a Windows service, polls GitHub Releases on a configurable i
 
 - **Pull-based deployment** — polls GitHub Releases over HTTPS, no inbound access required
 - **Multi-watcher** — watch multiple repos from a single agent
-- **NSSM service management** — auto-registers, starts, stops, and restarts Windows services
+- **Dual service support** — manages both NSSM background binaries and IIS static sites
 - **Health checks** — validates deploys with HTTP health endpoints, auto-rollbacks on failure
 - **Web dashboard** — embedded SvelteKit SPA served from the single binary
 - **REST API** — full API for managing watchers, services, deploys, and logs
@@ -117,9 +117,9 @@ Watcher Agent  [Windows Service]
   └── polls version.json → detects new version
   └── downloads artifact zip
   └── extracts to releases/<version>/
-  └── stops NSSM services
+  └── stops services (if NSSM binary)
   └── swaps current/ junction → new release
-  └── starts NSSM services
+  └── starts services / recycles app pools (if IIS static)
   └── health check → rollback on failure
   └── records deploy in SQLite database
         ↓
@@ -182,13 +182,14 @@ Quick start:
 
 ```powershell
 # On Windows, as Administrator:
-# 1. Copy watcher.exe + shell/ to D:\apps\watcher\
+# 1. Copy watcher.exe + shell/ to C:\apps\watcher\
 # 2. Run the bootstrap script:
 Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1
-# 3. Open http://localhost:8080
+# 3. Follow the interactive menu to select desired features (NSSM, IIS, ARR)
+# 4. Open http://localhost:8080
 ```
 
-The install script handles Chocolatey, NSSM, `.env` creation, service registration, and startup automatically.
+The install script presents an interactive menu to safely install Chocolatey, NSSM, IIS features, and ARR depending on your deployment needs. It also handles `.env` creation, registration, and startup automatically.
 
 ---
 

@@ -24,28 +24,36 @@ watcher-vX.Y.Z.zip
 
 ---
 
-## Quick install (automated)
+## Run the Installer (Interactive)
 
-The install script handles everything. Run in **PowerShell as Administrator**:
+The install script handles everything through an interactive menu. Run in **PowerShell as Administrator**:
 
 ```powershell
-# 1. Extract the release zip to D:\apps\watcher\
+# 1. Extract the release zip to C:\apps\watcher\ (or your preferred directory)
 # 2. Run:
-cd D:\apps\watcher
+cd C:\apps\watcher
 Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1
 ```
 
-The script will:
+The script will prompt you with a menu:
 
-1. Install **Chocolatey** (if missing)
-2. Install **NSSM** via Chocolatey (if missing)
-3. Create `D:\apps\watcher\logs\` directory
-4. Generate a default **`.env`** config file (if missing)
-5. Secure `.env` permissions (SYSTEM + Administrators only)
-6. Verify outbound HTTPS to github.com
-7. Register `app-watcher` as a Windows service via NSSM
-8. Start the service
-9. Verify the API is responding
+```
+[1] Binary services only (Chocolatey + NSSM)
+[2] Static sites only (IIS + URL Rewrite)
+[3] Both (NSSM + IIS + URL Rewrite)
+[4] Full stack (NSSM + IIS + URL Rewrite + ARR for reverse proxy)
+[Q] Quit
+```
+
+Depending on your selection, the script will:
+
+1. Install **Chocolatey** and **NSSM**
+2. Enable **IIS** Windows features, download and install **URL Rewrite** / **ARR**
+3. Create the `logs\` directory
+4. Generate a default **`.env`** config file (with restricted permissions)
+5. Verify outbound HTTPS to github.com
+6. Register the watcher agent as a Windows service (`app-watcher`)
+7. Start the service and verify the API is responding
 
 After installation, open **http://localhost:8080** to access the dashboard.
 
@@ -53,18 +61,30 @@ After installation, open **http://localhost:8080** to access the dashboard.
 
 ## Manual install (step by step)
 
-### Step 1 — Install Chocolatey
+### Step 1 — Install Chocolatey & NSSM (for binary services)
+
+If you plan to manage background binaries:
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
 iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+choco install nssm -y
 ```
 
-### Step 2 — Install NSSM
+### Step 2 — Enable IIS (for static sites)
 
+If you plan to deploy frontend static sites, enable IIS (from an Admin PowerShell):
+
+**On Windows Desktop (10/11):**
 ```powershell
-choco install nssm -y
+Enable-WindowsOptionalFeature -Online -FeatureName IIS-WebServerRole, IIS-WebServer, IIS-CommonHttpFeatures, IIS-StaticContent -All
+```
+
+**On Windows Server:**
+```powershell
+Install-WindowsFeature -Name Web-Server -IncludeManagementTools
 ```
 
 ### Step 3 — Extract release
@@ -145,40 +165,51 @@ After installation, use the **dashboard** at `http://localhost:8080`:
 
 1. Go to **Watchers** → click **Add Watcher**
 2. Fill in:
-   - **Name**: display name (e.g. `my-service`)
+   - **Name**: display name (e.g. `my-project`)
    - **Service Name**: must match `APP_NAME` in the repo's `release.yml`
    - **Metadata URL**: `https://github.com/your-org/your-repo/releases/latest/download/version.json`
-   - **Install Dir**: e.g. `D:\apps\my-service`
+   - **Install Dir**: e.g. `C:\apps\my-project`
    - **Check Interval**: poll frequency in seconds (default: 60)
 3. After creating the watcher, click into it and **Add Service**:
-   - **Windows Service Name**: NSSM service name (e.g. `my-service-web-1`)
-   - **Binary Name**: filename inside the release zip (e.g. `web.exe`)
-   - **Env File**: path to the `.env` file for this service instance
-   - **Health Check URL**: e.g. `http://localhost:3000/health`
+   - **Service Type**: Choose either **Binary (NSSM)** or **Static Site (IIS)**
+   - **Service Identifier**: The name used for the Windows Service or IIS site.
+   - For **Binary**: supply the **Binary Name** (e.g., `web.exe`) and optional **Env File**.
+   - For **Static Site**: supply the **IIS App Pool Name** and **IIS Site Name**.
+   - **Health Check URL**: Optional ping after deployment (e.g. `http://localhost:3000/health`)
 
 Alternatively, use the REST API:
 
 ```powershell
 # Create a watcher
 Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/watchers" -ContentType "application/json" -Body '{
-  "name": "my-service",
-  "service_name": "my-service",
+  "name": "my-project",
+  "service_name": "my-project",
   "metadata_url": "https://github.com/your-org/your-repo/releases/latest/download/version.json",
-  "install_dir": "D:\\apps\\my-service",
+  "install_dir": "C:\\apps\\my-project",
   "check_interval_sec": 60,
   "hc_enabled": true
 }'
 
-# Add a service to the watcher (use the watcher ID from above)
+# Add a binary (NSSM) service to the watcher
 Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/watchers/1/services" -ContentType "application/json" -Body '{
-  "windows_service_name": "my-service-web-1",
-  "binary_name": "web.exe",
-  "env_file": "D:\\apps\\my-service\\.env.web.1",
-  "health_check_url": "http://localhost:3000/health"
+  "service_type": "nssm",
+  "windows_service_name": "my-api",
+  "binary_name": "api.exe",
+  "env_file": "C:\\apps\\my-project\\.env"
+}'
+
+# Add a static (IIS) service to the watcher
+Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/watchers/1/services" -ContentType "application/json" -Body '{
+  "service_type": "static",
+  "windows_service_name": "my-frontend-service",
+  "iis_app_pool": "my-frontend-pool",
+  "iis_site_name": "my-frontend"
 }'
 ```
 
-> **Important**: Create the `.env` files for your app services before the first deploy. The watcher deploys binaries but does NOT manage `.env` files.
+> **Important**: 
+> - **For NSSM Services**: Create the `.env` files for your app services before the first deploy. The watcher deploys binaries but does NOT manage `.env` files.
+> - **For IIS Services**: Ensure the IIS Site and App Pool are created in IIS Manager and pointed to the `C:\apps\my-project\current` junction folder before the first payload deploys.
 
 ---
 
