@@ -120,7 +120,9 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 
 	meta, err := r.github.FetchMetadata(ctx, r.wcfg.MetadataURL)
 	if err != nil {
-		r.state.RecordPollEvent("error", "", err.Error())
+		if !errors.Is(err, context.Canceled) {
+			r.state.RecordPollEvent("error", "", err.Error())
+		}
 		return fmt.Errorf("fetch metadata: %w", err)
 	}
 
@@ -136,7 +138,9 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 
 	localVersion, err := r.state.ReadVersion()
 	if err != nil {
-		r.state.RecordPollEvent("error", targetVersion, "read local version: "+err.Error())
+		if !errors.Is(err, context.Canceled) {
+			r.state.RecordPollEvent("error", targetVersion, "read local version: "+err.Error())
+		}
 		return fmt.Errorf("read local version: %w", err)
 	}
 	r.log.Info("local version", "current", localVersion)
@@ -150,8 +154,21 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 	r.state.RecordPollEvent("new_release", targetVersion, "")
 	r.log.Info("version mismatch, deploying", "from", localVersion, "to", targetVersion)
 
+	// Prevent infinite deploy retries — cap at 3 consecutive failures for the same version.
+	// A manual redeploy from the dashboard resets this by clearing current_version.
+	const maxDeployRetries = 3
+	failures := r.state.ConsecutiveFailuresForVersion(targetVersion)
+	if failures >= maxDeployRetries {
+		msg := fmt.Sprintf("deploy suspended for %s after %d consecutive failures — use dashboard to redeploy", targetVersion, failures)
+		r.log.Warn(msg)
+		r.state.RecordPollEvent("deploy_suspended", targetVersion, msg)
+		return nil
+	}
+
 	if err := r.deploy(ctx, svcMeta, targetVersion, localVersion); err != nil {
-		_ = r.state.SetFailed(err.Error())
+		if !errors.Is(err, context.Canceled) {
+			_ = r.state.SetFailed(err.Error())
+		}
 		return fmt.Errorf("deploy: %w", err)
 	}
 

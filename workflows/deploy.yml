@@ -299,7 +299,7 @@ jobs:
               Write-Host "Installing service: $($svc.Name)"
               & $NSSM install $svc.Name $svc.Exe
               & $NSSM set $svc.Name AppDirectory    $BaseDir
-              & $NSSM set $svc.Name AppEnvExtra     "ENV_FILE=$($svc.EnvFile)"
+              & $NSSM set $svc.Name AppEnvironmentExtra     "ENV_FILE=$($svc.EnvFile)"
               & $NSSM set $svc.Name Start           SERVICE_AUTO_START
               & $NSSM set $svc.Name AppStdout       "$BaseDir\logs\$($svc.Name).out.log"
               & $NSSM set $svc.Name AppStderr       "$BaseDir\logs\$($svc.Name).err.log"

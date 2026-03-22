@@ -182,3 +182,13 @@ func (s *StateManager) RecordPollEvent(status, remoteVersion, errMsg string) {
 			LIMIT 50
 		)`, s.watcherID, s.watcherID)
 }
+
+// ConsecutiveFailuresForVersion returns the number of consecutive failed deploys
+// for a specific version. Used to prevent infinite deploy retries.
+func (s *StateManager) ConsecutiveFailuresForVersion(version string) int {
+	var count int64
+	s.db.Model(&database.DeployLog{}).
+		Where("watcher_id = ? AND version = ? AND status = ?", s.watcherID, version, string(StatusFailed)).
+		Count(&count)
+	return int(count)
+}

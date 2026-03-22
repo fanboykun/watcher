@@ -71,7 +71,7 @@
 			formServices = [{
 				service_type: 'nssm',
 				windows_service_name: formServiceName,
-				binary_name: inspectResult?.assets[0] || 'app.exe',
+				binary_name: formServiceName ? `${formServiceName}.exe` : 'app.exe',
 				env_file: '.env',
 				health_check_url: formHcURL,
 			}];
@@ -124,7 +124,7 @@
 		formServices = [...formServices, {
 			service_type: 'nssm',
 			windows_service_name: `${formServiceName}-extra`,
-			binary_name: inspectResult?.assets[0] || '',
+			binary_name: formServiceName ? `${formServiceName}-extra.exe` : 'app.exe',
 			env_file: '.env',
 		}];
 	}
@@ -386,7 +386,7 @@
 				</Dialog.Footer>
 			{:else if createStep === 3}
 				<div class="space-y-4">
-					{#each formServices as svc, i}
+					{#each formServices as svc, i (i)}
 						<div class="border rounded-md p-3 space-y-3 relative bg-card">
 							<Button.Root variant="ghost" size="icon" class="absolute top-2 right-2 h-6 w-6 text-red-400" type="button" onclick={() => removeServiceDraft(i)}>
 								<Trash2 class="h-3 w-3" />
@@ -406,17 +406,8 @@
 									<Input class="h-8 text-xs" bind:value={svc.windows_service_name} placeholder="myapp-web" />
 								</div>
 								<div class="space-y-1">
-									<Label class="text-xs">Asset Name (Exact in release)</Label>
-									{#if inspectResult?.assets && inspectResult.assets.length > 0}
-										<select bind:value={svc.binary_name} class="w-full text-xs rounded border bg-transparent p-2">
-											<option value="">Select asset...</option>
-											{#each inspectResult.assets as asset}
-												<option value={asset}>{asset}</option>
-											{/each}
-										</select>
-									{:else}
-										<Input class="h-8 text-xs" bind:value={svc.binary_name} placeholder="myapp.exe" />
-									{/if}
+									<Label class="text-xs">Executable Name</Label>
+									<Input class="h-8 text-xs" bind:value={svc.binary_name} placeholder="myapp.exe" />
 								</div>
 								<div class="space-y-1">
 									<Label class="text-xs">Env file relative path</Label>
