@@ -52,7 +52,7 @@ func (s *StateManager) SetDeploying(version, fromVersion string) error {
 	now := time.Now().UTC()
 	// Update watcher state
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
-		Updates(map[string]any{
+		UpdateColumns(map[string]any{
 			"status":          string(StatusDeploying),
 			"current_version": version,
 			"last_checked":    &now,
@@ -76,7 +76,7 @@ func (s *StateManager) SetHealthy(version string) error {
 	now := time.Now().UTC()
 	// Update watcher state
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
-		Updates(map[string]any{
+		UpdateColumns(map[string]any{
 			"status":        string(StatusHealthy),
 			"last_deployed": &now,
 			"last_error":    "",
@@ -106,7 +106,7 @@ func (s *StateManager) SetFailed(errMsg string) error {
 	now := time.Now().UTC()
 	// Update watcher state
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
-		Updates(map[string]any{
+		UpdateColumns(map[string]any{
 			"status":     string(StatusFailed),
 			"last_error": errMsg,
 		}).Error
@@ -135,7 +135,7 @@ func (s *StateManager) SetFailed(errMsg string) error {
 func (s *StateManager) SetRolledBack(version string) error {
 	now := time.Now().UTC()
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
-		Updates(map[string]any{
+		UpdateColumns(map[string]any{
 			"status":          string(StatusRollback),
 			"current_version": version,
 			"last_deployed":   &now,
