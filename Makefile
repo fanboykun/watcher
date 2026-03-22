@@ -86,12 +86,13 @@ build: build-web
 	@echo "    OK: $(OUT) (SPA embedded)"
 	@echo ""
 
-## package: build watcher.exe and zip with shell/install-watcher.ps1 + .env.example + INSTALL.md
+## package: build watcher.exe and zip with shell/ scripts + .env.example + INSTALL.md
 package: build
 	@echo ""
 	@echo ">>> Packaging release zip"
 	@mkdir -p $(BIN_DIR)/staging/shell
 	@cp $(OUT)                       $(BIN_DIR)/staging/
+	@cp shell/install.bat            $(BIN_DIR)/staging/shell/
 	@cp shell/install-watcher.ps1    $(BIN_DIR)/staging/shell/
 	@cp .env.example                 $(BIN_DIR)/staging/
 	@cp INSTALL.md                   $(BIN_DIR)/staging/
