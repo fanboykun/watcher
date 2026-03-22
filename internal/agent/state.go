@@ -53,10 +53,9 @@ func (s *StateManager) SetDeploying(version, fromVersion string) error {
 	// Update watcher state
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
 		UpdateColumns(map[string]any{
-			"status":          string(StatusDeploying),
-			"current_version": version,
-			"last_checked":    &now,
-			"last_error":      "",
+			"status":       string(StatusDeploying),
+			"last_checked": &now,
+			"last_error":   "",
 		}).Error
 	if err != nil {
 		return err

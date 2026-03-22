@@ -585,7 +585,7 @@ func (h *Handler) InspectGitHubRepo(c *gin.Context) {
 
 // SyncServiceEnv updates the .env content for a service and syncs it to disk.
 func (h *Handler) SyncServiceEnv(c *gin.Context) {
-	svc, err := h.findService(c)
+	svc, err := h.findServiceByID(c)
 	if err != nil {
 		return
 	}
