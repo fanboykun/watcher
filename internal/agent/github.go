@@ -353,7 +353,9 @@ type InspectRepoResponse struct {
 	LatestVersion string   `json:"latest_version"`
 	PublishedAt   string   `json:"published_at"`
 	Assets        []string `json:"assets"`
-}// InspectRepository fetches the latest release from a GitHub repository to preview assets.
+}
+
+// InspectRepository fetches the latest release from a GitHub repository to preview assets.
 func (g *GitHubClient) InspectRepository(ctx context.Context, url string) (*InspectRepoResponse, error) {
 	meta, err := g.FetchMetadataFromRepo(ctx, url)
 	if err != nil {

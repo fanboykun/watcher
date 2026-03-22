@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -323,7 +324,7 @@ func (a *Agent) runWatcher(ctx context.Context, dbWatcher *database.Watcher, tri
 	)
 
 	// Run immediately on startup
-	if err := rw.Run(ctx); err != nil && err != context.Canceled {
+	if err := rw.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Error("initial check failed", "error", err)
 	}
 
@@ -336,12 +337,12 @@ func (a *Agent) runWatcher(ctx context.Context, dbWatcher *database.Watcher, tri
 			log.Info("watcher stopping")
 			return
 		case <-ticker.C:
-			if err := rw.Run(ctx); err != nil && err != context.Canceled {
+			if err := rw.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("check cycle failed", "error", err)
 			}
 		case <-trigger:
 			log.Info("immediate check triggered via API")
-			if err := rw.Run(ctx); err != nil && err != context.Canceled {
+			if err := rw.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("triggered check failed", "error", err)
 			}
 		}
