@@ -226,8 +226,8 @@ jobs:
       # ── Assemble release package ────────────────────────────────────────────
       # The zip contains everything the user needs to bootstrap a server:
       #   watcher.exe             -- the agent binary
+      #   install.bat             -- wrapper script to launch GUI wizard
       #   shell/                  -- PowerShell scripts
-      #     install.bat           -- wrapper script to launch GUI wizard
       #     install-watcher.ps1   -- registers watcher as a Windows service
       #   .env.example            -- example config (copy to .env and edit)
       #   INSTALL.md              -- step-by-step install guide
@@ -240,7 +240,7 @@ jobs:
           mkdir -p "$STAGING/shell"
 
           cp dist/${{ env.WATCHER_BINARY }} "$STAGING/"
-          cp shell/install.bat              "$STAGING/shell/"
+          cp install.bat                    "$STAGING/"
           cp shell/install-watcher.ps1      "$STAGING/shell/"
           cp .env.example                   "$STAGING/"
           cp INSTALL.md                     "$STAGING/"

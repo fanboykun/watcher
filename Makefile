@@ -92,7 +92,7 @@ package: build
 	@echo ">>> Packaging release zip"
 	@mkdir -p $(BIN_DIR)/staging/shell
 	@cp $(OUT)                       $(BIN_DIR)/staging/
-	@cp shell/install.bat            $(BIN_DIR)/staging/shell/
+	@cp install.bat                  $(BIN_DIR)/staging/
 	@cp shell/install-watcher.ps1    $(BIN_DIR)/staging/shell/
 	@cp .env.example                 $(BIN_DIR)/staging/
 	@cp INSTALL.md                   $(BIN_DIR)/staging/

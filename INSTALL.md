@@ -7,6 +7,7 @@ The release zip contains:
 ```
 watcher-vX.Y.Z.zip
   watcher.exe               the watcher agent binary (API + dashboard embedded)
+  install.bat               wrapper script to launch GUI wizard
   shell/
     install-watcher.ps1     bootstrap script (installs dependencies, registers service)
   .env.example              example config — copy to .env and edit
@@ -29,7 +30,7 @@ watcher-vX.Y.Z.zip
 The installation is driven by a clean, interactive Windows GUI that automatically requests Administrator privileges and handles execution policies.
 
 1. Extract the release zip to your preferred directory (e.g., `C:\apps\watcher\`)
-2. Double-click **`shell\install.bat`**
+2. Double-click **`install.bat`**
 
 > **Note:** If you prefer running it from an existing Administrator PowerShell prompt, you can use:
 > `Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1`

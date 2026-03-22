@@ -183,7 +183,7 @@ Quick start:
 ```cmd
 # On Windows:
 # 1. Copy watcher.exe and the shell/ directory to your target machine
-# 2. Double-click shell\install.bat
+# 2. Double-click install.bat
 # 3. Follow the GUI wizard to select desired features (NSSM, IIS, ARR)
 # 4. Open http://localhost:8080
 ```
