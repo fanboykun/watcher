@@ -29,7 +29,7 @@ func newTestClient(token string, server *httptest.Server) *GitHubClient {
 }
 
 // ============================================================
-// parseGitHubURL
+// ParseGitHubURL
 // ============================================================
 
 func TestParseGitHubURL(t *testing.T) {
@@ -71,7 +71,7 @@ func TestParseGitHubURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			owner, repo, err := parseGitHubURL(tt.url)
+			owner, repo, err := ParseGitHubURL(tt.url)
 			if tt.wantErrContains != "" {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tt.wantErrContains)

@@ -61,7 +61,7 @@ func main() {
 	syncTrigger := make(chan struct{}, 1)
 
 	// Start API server in background
-	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, checkTrigger, syncTrigger)
+	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, checkTrigger, syncTrigger)
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.APIPort),
 		Handler: router,

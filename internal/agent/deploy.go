@@ -17,17 +17,46 @@ type Deployer struct {
 	wcfg     *WatcherConfig
 	nssmPath string
 	log      *Logger
+	logFn    func(string)
 }
 
-func NewDeployer(wcfg *WatcherConfig, nssmPath string, log *Logger) *Deployer {
-	return &Deployer{wcfg: wcfg, nssmPath: nssmPath, log: log}
+func NewDeployer(wcfg *WatcherConfig, nssmPath string, log *Logger, logFn func(string)) *Deployer {
+	return &Deployer{wcfg: wcfg, nssmPath: nssmPath, log: log, logFn: logFn}
+}
+
+func (d *Deployer) l(msg string, args ...any) {
+	d.l(msg, args...)
+	if d.logFn != nil {
+		tz := time.Now().UTC().Format("15:04:05")
+		text := fmt.Sprintf("[%s] %s", tz, msg)
+		for i := 0; i < len(args); i += 2 {
+			if i+1 < len(args) {
+				text += fmt.Sprintf(" %v=%v", args[i], args[i+1])
+			}
+		}
+		d.logFn(text)
+	}
+}
+
+func (d *Deployer) lWarn(msg string, args ...any) {
+	d.lWarn(msg, args...)
+	if d.logFn != nil {
+		tz := time.Now().UTC().Format("15:04:05")
+		text := fmt.Sprintf("[%s] WARN: %s", tz, msg)
+		for i := 0; i < len(args); i += 2 {
+			if i+1 < len(args) {
+				text += fmt.Sprintf(" %v=%v", args[i], args[i+1])
+			}
+		}
+		d.logFn(text)
+	}
 }
 
 func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion string) error {
 	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", version)
 	currentDir := filepath.Join(d.wcfg.InstallDir, "current")
 
-	d.log.Info("deploying", "version", version, "release_dir", releaseDir)
+	d.l("deploying", "version", version, "release_dir", releaseDir)
 
 	// Extract to a temporary directory first to avoid file-in-use errors during redeploys
 	tempReleaseDir := releaseDir + fmt.Sprintf("-%d", time.Now().UnixNano())
@@ -37,19 +66,19 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 		return fmt.Errorf("extract zip: %w", err)
 	}
 
-	d.log.Info("stopping services")
+	d.l("stopping services")
 	for _, svc := range d.wcfg.Services {
 		d.stopServiceByType(svc)
 	}
 
 	// Now that services are stopped, safely remove the old releaseDir if it exists (for redeploys)
 	if err := os.RemoveAll(releaseDir); err != nil {
-		d.log.Warn("failed to remove existing release dir", "dir", releaseDir, "error", err)
+		d.lWarn("failed to remove existing release dir", "dir", releaseDir, "error", err)
 	}
 
 	// Rename temp directory to final release directory
 	if err := os.Rename(tempReleaseDir, releaseDir); err != nil {
-		d.log.Warn("rename failed, falling back to copy", "error", err)
+		d.lWarn("rename failed, falling back to copy", "error", err)
 		if err := copyDir(tempReleaseDir, releaseDir); err != nil {
 			return fmt.Errorf("rename fallback copy: %w", err)
 		}
@@ -60,7 +89,7 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 		return fmt.Errorf("swap current: %w", err)
 	}
 
-	d.log.Info("starting services")
+	d.l("starting services")
 	for _, svc := range d.wcfg.Services {
 		if err := d.ensureServiceByType(svc, currentDir); err != nil {
 			return d.tryRollback(ctx, previousVersion,
@@ -89,7 +118,7 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 		}
 	}
 
-	d.log.Info("deploy successful", "version", version)
+	d.l("deploy successful", "version", version)
 	return nil
 }
 
@@ -97,7 +126,7 @@ func (d *Deployer) Rollback(ctx context.Context, version string) error {
 	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", version)
 	currentDir := filepath.Join(d.wcfg.InstallDir, "current")
 
-	d.log.Warn("rolling back", "to_version", version)
+	d.lWarn("rolling back", "to_version", version)
 
 	if _, err := os.Stat(releaseDir); os.IsNotExist(err) {
 		return fmt.Errorf("rollback target %s not on disk", releaseDir)
@@ -135,7 +164,7 @@ func (d *Deployer) Rollback(ctx context.Context, version string) error {
 		}
 	}
 
-	d.log.Info("rollback successful", "version", version)
+	d.l("rollback successful", "version", version)
 	return nil
 }
 
@@ -143,7 +172,7 @@ func (d *Deployer) tryRollback(ctx context.Context, previousVersion string, orig
 	if previousVersion == "" {
 		return fmt.Errorf("%w (no previous version to roll back to)", originalErr)
 	}
-	d.log.Warn("attempting rollback", "to", previousVersion, "reason", originalErr)
+	d.lWarn("attempting rollback", "to", previousVersion, "reason", originalErr)
 	if rbErr := d.Rollback(ctx, previousVersion); rbErr != nil {
 		return fmt.Errorf("deploy failed AND rollback failed: deploy=%w rollback=%v", originalErr, rbErr)
 	}
@@ -205,7 +234,7 @@ func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
 	}
 	out, err := exec.Command("cmd", "/C", "mklink", "/J", currentDir, releaseDir).CombinedOutput()
 	if err != nil {
-		d.log.Warn("mklink /J failed, falling back to copy", "output", string(out))
+		d.lWarn("mklink /J failed, falling back to copy", "output", string(out))
 		return copyDir(releaseDir, currentDir)
 	}
 	return nil
@@ -215,7 +244,7 @@ func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
 func (d *Deployer) ensureServiceByType(svc ServiceConfig, currentDir string) error {
 	switch svc.ServiceType {
 	case "static":
-		d.log.Info("static service -- no NSSM registration needed", "name", svc.WindowsServiceName)
+		d.l("static service -- no NSSM registration needed", "name", svc.WindowsServiceName)
 		return nil
 	default: // "nssm"
 		newBin := filepath.Join(currentDir, svc.BinaryName)
@@ -231,7 +260,7 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 	existing := d.serviceExists(svc.WindowsServiceName)
 
 	if !existing {
-		d.log.Info("service not registered, installing via NSSM", "name", svc.WindowsServiceName)
+		d.l("service not registered, installing via NSSM", "name", svc.WindowsServiceName)
 
 		out, err := exec.Command(d.nssmPath, "install", svc.WindowsServiceName, binPath).CombinedOutput()
 		if err != nil {
@@ -241,7 +270,7 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 		// Configure service settings
 		logDir := filepath.Join(d.wcfg.InstallDir, "logs")
 		if err := os.MkdirAll(logDir, 0755); err != nil {
-			d.log.Warn("could not create log dir", "path", logDir, "error", err)
+			d.lWarn("could not create log dir", "path", logDir, "error", err)
 		}
 
 		settings := [][]string{
@@ -261,17 +290,17 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 		for _, kv := range settings {
 			o, e := exec.Command(d.nssmPath, "set", svc.WindowsServiceName, kv[0], kv[1]).CombinedOutput()
 			if e != nil {
-				d.log.Warn("nssm set warning", "key", kv[0], "error", e, "output", string(o))
+				d.lWarn("nssm set warning", "key", kv[0], "error", e, "output", string(o))
 			}
 		}
 
-		d.log.Info("service installed", "name", svc.WindowsServiceName, "binary", binPath)
+		d.l("service installed", "name", svc.WindowsServiceName, "binary", binPath)
 	} else {
 		// Service exists -- just update the binary path
-		d.log.Info("updating service binary", "name", svc.WindowsServiceName, "binary", binPath)
+		d.l("updating service binary", "name", svc.WindowsServiceName, "binary", binPath)
 		out, err := exec.Command(d.nssmPath, "set", svc.WindowsServiceName, "Application", binPath).CombinedOutput()
 		if err != nil {
-			d.log.Warn("failed to update binary path", "name", svc.WindowsServiceName, "error", err, "output", string(out))
+			d.lWarn("failed to update binary path", "name", svc.WindowsServiceName, "error", err, "output", string(out))
 		}
 	}
 
@@ -300,14 +329,14 @@ func (d *Deployer) stopServiceByType(svc ServiceConfig) {
 		// Static services don't have a process to stop.
 		// Optionally stop the IIS app pool, but usually unnecessary
 		// since we just swap the junction.
-		d.log.Info("static service -- skipping stop", "name", svc.WindowsServiceName)
+		d.l("static service -- skipping stop", "name", svc.WindowsServiceName)
 	default: // "nssm"
 		d.stopService(svc.WindowsServiceName)
 	}
 }
 
 func (d *Deployer) stopService(name string) {
-	d.log.Info("stopping service", "name", name)
+	d.l("stopping service", "name", name)
 	out, err := exec.Command(d.nssmPath, "stop", name, "confirm").CombinedOutput()
 	if err != nil {
 		d.log.Debug("stop returned non-zero (may already be stopped)", "name", name, "output", string(out))
@@ -326,7 +355,7 @@ func (d *Deployer) startServiceByType(svc ServiceConfig) error {
 }
 
 func (d *Deployer) startService(name string) error {
-	d.log.Info("starting service", "name", name)
+	d.l("starting service", "name", name)
 	outBytes, err := exec.Command(d.nssmPath, "start", name).CombinedOutput()
 	out := string(outBytes)
 	
@@ -334,7 +363,7 @@ func (d *Deployer) startService(name string) error {
 		return fmt.Errorf("nssm start %s: %w (output: %s)", name, err, out)
 	}
 	if err != nil {
-		d.log.Info("service start pending or already running", "name", name, "output", out)
+		d.l("service start pending or already running", "name", name, "output", out)
 	}
 
 	time.Sleep(2 * time.Second)
@@ -345,20 +374,20 @@ func (d *Deployer) startService(name string) error {
 // This clears cached content and picks up the newly swapped junction files.
 func (d *Deployer) recycleAppPool(svc ServiceConfig) error {
 	if svc.IISAppPool == "" {
-		d.log.Info("no IIS app pool configured, skipping recycle", "name", svc.WindowsServiceName)
+		d.l("no IIS app pool configured, skipping recycle", "name", svc.WindowsServiceName)
 		return nil
 	}
 
 	appcmd := `C:\Windows\System32\inetsrv\appcmd.exe`
-	d.log.Info("recycling IIS app pool", "pool", svc.IISAppPool)
+	d.l("recycling IIS app pool", "pool", svc.IISAppPool)
 
 	out, err := exec.Command(appcmd, "recycle", "apppool", svc.IISAppPool).CombinedOutput()
 	if err != nil {
-		d.log.Warn("app pool recycle failed", "pool", svc.IISAppPool, "error", err, "output", string(out))
+		d.lWarn("app pool recycle failed", "pool", svc.IISAppPool, "error", err, "output", string(out))
 		return fmt.Errorf("recycle apppool %s: %w (output: %s)", svc.IISAppPool, err, string(out))
 	}
 
-	d.log.Info("app pool recycled", "pool", svc.IISAppPool)
+	d.l("app pool recycled", "pool", svc.IISAppPool)
 	return nil
 }
 
@@ -367,7 +396,7 @@ func (d *Deployer) healthCheck(ctx context.Context, serviceName, url string) err
 	client := &http.Client{Timeout: time.Duration(hc.TimeoutSec) * time.Second}
 	interval := time.Duration(hc.IntervalSec) * time.Second
 
-	d.log.Info("health check", "service", serviceName, "url", url, "retries", hc.Retries)
+	d.l("health check", "service", serviceName, "url", url, "retries", hc.Retries)
 
 	for i := 1; i <= hc.Retries; i++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -377,7 +406,7 @@ func (d *Deployer) healthCheck(ctx context.Context, serviceName, url string) err
 		resp, err := client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			resp.Body.Close()
-			d.log.Info("health check passed", "service", serviceName, "attempt", i)
+			d.l("health check passed", "service", serviceName, "attempt", i)
 			return nil
 		}
 		status := 0
@@ -385,7 +414,7 @@ func (d *Deployer) healthCheck(ctx context.Context, serviceName, url string) err
 			status = resp.StatusCode
 			resp.Body.Close()
 		}
-		d.log.Warn("not healthy yet", "service", serviceName, "attempt", i, "status", status)
+		d.lWarn("not healthy yet", "service", serviceName, "attempt", i, "status", status)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

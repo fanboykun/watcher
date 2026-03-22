@@ -53,6 +53,7 @@ type Service struct {
 	IISAppPool         string `gorm:"not null;default:''" json:"iis_app_pool"`  // Static only
 	IISSiteName        string `gorm:"not null;default:''" json:"iis_site_name"` // Static only
 	PublicURL          string `gorm:"not null;default:''" json:"public_url"`
+	EnvContent         string `gorm:"type:text" json:"env_content"`
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
@@ -68,6 +69,7 @@ type DeployLog struct {
 	Status      string     `gorm:"not null" json:"status"`
 	Error       string     `gorm:"not null;default:''" json:"error"`
 	DurationMs  int64      `gorm:"not null;default:0" json:"duration_ms"`
+	Logs        string     `gorm:"type:text" json:"logs"`
 	StartedAt   *time.Time `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at"`
 }

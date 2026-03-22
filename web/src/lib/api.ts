@@ -15,6 +15,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 // ── Types ────────────────────────────────────────────────────
 
+export interface InspectRepoResponse {
+	latest_version: string;
+	published_at: string;
+	assets: string[];
+}
+
 export interface Watcher {
 	id: number;
 	name: string;
@@ -50,6 +56,7 @@ export interface Service {
 	iis_app_pool: string;
 	iis_site_name: string;
 	public_url: string;
+	env_content: string;
 	created_at: string;
 	updated_at: string;
 }
@@ -67,6 +74,7 @@ export interface DeployLog {
 	status: string;
 	error: string;
 	duration_ms: number;
+	logs: string | null;
 	started_at: string | null;
 	completed_at: string | null;
 }
@@ -115,7 +123,7 @@ export const api = {
 	triggerCheck: (id: number) => request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
 	redeployWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}/redeploy`, { method: 'POST' }),
 	watcherDeploys: (id: number) => request<DeployLog[]>(`/watchers/${id}/deploys`),
-	watcherPolls: (id: number) => request<PollEvent[]>(`/watchers/${id}/polls`),
+	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') => request<{ data: PollEvent[], total: number, page: number, pageSize: number }>(`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`),
 
 	// Services (flat)
 	listServices: () => request<ServiceWithWatcher[]>('/services'),
@@ -127,8 +135,12 @@ export const api = {
 	healthHistory: (id: number, limit = 50) => request<HealthEvent[]>(`/services/${id}/health/history?limit=${limit}`),
 	serviceLogs: (id: number, lines = 100, type = 'out') => request<{ lines: string[] }>(`/services/${id}/logs?lines=${lines}&type=${type}`),
 	serviceDeploys: (id: number) => request<DeployLog[]>(`/services/${id}/deploys`),
+	syncServiceEnv: (id: number, envContent: string) => request<{ message: string }>(`/services/${id}/env`, { method: 'PUT', body: JSON.stringify({ env_content: envContent }) }),
 
 	// Services (nested under watcher)
 	createService: (watcherId: number, data: Partial<Service>) => request<Service>(`/watchers/${watcherId}/services`, { method: 'POST', body: JSON.stringify(data) }),
-	deleteService: (watcherId: number, serviceId: number) => request<{ message: string }>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'DELETE' })
+	deleteService: (watcherId: number, serviceId: number) => request<{ message: string }>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'DELETE' }),
+
+	// GitHub Integration
+	inspectRepo: (repoUrl: string) => request<InspectRepoResponse>('/github/inspect', { method: 'POST', body: JSON.stringify({ repo_url: repoUrl }) })
 };

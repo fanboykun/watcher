@@ -73,7 +73,7 @@ func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionM
 
 	if g.token != "" {
 		// Private repo: use GitHub API to resolve and download the asset
-		owner, repo, err := parseGitHubURL(url)
+		owner, repo, err := ParseGitHubURL(url)
 		if err != nil {
 			return nil, fmt.Errorf("parse metadata URL: %w", err)
 		}
@@ -308,9 +308,9 @@ func (g *GitHubClient) newRequest(ctx context.Context, method, url string) (*htt
 	return req, nil
 }
 
-// parseGitHubURL extracts owner and repo from a GitHub URL.
-// Supports: https://github.com/{owner}/{repo}/releases/latest/download/version.json
-func parseGitHubURL(rawURL string) (owner, repo string, err error) {
+// ParseGitHubURL extracts owner and repo from a GitHub URL.
+// Supports: https://github.com/{owner}/{repo}
+func ParseGitHubURL(rawURL string) (owner, repo string, err error) {
 	trimmed := strings.TrimPrefix(rawURL, "https://github.com/")
 	if trimmed == rawURL {
 		return "", "", fmt.Errorf("unexpected URL format (expected https://github.com/...): %s", rawURL)
@@ -335,4 +335,59 @@ func parseArtifactURL(rawURL string) (owner, repo, assetName string, err error) 
 		return "", "", "", fmt.Errorf("cannot extract asset name from URL: %s", rawURL)
 	}
 	return parts[0], parts[1], parts[5], nil
+}
+
+// InspectRepoResponse represents the payload returned for the UI to preview releases.
+type InspectRepoResponse struct {
+	LatestVersion string   `json:"latest_version"`
+	PublishedAt   string   `json:"published_at"`
+	Assets        []string `json:"assets"`
+}
+
+// InspectRepository fetches the latest release from a GitHub repository to preview assets.
+func (g *GitHubClient) InspectRepository(ctx context.Context, url string) (*InspectRepoResponse, error) {
+	owner, repo, err := ParseGitHubURL(url)
+	if err != nil {
+		return nil, err
+	}
+
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", g.apiBase, owner, repo)
+	req, err := g.newRequest(ctx, http.MethodGet, apiURL)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("releases API returned HTTP %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName     string `json:"tag_name"`
+		PublishedAt string `json:"published_at"`
+		Assets      []struct {
+			Name string `json:"name"`
+		} `json:"assets"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return nil, fmt.Errorf("decode release JSON: %w", err)
+	}
+
+	res := &InspectRepoResponse{
+		LatestVersion: release.TagName,
+		PublishedAt:   release.PublishedAt,
+	}
+	for _, a := range release.Assets {
+		res.Assets = append(res.Assets, a.Name)
+	}
+
+	return res, nil
 }

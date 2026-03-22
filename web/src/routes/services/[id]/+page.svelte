@@ -6,7 +6,7 @@
 	import * as Table from '$lib/components/ui/table';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import * as Button from '$lib/components/ui/button';
-	import { ArrowLeft, Play, Square, RefreshCw, Heart, AlertCircle, CheckCircle2, XCircle, Activity, FileText, ExternalLink, TerminalSquare } from '@lucide/svelte';
+	import { ArrowLeft, Play, Square, RefreshCw, Heart, AlertCircle, CheckCircle2, XCircle, Activity, FileText, ExternalLink, TerminalSquare, Save } from '@lucide/svelte';
 	import { goto } from '$app/navigation';
 
 	let service = $state<Service | null>(null);
@@ -20,6 +20,9 @@
 	let logType = $state<'out' | 'err'>('out');
 	let logCount = $state(100);
 	
+	let envContent = $state('');
+	let savingEnv = $state(false);
+	
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
 	const id = Number(page.params.id);
@@ -29,6 +32,7 @@
 			const detail = await api.getService(id);
 			service = detail.service;
 			watcher = detail.watcher;
+			envContent = service.env_content || '';
 			healthHistory = await api.healthHistory(id, 50);
 			deploys = await api.serviceDeploys(id);
 		} catch (e) {
@@ -53,9 +57,28 @@
 			const res = await fn();
 			actionMsg = res.message;
 			setTimeout(() => (actionMsg = ''), 4000);
+			// Refresh state if needed
+			if (service) {
+				const detail = await api.getService(id);
+				service = detail.service;
+				envContent = service.env_content || '';
+			}
 		} catch (e) {
 			actionMsg = e instanceof Error ? e.message : 'Action failed';
 			setTimeout(() => (actionMsg = ''), 5000);
+		}
+	}
+
+	async function saveEnv() {
+		savingEnv = true;
+		try {
+			const res = await api.syncServiceEnv(id, envContent);
+			actionMsg = res.message;
+			setTimeout(() => (actionMsg = ''), 4000);
+		} catch (e) {
+			actionMsg = e instanceof Error ? e.message : 'Failed to save env';
+		} finally {
+			savingEnv = false;
 		}
 	}
 
@@ -246,6 +269,7 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 			<Tabs.List>
 				<Tabs.Trigger value="health">Health History ({healthHistory.length})</Tabs.Trigger>
 				<Tabs.Trigger value="logs">Logs</Tabs.Trigger>
+				<Tabs.Trigger value="env">Environment (.env)</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploys ({deploys.length})</Tabs.Trigger>
 			</Tabs.List>
 
@@ -352,7 +376,48 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 					</Card.Content>
 				</Card.Root>
 			</Tabs.Content>
-
+|
+			<!-- Environment -->
+			<Tabs.Content value="env" class="mt-4">
+				<Card.Root class="border-border bg-card">
+					<Card.Header class="pb-3">
+						<div class="flex items-center justify-between">
+							<div class="space-y-1">
+								<Card.Title class="text-lg">Environment Variables</Card.Title>
+								<Card.Description>Edit the <code>{service.env_file || '.env'}</code> file for this service.</Card.Description>
+							</div>
+							<div class="flex items-center gap-2">
+								<Button.Root variant="outline" size="sm" onclick={saveEnv} disabled={savingEnv}>
+									{#if savingEnv}<RefreshCw class="mr-2 h-4 w-4 animate-spin" />{:else}<Save class="mr-2 h-4 w-4" />{/if}
+									Save
+								</Button.Root>
+								<Button.Root 
+									variant="default" 
+									size="sm" 
+									onclick={() => { 
+										saveEnv().then(() => runAction(() => api.restartService(id)));
+									}} 
+									disabled={savingEnv}
+									class="bg-amber-600 hover:bg-amber-700 text-white"
+								>
+									<RefreshCw class="mr-2 h-4 w-4" /> Save & Restart
+								</Button.Root>
+							</div>
+						</div>
+					</Card.Header>
+					<Card.Content>
+						<textarea
+							bind:value={envContent}
+							class="min-h-[400px] w-full rounded-md border border-border bg-black/50 p-4 font-mono text-sm text-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+							placeholder="KEY=VALUE"
+						></textarea>
+						<p class="mt-2 text-xs text-muted-foreground italic">
+							Note: Environment variables are written to <code>{service.env_file}</code> in the service's installation directory.
+						</p>
+					</Card.Content>
+				</Card.Root>
+			</Tabs.Content>
+|
 			<!-- Deploys -->
 			<Tabs.Content value="deploys" class="mt-4">
 				{#if deploys.length > 0}
