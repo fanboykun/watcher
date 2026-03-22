@@ -8,7 +8,7 @@
 $ErrorActionPreference = 'Stop'
 
 # ==============================================================
-# CONFIGURATION — edit this block before running
+# CONFIGURATION -- edit this block before running
 # ==============================================================
 $Config = @{
     ServiceName  = "app-watcher"
@@ -106,12 +106,12 @@ if ($needChoco) {
         Write-OK "Chocolatey installed (version $(choco --version))"
     }
 } else {
-    Write-Step "[1] Chocolatey — skipped (not needed)"
+    Write-Step "[1] Chocolatey -- skipped (not needed)"
 }
 
 
 # ==============================================================
-# STEP 2: NSSM (optional — for binary services)
+# STEP 2: NSSM (optional -- for binary services)
 # ==============================================================
 if ($installNSSM) {
     Write-Step "[2] NSSM"
@@ -121,18 +121,18 @@ if ($installNSSM) {
         Write-Host "  Installing NSSM via Chocolatey..." -ForegroundColor Yellow
         choco install nssm -y --force
         if (-not (Test-Path $Config.NssmPath)) {
-            Write-Fail "NSSM installation failed — not found at $($Config.NssmPath)"
+            Write-Fail "NSSM installation failed -- not found at $($Config.NssmPath)"
             exit 1
         }
         Write-OK "NSSM installed"
     }
 } else {
-    Write-Step "[2] NSSM — skipped (not selected)"
+    Write-Step "[2] NSSM -- skipped (not selected)"
 }
 
 
 # ==============================================================
-# STEP 3: IIS features (optional — for static sites or ARR)
+# STEP 3: IIS features (optional -- for static sites or ARR)
 # ==============================================================
 if ($installIIS) {
     Write-Step "[3] IIS features"
@@ -184,12 +184,12 @@ if ($installIIS) {
         Write-OK "URL Rewrite installed"
     }
 } else {
-    Write-Step "[3] IIS — skipped (not selected)"
+    Write-Step "[3] IIS -- skipped (not selected)"
 }
 
 
 # ==============================================================
-# STEP 4: ARR (optional — for reverse proxy)
+# STEP 4: ARR (optional -- for reverse proxy)
 # ==============================================================
 if ($installARR) {
     Write-Step "[4] ARR (Application Request Routing)"
@@ -219,7 +219,7 @@ if ($installARR) {
         Write-OK "ARR proxy enabled"
     }
 } else {
-    Write-Step "[4] ARR — skipped (not selected)"
+    Write-Step "[4] ARR -- skipped (not selected)"
 }
 
 
@@ -238,7 +238,7 @@ Write-Step "[5] Creating directories"
 
 
 # ==============================================================
-# STEP 6: Preflight — check watcher.exe
+# STEP 6: Preflight -- check watcher.exe
 # ==============================================================
 Write-Step "[6] Preflight checks"
 
@@ -299,7 +299,7 @@ try {
         exit 1
     }
 } catch {
-    Write-Fail "Cannot reach github.com — check firewall or proxy settings"
+    Write-Fail "Cannot reach github.com -- check firewall or proxy settings"
     Write-Host "  Error: $_" -ForegroundColor Red
     exit 1
 }
@@ -357,11 +357,11 @@ if ($installNSSM) {
     if ($svc -and $svc.Status -eq "Running") {
         Write-OK "Service is running"
     } else {
-        Write-Fail "Service did not start — check logs at $($Config.LogDir)"
+        Write-Fail "Service did not start -- check logs at $($Config.LogDir)"
         exit 1
     }
 } else {
-    Write-Step "[10] NSSM service registration — skipped (NSSM not selected)"
+    Write-Step "[10] NSSM service registration -- skipped (NSSM not selected)"
     Write-Host "  You will need to run watcher.exe manually or register it as a service" -ForegroundColor Yellow
 }
 
@@ -376,7 +376,7 @@ try {
     $resp = Invoke-WebRequest -Uri "http://localhost:$($Config.APIPort)/api/status" -UseBasicParsing -TimeoutSec 5
     Write-OK "API is up (HTTP $($resp.StatusCode))"
 } catch {
-    Write-Host "  WARN: API not responding yet — check logs" -ForegroundColor Yellow
+    Write-Host "  WARN: API not responding yet -- check logs" -ForegroundColor Yellow
 }
 
 

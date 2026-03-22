@@ -215,7 +215,7 @@ func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
 func (d *Deployer) ensureServiceByType(svc ServiceConfig, currentDir string) error {
 	switch svc.ServiceType {
 	case "static":
-		d.log.Info("static service — no NSSM registration needed", "name", svc.WindowsServiceName)
+		d.log.Info("static service -- no NSSM registration needed", "name", svc.WindowsServiceName)
 		return nil
 	default: // "nssm"
 		newBin := filepath.Join(currentDir, svc.BinaryName)
@@ -300,7 +300,7 @@ func (d *Deployer) stopServiceByType(svc ServiceConfig) {
 		// Static services don't have a process to stop.
 		// Optionally stop the IIS app pool, but usually unnecessary
 		// since we just swap the junction.
-		d.log.Info("static service — skipping stop", "name", svc.WindowsServiceName)
+		d.log.Info("static service -- skipping stop", "name", svc.WindowsServiceName)
 	default: // "nssm"
 		d.stopService(svc.WindowsServiceName)
 	}

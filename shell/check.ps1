@@ -134,6 +134,6 @@ Write-Host "`n============================================================" -For
 if ($allGood) {
     Write-Host "  ALL CHECKS PASSED" -ForegroundColor Green
 } else {
-    Write-Host "  SOME CHECKS FAILED — fix the items above" -ForegroundColor Red
+    Write-Host "  SOME CHECKS FAILED -- fix the items above" -ForegroundColor Red
 }
 Write-Host "============================================================`n" -ForegroundColor Cyan
