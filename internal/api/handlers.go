@@ -1,10 +1,14 @@
 package api
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -33,13 +37,14 @@ type Handler struct {
 	githubToken  string
 	envPath      string
 	appCfg       *config.AppConfig
+	events       *agent.WatcherEventBus
 	startTime    time.Time
 	checkTrigger chan uint     // send watcher ID for immediate poll
 	syncTrigger  chan struct{} // trigger background agent to sync DB
 }
 
 // NewHandler creates a new Handler with the given dependencies.
-func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
+func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
 	return &Handler{
 		db:           db,
 		nssmPath:     nssmPath,
@@ -48,6 +53,7 @@ func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath str
 		githubToken:  githubToken,
 		envPath:      envPath,
 		appCfg:       appCfg,
+		events:       events,
 		startTime:    time.Now(),
 		checkTrigger: checkTrigger,
 		syncTrigger:  syncTrigger,
@@ -59,7 +65,7 @@ func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath str
 // ListWatchers returns all watchers with their services and current state.
 func (h *Handler) ListWatchers(c *gin.Context) {
 	var watchers []database.Watcher
-	if err := h.db.Preload("Services").Find(&watchers).Error; err != nil {
+	if err := h.db.Preload("Services").Preload("Services.ConfigFiles").Find(&watchers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -77,6 +83,53 @@ func (h *Handler) GetWatcher(c *gin.Context) {
 	}
 	enrichWatcherSecrets(watcher)
 	c.JSON(http.StatusOK, watcher)
+}
+
+// StreamWatcherEvents streams watcher state events (SSE) for real-time UI updates.
+func (h *Handler) StreamWatcherEvents(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+	if h.events == nil {
+		c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: "watcher events are not configured"})
+		return
+	}
+
+	ch, unsubscribe := h.events.Subscribe(watcher.ID)
+	defer unsubscribe()
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+
+	ping := time.NewTicker(25 * time.Second)
+	defer ping.Stop()
+
+	// Emit one immediate message so clients don't wait for first heartbeat/data.
+	c.SSEvent("message", agent.WatcherEvent{
+		Type:      "connected",
+		WatcherID: watcher.ID,
+		Timestamp: time.Now().UTC(),
+	})
+	c.Writer.Flush()
+
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case <-c.Request.Context().Done():
+			return false
+		case ev, ok := <-ch:
+			if !ok {
+				return false
+			}
+			c.SSEvent("message", ev)
+			return true
+		case <-ping.C:
+			fmt.Fprint(w, ": ping\n\n")
+			return true
+		}
+	})
 }
 
 // CreateWatcher creates a new watcher entry with optional inline services.
@@ -223,6 +276,16 @@ func (h *Handler) DeleteWatcher(c *gin.Context) {
 		return
 	}
 
+	if err := h.cleanupWatcherServices(watcher); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.removeWatcherInstallDir(watcher); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
 	// Delete services first (soft delete)
 	h.db.Where("watcher_id = ?", watcher.ID).Delete(&database.Service{})
 
@@ -232,6 +295,87 @@ func (h *Handler) DeleteWatcher(c *gin.Context) {
 	}
 	h.triggerSync()
 	c.JSON(http.StatusOK, MessageResponse{Message: "watcher deleted"})
+}
+
+func (h *Handler) cleanupWatcherServices(watcher *database.Watcher) error {
+	if watcher == nil || runtime.GOOS != "windows" {
+		return nil
+	}
+
+	for _, svc := range watcher.Services {
+		if defaultServiceType(svc.ServiceType) != "nssm" {
+			continue
+		}
+		name := strings.TrimSpace(svc.WindowsServiceName)
+		if name == "" {
+			continue
+		}
+
+		if err := h.stopNSSMService(name); err != nil {
+			return err
+		}
+		if err := h.removeNSSMService(name); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (h *Handler) removeWatcherInstallDir(watcher *database.Watcher) error {
+	if watcher == nil {
+		return nil
+	}
+
+	installDir := strings.TrimSpace(watcher.InstallDir)
+	if installDir == "" {
+		return nil
+	}
+
+	info, err := os.Stat(installDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect watcher install dir %s: %w", installDir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("watcher install path is not a directory: %s", installDir)
+	}
+
+	if err := os.RemoveAll(installDir); err != nil {
+		return fmt.Errorf("failed to delete watcher install dir %s: %w", installDir, err)
+	}
+	return nil
+}
+
+func (h *Handler) stopNSSMService(name string) error {
+	out, err := exec.Command(h.nssmPath, "stop", name, "confirm").CombinedOutput()
+	if err == nil || isServiceMissingOutput(string(out)) || isServiceStoppedOutput(string(out)) {
+		return nil
+	}
+	return fmt.Errorf("failed to stop service %s before watcher deletion: %s", name, strings.TrimSpace(string(out)))
+}
+
+func (h *Handler) removeNSSMService(name string) error {
+	out, err := exec.Command(h.nssmPath, "remove", name, "confirm").CombinedOutput()
+	if err == nil || isServiceMissingOutput(string(out)) {
+		return nil
+	}
+	return fmt.Errorf("failed to remove service %s before watcher deletion: %s", name, strings.TrimSpace(string(out)))
+}
+
+func isServiceMissingOutput(out string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(out))
+	return strings.Contains(normalized, "DOES NOT EXIST") ||
+		strings.Contains(normalized, "SERVICE_DOES_NOT_EXIST") ||
+		strings.Contains(normalized, "OPENSERVICE(): THE SPECIFIED SERVICE DOES NOT EXIST")
+}
+
+func isServiceStoppedOutput(out string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(out))
+	return strings.Contains(normalized, "SERVICE_STOPPED") ||
+		strings.Contains(normalized, "SERVICE_NOT_ACTIVE")
 }
 
 // ── Service CRUD (nested under watcher) ───────────────────────
@@ -263,7 +407,7 @@ func (h *Handler) ListServices(c *gin.Context) {
 	}
 
 	var services []database.Service
-	if err := h.db.Where("watcher_id = ?", watcher.ID).Find(&services).Error; err != nil {
+	if err := h.db.Preload("ConfigFiles").Where("watcher_id = ?", watcher.ID).Find(&services).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -301,7 +445,28 @@ func (h *Handler) CreateService(c *gin.Context) {
 		return
 	}
 
-	h.syncServiceEnvFile(&svc, watcher.InstallDir)
+	if len(req.ConfigFiles) > 0 {
+		configFiles := make([]database.ServiceConfigFile, 0, len(req.ConfigFiles))
+		for _, file := range req.ConfigFiles {
+			if strings.TrimSpace(file.FilePath) == "" {
+				continue
+			}
+			configFiles = append(configFiles, database.ServiceConfigFile{
+				ServiceID: svc.ID,
+				FilePath:  strings.TrimSpace(file.FilePath),
+				Content:   file.Content,
+			})
+		}
+		if len(configFiles) > 0 {
+			if err := h.db.Create(&configFiles).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+				return
+			}
+			svc.ConfigFiles = configFiles
+		}
+	}
+
+	h.syncServiceFiles(&svc, watcher.InstallDir)
 
 	h.db.Model(&database.Watcher{}).Where("id = ?", watcher.ID).UpdateColumn("updated_at", time.Now())
 	h.triggerSync()
@@ -360,12 +525,37 @@ func (h *Handler) UpdateService(c *gin.Context) {
 
 	var watcher database.Watcher
 	h.db.First(&watcher, svc.WatcherID)
-	h.syncServiceEnvFile(svc, watcher.InstallDir)
+	if req.ConfigFiles != nil {
+		if err := h.db.Where("service_id = ?", svc.ID).Delete(&database.ServiceConfigFile{}).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+			return
+		}
+		configFiles := make([]database.ServiceConfigFile, 0, len(*req.ConfigFiles))
+		for _, file := range *req.ConfigFiles {
+			if strings.TrimSpace(file.FilePath) == "" {
+				continue
+			}
+			configFiles = append(configFiles, database.ServiceConfigFile{
+				ServiceID: svc.ID,
+				FilePath:  strings.TrimSpace(file.FilePath),
+				Content:   file.Content,
+			})
+		}
+		if len(configFiles) > 0 {
+			if err := h.db.Create(&configFiles).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+				return
+			}
+		}
+	}
+
+	h.db.Preload("ConfigFiles").First(svc, svc.ID)
+	h.syncServiceFiles(svc, watcher.InstallDir)
 
 	h.db.Model(&database.Watcher{}).Where("id = ?", svc.WatcherID).UpdateColumn("updated_at", time.Now())
 	h.triggerSync()
 
-	h.db.First(svc, svc.ID)
+	h.db.Preload("ConfigFiles").First(svc, svc.ID)
 	c.JSON(http.StatusOK, svc)
 }
 
@@ -394,6 +584,21 @@ func (h *Handler) RedeployWatcher(c *gin.Context) {
 		return
 	}
 
+	// Guard: do not queue redeploy while another deploy is still in progress.
+	var active database.DeployLog
+	if err := h.db.Where("watcher_id = ? AND completed_at IS NULL", watcher.ID).Order("id desc").First(&active).Error; err == nil {
+		apiBaseURL := ""
+		if h.appCfg != nil {
+			apiBaseURL = h.appCfg.APIBaseURL
+		}
+		c.JSON(http.StatusConflict, gin.H{
+			"error":         "deployment already in progress",
+			"deploy_log_id": active.ID,
+			"log_url":       buildWatcherLogURL(apiBaseURL, watcher.ID, active.ID),
+		})
+		return
+	}
+
 	// Clear current_version and last_error to force the agent to see a mismatch
 	if err := h.db.Model(watcher).Select("current_version", "last_error").Updates(map[string]interface{}{
 		"current_version": "",
@@ -401,6 +606,36 @@ func (h *Handler) RedeployWatcher(c *gin.Context) {
 	}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
+	}
+
+	now := time.Now().UTC()
+	queuedVersion := strings.TrimSpace(watcher.CurrentVersion)
+	if queuedVersion == "" {
+		queuedVersion = "pending"
+	}
+	dlog := database.DeployLog{
+		WatcherID:   watcher.ID,
+		TriggeredBy: "manual",
+		Version:     queuedVersion,
+		FromVersion: watcher.CurrentVersion,
+		Status:      string(agent.StatusDeploying),
+		StartedAt:   &now,
+		Logs:        "redeploy: queued manual redeploy request",
+	}
+	if err := h.db.Create(&dlog).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	if h.events != nil {
+		h.events.Publish(watcher.ID, agent.WatcherEvent{
+			Type: agent.EventDeployStarted,
+			Data: map[string]any{
+				"deploy_log_id": dlog.ID,
+				"version":       queuedVersion,
+				"from_version":  watcher.CurrentVersion,
+				"triggered_by":  "manual",
+			},
+		})
 	}
 
 	h.triggerSync()
@@ -411,7 +646,15 @@ func (h *Handler) RedeployWatcher(c *gin.Context) {
 	default:
 	}
 
-	c.JSON(http.StatusAccepted, MessageResponse{Message: "redeploy triggered"})
+	apiBaseURL := ""
+	if h.appCfg != nil {
+		apiBaseURL = h.appCfg.APIBaseURL
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":       "redeploy triggered",
+		"deploy_log_id": dlog.ID,
+		"log_url":       buildWatcherLogURL(apiBaseURL, watcher.ID, dlog.ID),
+	})
 }
 
 // ── Deploy Logs ───────────────────────────────────────────────
@@ -423,34 +666,65 @@ func (h *Handler) ListDeployLogs(c *gin.Context) {
 		return
 	}
 
-	var logs []database.DeployLog
-	if err := h.db.Where("watcher_id = ?", watcher.ID).Order("id desc").Limit(50).Find(&logs).Error; err != nil {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 10
+	}
+
+	query := h.db.Model(&database.DeployLog{}).Where("watcher_id = ?", watcher.ID)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, logs)
+
+	offset := (page - 1) * pageSize
+	var logs []database.DeployLog
+	if err := query.Order("id desc").Limit(pageSize).Offset(offset).Find(&logs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":     logs,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
-// StreamDeployLogs stream the deployment log for the watcher via SSE.
-func (h *Handler) StreamDeployLogs(c *gin.Context) {
+// StreamDeployLog streams one deployment log by ID via SSE.
+func (h *Handler) StreamDeployLog(c *gin.Context) {
 	watcher, err := h.findWatcher(c)
 	if err != nil {
+		return
+	}
+	did, err := strconv.ParseUint(c.Param("did"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid deploy log id"})
 		return
 	}
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 
 	var dLog database.DeployLog
-	if err := h.db.Where("watcher_id = ?", watcher.ID).Order("id desc").First(&dLog).Error; err != nil {
+	if err := h.db.Where("id = ? AND watcher_id = ?", did, watcher.ID).First(&dLog).Error; err != nil {
 		c.SSEvent("error", "No deployment logs found.")
+		c.Writer.Flush()
 		return
 	}
 
-	var lastLen int
-	ticker := time.NewTicker(500 * time.Millisecond)
+	lastLen := len(dLog.Logs)
+	ticker := time.NewTicker(350 * time.Millisecond)
 	defer ticker.Stop()
+	heartbeat := time.NewTicker(20 * time.Second)
+	defer heartbeat.Stop()
 
 	for {
 		select {
@@ -480,6 +754,9 @@ func (h *Handler) StreamDeployLogs(c *gin.Context) {
 				c.Writer.Flush()
 				return
 			}
+		case <-heartbeat.C:
+			fmt.Fprint(c.Writer, ": ping\n\n")
+			c.Writer.Flush()
 		}
 	}
 }
@@ -539,7 +816,7 @@ func (h *Handler) findWatcher(c *gin.Context) (*database.Watcher, error) {
 	}
 
 	var watcher database.Watcher
-	if err := h.db.Preload("Services").First(&watcher, id).Error; err != nil {
+	if err := h.db.Preload("Services").Preload("Services.ConfigFiles").First(&watcher, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "watcher not found"})
 		return nil, err
 	}
@@ -559,7 +836,7 @@ func (h *Handler) findService(c *gin.Context) (*database.Service, error) {
 	}
 
 	var svc database.Service
-	if err := h.db.First(&svc, sid).Error; err != nil {
+	if err := h.db.Preload("ConfigFiles").First(&svc, sid).Error; err != nil {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "service not found"})
 		return nil, err
 	}
@@ -571,6 +848,38 @@ func withDefault(val, def int) int {
 		return def
 	}
 	return val
+}
+
+func compareSemver(a, b string) int {
+	parse := func(v string) [3]int {
+		var out [3]int
+		v = strings.TrimSpace(strings.TrimPrefix(v, "v"))
+		parts := strings.Split(v, ".")
+		for i := 0; i < 3 && i < len(parts); i++ {
+			fmt.Sscanf(parts[i], "%d", &out[i])
+		}
+		return out
+	}
+
+	pa := parse(a)
+	pb := parse(b)
+	for i := 0; i < 3; i++ {
+		if pa[i] > pb[i] {
+			return 1
+		}
+		if pa[i] < pb[i] {
+			return -1
+		}
+	}
+	return 0
+}
+
+func buildWatcherLogURL(apiBaseURL string, watcherID, deployLogID uint) string {
+	base := strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	if base == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/watchers/%d/logs/%d", base, watcherID, deployLogID)
 }
 
 func enrichWatcherSecrets(w *database.Watcher) {
@@ -601,7 +910,8 @@ func (h *Handler) touchWatchersUpdatedAt() {
 }
 
 type inspectRequest struct {
-	RepoURL string `json:"repo_url" binding:"required"`
+	RepoURL     string `json:"repo_url" binding:"required"`
+	GitHubToken string `json:"github_token"`
 }
 
 // InspectGitHubRepo uses the configured GitHub token to check a repository's latest release.
@@ -612,8 +922,12 @@ func (h *Handler) InspectGitHubRepo(c *gin.Context) {
 		return
 	}
 
+	token := strings.TrimSpace(req.GitHubToken)
+	if token == "" {
+		token = h.githubToken
+	}
 	logger := agent.NewLogger("") // Temporary logger to stdout
-	client := agent.NewGitHubClient(h.githubToken, logger)
+	client := agent.NewGitHubClient(token, logger)
 
 	resp, err := client.InspectRepository(c.Request.Context(), req.RepoURL)
 	if err != nil {
@@ -646,27 +960,32 @@ func (h *Handler) SyncServiceEnv(c *gin.Context) {
 
 	var watcher database.Watcher
 	h.db.First(&watcher, svc.WatcherID)
-	h.syncServiceEnvFile(svc, watcher.InstallDir)
+	h.db.Preload("ConfigFiles").First(svc, svc.ID)
+	h.syncServiceFiles(svc, watcher.InstallDir)
 
 	c.JSON(http.StatusOK, MessageResponse{Message: "Environment file updated and synced"})
 }
 
-func (h *Handler) syncServiceEnvFile(svc *database.Service, installDir string) {
-	if svc.EnvFile == "" || svc.EnvContent == "" {
+func (h *Handler) syncServiceFiles(svc *database.Service, installDir string) {
+	if svc.EnvFile != "" && svc.EnvContent != "" {
+		h.writeServiceFile(installDir, svc.EnvFile, svc.EnvContent)
+	}
+	for _, file := range svc.ConfigFiles {
+		if strings.TrimSpace(file.FilePath) == "" {
+			continue
+		}
+		h.writeServiceFile(installDir, file.FilePath, file.Content)
+	}
+}
+
+func (h *Handler) writeServiceFile(installDir, relativePath, content string) {
+	targetPath := filepath.Join(installDir, relativePath)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		fmt.Printf("Error creating config dir %s: %v\n", targetPath, err)
 		return
 	}
-
-	// .env files are usually relative to the install directory
-	envPath := filepath.Join(installDir, svc.EnvFile)
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(envPath), 0755); err != nil {
-		fmt.Printf("Error creating env dir %s: %v\n", envPath, err)
-		return
-	}
-
-	if err := os.WriteFile(envPath, []byte(svc.EnvContent), 0600); err != nil {
-		fmt.Printf("Error writing env file %s: %v\n", envPath, err)
+	if err := os.WriteFile(targetPath, []byte(content), 0600); err != nil {
+		fmt.Printf("Error writing config file %s: %v\n", targetPath, err)
 	}
 }
 
@@ -744,61 +1063,178 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 		return
 	}
 
-	// Build deployer and run rollback
+	// Create deploy log first and process rollback asynchronously so API can return immediately.
 	wcfg := agent.WatcherConfigFromDB(watcher)
 	logger := agent.NewLogger(wcfg.Name)
 
-	// Record rollback in deploy log
 	now := time.Now().UTC()
 	dlog := database.DeployLog{
 		WatcherID:   watcher.ID,
+		TriggeredBy: "manual",
 		Version:     req.Version,
 		FromVersion: watcher.CurrentVersion,
 		Status:      "rollback",
 		StartedAt:   &now,
 	}
-	h.db.Create(&dlog)
-
-	deployer := agent.NewDeployer(wcfg, h.nssmPath, logger, func(text string) {
-		h.db.Model(&dlog).UpdateColumn("logs", gorm.Expr("COALESCE(logs, '') || ?", text+"\n"))
-	})
-
-	if err := deployer.Rollback(c.Request.Context(), req.Version); err != nil {
-		completed := time.Now().UTC()
-		durationMs := completed.Sub(now).Milliseconds()
-		h.db.Model(&dlog).Updates(map[string]any{
-			"status":       "failed",
-			"error":        err.Error(),
-			"completed_at": &completed,
-			"duration_ms":  durationMs,
-		})
+	if err := h.db.Create(&dlog).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	if h.events != nil {
+		h.events.Publish(watcher.ID, agent.WatcherEvent{
+			Type: agent.EventDeployStarted,
+			Data: map[string]any{
+				"deploy_log_id": dlog.ID,
+				"version":       req.Version,
+				"from_version":  watcher.CurrentVersion,
+				"triggered_by":  "manual",
+			},
+		})
+	}
 
-	// Update watcher state
-	completed := time.Now().UTC()
-	durationMs := completed.Sub(now).Milliseconds()
-	h.db.Model(&dlog).Updates(map[string]any{
-		"status":       "healthy",
-		"completed_at": &completed,
-		"duration_ms":  durationMs,
-	})
-	h.db.Model(watcher).Updates(map[string]any{
-		"current_version":     req.Version,
-		"max_ignored_version": watcher.CurrentVersion,
-		"status":              "healthy",
-		"last_deployed":       &completed,
-		"last_error":          "",
+	reportGitHub := true
+	if req.ReportGitHub != nil {
+		reportGitHub = *req.ReportGitHub
+	}
+	if h.appCfg != nil && !h.appCfg.GitHubDeployEnabled {
+		reportGitHub = false
+	}
+
+	_ = h.db.Model(watcher).Updates(map[string]any{
+		"status": "rollback",
 	})
 
 	h.triggerSync()
 
-	c.JSON(http.StatusOK, gin.H{
-		"message":    fmt.Sprintf("rolled back to %s", req.Version),
-		"version":    req.Version,
-		"deploy_log": dlog,
+	apiBaseURL := ""
+	if h.appCfg != nil {
+		apiBaseURL = h.appCfg.APIBaseURL
+	}
+	logURL := buildWatcherLogURL(apiBaseURL, watcher.ID, dlog.ID)
+	go h.runRollback(watcher, dlog.ID, req.Version, watcher.CurrentVersion, reportGitHub, logger, wcfg)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":       fmt.Sprintf("rollback to %s started", req.Version),
+		"version":       req.Version,
+		"deploy_log_id": dlog.ID,
+		"log_url":       logURL,
 	})
+}
+
+func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targetVersion, previousVersion string, reportGitHub bool, logger *agent.Logger, wcfg *agent.WatcherConfig) {
+	startedAt := time.Now().UTC()
+	appendRollbackLog := func(text string) {
+		_ = h.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).
+			UpdateColumn("logs", gorm.Expr("COALESCE(logs, '') || ?", text+"\n")).Error
+	}
+
+	deployer := agent.NewDeployer(wcfg, h.nssmPath, logger, appendRollbackLog)
+	appendRollbackLog(fmt.Sprintf("rollback: started target=%s from=%s", targetVersion, previousVersion))
+
+	if err := deployer.Rollback(context.Background(), targetVersion); err != nil {
+		completed := time.Now().UTC()
+		durationMs := completed.Sub(startedAt).Milliseconds()
+		_ = h.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).Updates(map[string]any{
+			"status":       "failed",
+			"error":        err.Error(),
+			"completed_at": &completed,
+			"duration_ms":  durationMs,
+		}).Error
+		_ = h.db.Model(&database.Watcher{}).Where("id = ?", watcher.ID).Updates(map[string]any{
+			"status":     "failed",
+			"last_error": err.Error(),
+		}).Error
+		if h.events != nil {
+			h.events.Publish(watcher.ID, agent.WatcherEvent{
+				Type: agent.EventDeployFinished,
+				Data: map[string]any{
+					"deploy_log_id": deployLogID,
+					"status":        "failed",
+					"error":         err.Error(),
+				},
+			})
+		}
+		h.triggerSync()
+		return
+	}
+
+	completed := time.Now().UTC()
+	durationMs := completed.Sub(startedAt).Milliseconds()
+	maxIgnored := ""
+	if compareSemver(targetVersion, previousVersion) < 0 {
+		maxIgnored = previousVersion
+	}
+	_ = h.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).Updates(map[string]any{
+		"status":       "healthy",
+		"completed_at": &completed,
+		"duration_ms":  durationMs,
+	}).Error
+	_ = h.db.Model(&database.Watcher{}).Where("id = ?", watcher.ID).Updates(map[string]any{
+		"current_version":     targetVersion,
+		"max_ignored_version": maxIgnored,
+		"status":              "healthy",
+		"last_deployed":       &completed,
+		"last_error":          "",
+	}).Error
+	if h.events != nil {
+		h.events.Publish(watcher.ID, agent.WatcherEvent{
+			Type: agent.EventDeployFinished,
+			Data: map[string]any{
+				"deploy_log_id": deployLogID,
+				"status":        "healthy",
+				"version":       targetVersion,
+			},
+		})
+		h.events.Publish(watcher.ID, agent.WatcherEvent{
+			Type: agent.EventVersionChanged,
+			Data: map[string]any{
+				"version": targetVersion,
+			},
+		})
+	}
+
+	if reportGitHub {
+		token := strings.TrimSpace(watcher.GitHubToken)
+		if token == "" {
+			token = strings.TrimSpace(h.githubToken)
+		}
+		env := strings.TrimSpace(watcher.DeploymentEnvironment)
+		if env == "" && h.appCfg != nil {
+			env = strings.TrimSpace(h.appCfg.Environment)
+		}
+		if token == "" || env == "" {
+			appendRollbackLog("github_deployment: skipped for rollback (missing token or environment)")
+		} else {
+			owner, repo, parseErr := agent.ParseGitHubURL(watcher.MetadataURL)
+			if parseErr != nil {
+				appendRollbackLog("github_deployment: rollback parse repo failed: " + parseErr.Error())
+			} else {
+				gh := agent.NewGitHubClient(token, logger)
+				desc := fmt.Sprintf("Manual rollback %s to %s", watcher.ServiceName, targetVersion)
+				appendRollbackLog(fmt.Sprintf("github_deployment: rollback create deployment repo=%s/%s ref=%s env=%q", owner, repo, targetVersion, env))
+				deploymentID, createErr := gh.CreateDeployment(context.Background(), owner, repo, targetVersion, env, desc)
+				if createErr != nil {
+					appendRollbackLog("github_deployment: rollback create deployment failed: " + createErr.Error())
+				} else {
+					_ = h.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).Update("github_deployment_id", deploymentID).Error
+					apiBaseURL := ""
+					if h.appCfg != nil {
+						apiBaseURL = h.appCfg.APIBaseURL
+					}
+					logURL := buildWatcherLogURL(apiBaseURL, watcher.ID, deployLogID)
+					if statusErr := gh.UpdateDeploymentStatus(context.Background(), owner, repo, deploymentID, "success", logURL, desc); statusErr != nil {
+						appendRollbackLog("github_deployment: rollback status=success failed: " + statusErr.Error())
+					} else {
+						appendRollbackLog(fmt.Sprintf("github_deployment: rollback status=success deployment_id=%d", deploymentID))
+					}
+				}
+			}
+		}
+	} else {
+		appendRollbackLog("github_deployment: skipped for rollback by request/config")
+	}
+
+	h.triggerSync()
 }
 
 // ResumeWatcherUpdates clears the max_ignored_version flag so polling updates resume.

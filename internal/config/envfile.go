@@ -50,6 +50,7 @@ func UpdateEnvFile(path string, updates map[string]string) error {
 	orderedKeys := []string{
 		"ENVIRONMENT",
 		"GITHUB_TOKEN",
+		"GITHUB_DEPLOY_ENABLED",
 		"LOG_DIR",
 		"NSSM_PATH",
 		"DB_PATH",

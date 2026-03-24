@@ -114,7 +114,8 @@ Base path: `/api`
 - `DELETE /watchers/:id/services/:sid`
 - `GET /watchers/:id/deploys`
 - `GET /watchers/:id/deploys/:did`
-- `GET /watchers/:id/deploy/stream`
+- `GET /watchers/:id/deploys/:did/stream`
+- `GET /watchers/:id/events`
 - `GET /watchers/:id/polls`
 - `POST /watchers/:id/check`
 - `POST /watchers/:id/redeploy`
@@ -137,8 +138,11 @@ Base path: `/api`
 
 ### Self
 - `GET /self/version`
+- `GET /self/config`
+- `PUT /self/config`
 - `GET /self/update-check`
 - `POST /self/update`
+- `POST /self/restart`
 - `POST /self/uninstall`
 
 ---
@@ -175,10 +179,42 @@ Notes:
 - `GITHUB_TOKEN` is required for private repos.
 - `API_BASE_URL` enables GitHub Deployment API `log_url` linking.
 - `WATCHER_REPO_URL` is used by self-update check/update.
+- `GITHUB_DEPLOY_ENABLED=true|false` toggles GitHub Deployment API reporting globally.
 - Watcher-level config can override deploy environment/token per repo:
   - `deployment_environment` -> used first for GitHub Deployments environment
   - `github_token` -> used first for GitHub metadata/artifact/deployment API calls
   - if empty, watcher falls back to global `.env` values.
+
+---
+
+## GitHub Token Guide
+
+Use a token if:
+- repo is private, or
+- you use GitHub Deployment API status reporting.
+
+### Option A — Fine-grained PAT (recommended)
+
+1. GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens**
+2. Select repository access for the repos watcher needs.
+3. Grant minimum permissions:
+   - **Contents: Read** (required for release metadata/assets)
+   - **Deployments: Read and write** (required only if using GitHub Deployment API status updates)
+4. Generate token and store it in:
+   - global `.env` as `GITHUB_TOKEN`, or
+   - watcher override in UI (Watchers → Add/Edit watcher).
+
+### Option B — Classic PAT
+
+- For private repos, `repo` scope is typically sufficient.
+- If deployment status calls are used, ensure deployment-related repo operations are allowed by org/repo policy.
+
+### Common `404` causes during inspect/deploy
+
+- no published release exists (`/releases/latest` needs a published, non-draft release),
+- token does not have access to the target private repo,
+- wrong owner/repo URL,
+- org SSO/policy not approved for the token.
 
 ---
 

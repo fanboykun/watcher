@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { api, type Service, type Watcher, type HealthEvent, type DeployLog } from '$lib/api';
+	import { api, type Service, type Watcher, type HealthEvent, type DeployLog, type ServiceConfigFile } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import * as Button from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
+	import { Textarea } from '$lib/components/ui/textarea';
+	import { Select } from '$lib/components/ui/select';
 	import {
 		ArrowLeft,
 		Play,
@@ -22,11 +25,15 @@
 		Save
 	} from '@lucide/svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 
 	let service = $state<Service | null>(null);
 	let watcher = $state<Watcher | null>(null);
 	let healthHistory = $state<HealthEvent[]>([]);
 	let deploys = $state<DeployLog[]>([]);
+	let deployPage = $state(1);
+	let deployPageSize = $state(10);
+	let deployTotal = $state(0);
 	let logLines = $state<string[]>([]);
 	let error = $state('');
 	let actionMsg = $state('');
@@ -35,6 +42,7 @@
 	let logCount = $state(100);
 
 	let envContent = $state('');
+	let configFiles = $state<ServiceConfigFile[]>([]);
 	let savingEnv = $state(false);
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
@@ -47,13 +55,20 @@
 			service = detail.service;
 			watcher = detail.watcher;
 			envContent = service.env_content || '';
+			configFiles = [...(service.config_files || []).map((file) => ({ ...file }))];
 			healthHistory = await api.healthHistory(id, 50);
-			deploys = await api.serviceDeploys(id);
+			await loadDeploys();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load service';
 		}
 		loadLogs();
 	});
+
+	async function loadDeploys() {
+		const res = await api.serviceDeploys(id, deployPage, deployPageSize);
+		deploys = res.data;
+		deployTotal = res.total;
+	}
 
 	async function loadLogs() {
 		logError = '';
@@ -76,6 +91,7 @@
 				const detail = await api.getService(id);
 				service = detail.service;
 				envContent = service.env_content || '';
+				configFiles = [...(service.config_files || []).map((file) => ({ ...file }))];
 			}
 		} catch (e) {
 			actionMsg = e instanceof Error ? e.message : 'Action failed';
@@ -84,16 +100,30 @@
 	}
 
 	async function saveEnv() {
+		if (!service || !watcher) return;
 		savingEnv = true;
 		try {
-			const res = await api.syncServiceEnv(id, envContent);
-			actionMsg = res.message;
+			service = await api.updateService(watcher.id, service.id, {
+				env_content: envContent,
+				config_files: configFiles.filter((file) => file.file_path.trim() !== '')
+			});
+			envContent = service.env_content || '';
+			configFiles = [...(service.config_files || []).map((file) => ({ ...file }))];
+			actionMsg = 'Service files saved';
 			setTimeout(() => (actionMsg = ''), 4000);
 		} catch (e) {
 			actionMsg = e instanceof Error ? e.message : 'Failed to save env';
 		} finally {
 			savingEnv = false;
 		}
+	}
+
+	function addConfigFile() {
+		configFiles = [...configFiles, { file_path: '', content: '' }];
+	}
+
+	function removeConfigFile(index: number) {
+		configFiles = configFiles.filter((_, i) => i !== index);
 	}
 
 	async function checkHealth() {
@@ -301,7 +331,7 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 				<Tabs.Trigger value="health">Health History ({healthHistory.length})</Tabs.Trigger>
 				<Tabs.Trigger value="logs">Logs</Tabs.Trigger>
 				<Tabs.Trigger value="env">Environment (.env)</Tabs.Trigger>
-				<Tabs.Trigger value="deploys">Deploys ({deploys.length})</Tabs.Trigger>
+				<Tabs.Trigger value="deploys">Deploys ({deployTotal})</Tabs.Trigger>
 			</Tabs.List>
 
 			<!-- Health History -->
@@ -359,16 +389,16 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 			<!-- Logs -->
 			<Tabs.Content value="logs" class="mt-4">
 				<div class="mb-3 flex items-center gap-2">
-					<select
-						class="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+					<Select
+						class="w-auto min-w-[120px] text-sm"
 						bind:value={logType}
 						onchange={() => loadLogs()}
 					>
 						<option value="out">stdout</option>
 						<option value="err">stderr</option>
-					</select>
-					<select
-						class="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+					</Select>
+					<Select
+						class="w-auto min-w-[120px] text-sm"
 						bind:value={logCount}
 						onchange={() => loadLogs()}
 					>
@@ -376,7 +406,7 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 						<option value={100}>100 lines</option>
 						<option value={200}>200 lines</option>
 						<option value={500}>500 lines</option>
-					</select>
+					</Select>
 					<Button.Root variant="outline" size="sm" onclick={loadLogs}>
 						<RefreshCw class="mr-2 h-4 w-4" /> Refresh
 					</Button.Root>
@@ -414,9 +444,9 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 					<Card.Header class="pb-3">
 						<div class="flex items-center justify-between">
 							<div class="space-y-1">
-								<Card.Title class="text-lg">Environment Variables</Card.Title>
+								<Card.Title class="text-lg">Service Files</Card.Title>
 								<Card.Description
-									>Edit the <code>{service.env_file || '.env'}</code> file for this service.</Card.Description
+									>Manage <code>{service.env_file || '.env'}</code> and any additional runtime config files for this service.</Card.Description
 								>
 							</div>
 							<div class="flex items-center gap-2">
@@ -440,32 +470,122 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 							</div>
 						</div>
 					</Card.Header>
-					<Card.Content>
-						<textarea
+					<Card.Content class="space-y-4">
+						<div class="space-y-2">
+							<p class="text-sm text-muted-foreground">Primary env file</p>
+							<Input value={service.env_file || '.env'} disabled />
+						</div>
+						<Textarea
 							bind:value={envContent}
-							class="min-h-[400px] w-full rounded-md border border-border bg-black/50 p-4 font-mono text-sm text-blue-300 focus:ring-1 focus:ring-blue-500/50 focus:outline-none"
+							class="min-h-[280px] font-mono text-sm text-blue-300"
 							placeholder="KEY=VALUE"
-						></textarea>
+						/>
 						<p class="mt-2 text-xs text-muted-foreground italic">
 							Note: Environment variables are written to <code>{service.env_file}</code> in the service's
 							installation directory.
 						</p>
+						<div class="space-y-3 border-t border-border pt-4">
+							<div class="flex items-center justify-between">
+								<div>
+									<h3 class="text-sm font-medium">Additional managed config files</h3>
+									<p class="text-xs text-muted-foreground">Use this for files like <code>config.json</code>, <code>appsettings.json</code>, or any other dynamic config.</p>
+								</div>
+								<Button.Root variant="outline" size="sm" onclick={addConfigFile}>
+									Add file
+								</Button.Root>
+							</div>
+							{#if configFiles.length > 0}
+								<div class="space-y-3">
+									{#each configFiles as file, index (index)}
+										<Card.Root class="border-border/70 bg-background/60">
+											<Card.Content class="space-y-3 p-4">
+												<div class="flex items-center justify-between">
+													<p class="text-sm font-medium">Config file #{index + 1}</p>
+													<Button.Root
+														variant="ghost"
+														size="icon"
+														class="h-8 w-8 text-red-400 hover:text-red-300"
+														onclick={() => removeConfigFile(index)}
+													>
+														<XCircle class="h-4 w-4" />
+													</Button.Root>
+												</div>
+												<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
+												<Textarea
+													class="min-h-[180px] font-mono text-sm text-blue-300"
+													bind:value={file.content}
+													placeholder={'{\n  "featureFlag": true\n}'}
+												/>
+											</Card.Content>
+										</Card.Root>
+									{/each}
+								</div>
+							{:else}
+								<div class="rounded-md border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+									No extra config files yet.
+								</div>
+							{/if}
+						</div>
 					</Card.Content>
 				</Card.Root>
 			</Tabs.Content>
 
 			<!-- Deploys -->
 			<Tabs.Content value="deploys" class="mt-4">
+				<div class="mb-3 flex items-center justify-between gap-2">
+					<div class="text-xs text-muted-foreground">Showing {(deploys.length === 0 ? 0 : ((deployPage - 1) * deployPageSize + 1))} - {Math.min(deployPage * deployPageSize, deployTotal)} of {deployTotal}</div>
+					<div class="flex items-center gap-2">
+						<Select
+							class="w-auto min-w-[110px] text-xs"
+							bind:value={deployPageSize}
+							onchange={async () => {
+								deployPage = 1;
+								await loadDeploys();
+							}}
+						>
+							<option value={10}>10 / page</option>
+							<option value={25}>25 / page</option>
+							<option value={50}>50 / page</option>
+						</Select>
+						<Button.Root
+							variant="outline"
+							size="sm"
+							disabled={deployPage <= 1}
+							onclick={async () => {
+								if (deployPage <= 1) return;
+								deployPage -= 1;
+								await loadDeploys();
+							}}
+						>
+							Prev
+						</Button.Root>
+						<Button.Root
+							variant="outline"
+							size="sm"
+							disabled={deployPage * deployPageSize >= deployTotal}
+							onclick={async () => {
+								if (deployPage * deployPageSize >= deployTotal) return;
+								deployPage += 1;
+								await loadDeploys();
+							}}
+						>
+							Next
+						</Button.Root>
+					</div>
+				</div>
 				{#if deploys.length > 0}
 					<Card.Root class="border-border bg-card">
 						<Table.Root>
 							<Table.Header>
 								<Table.Row class="border-border hover:bg-transparent">
 									<Table.Head>Status</Table.Head>
+									<Table.Head>Triggered By</Table.Head>
 									<Table.Head>Version</Table.Head>
 									<Table.Head>From</Table.Head>
 									<Table.Head>Duration</Table.Head>
 									<Table.Head>Started</Table.Head>
+									<Table.Head>Error</Table.Head>
+									<Table.Head class="text-right">Action</Table.Head>
 								</Table.Row>
 							</Table.Header>
 							<Table.Body>
@@ -480,6 +600,7 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 												{d.status}
 											</span>
 										</Table.Cell>
+										<Table.Cell class="text-xs capitalize text-muted-foreground">{d.triggered_by || 'agent'}</Table.Cell>
 										<Table.Cell class="font-mono text-sm">{d.version}</Table.Cell>
 										<Table.Cell class="font-mono text-xs text-muted-foreground"
 											>{d.from_version || '—'}</Table.Cell
@@ -489,6 +610,25 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 										>
 										<Table.Cell class="text-muted-foreground">{formatDate(d.started_at)}</Table.Cell
 										>
+										<Table.Cell class="max-w-[250px] truncate text-xs text-red-400">{d.error || ''}</Table.Cell>
+										<Table.Cell class="text-right">
+											<div class="flex items-center justify-end gap-2">
+												{#if d.github_deployment_id > 0}
+													<span title="Reported to GitHub" class="inline-flex items-center rounded border border-muted-foreground/20 bg-muted/30 px-1 py-0.5 text-[10px] text-muted-foreground/70">
+														<svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+														GitHub
+													</span>
+												{/if}
+												{#if watcher}
+													<a
+														href={resolve(`/watchers/${watcher.id}/logs/${d.id}`)}
+														class="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+													>
+														Logs <ExternalLink class="ml-1.5 h-3 w-3 text-muted-foreground" />
+													</a>
+												{/if}
+											</div>
+										</Table.Cell>
 									</Table.Row>
 								{/each}
 							</Table.Body>

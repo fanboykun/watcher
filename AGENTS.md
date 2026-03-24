@@ -136,7 +136,7 @@ main.go
 - extras: `public_url`, `env_content`
 
 ### `DeployLog`
-- `watcher_id`, `version`, `from_version`, `status`, `error`
+- `watcher_id`, `triggered_by` (`agent` | `manual`), `version`, `from_version`, `status`, `error`
 - `duration_ms`, `logs`, `github_deployment_id`
 - `started_at`, `completed_at`
 
@@ -180,7 +180,8 @@ main.go
 - `DELETE /api/watchers/:id/services/:sid`
 - `GET /api/watchers/:id/deploys`
 - `GET /api/watchers/:id/deploys/:did`
-- `GET /api/watchers/:id/deploy/stream`
+- `GET /api/watchers/:id/deploys/:did/stream`
+- `GET /api/watchers/:id/events`
 - `GET /api/watchers/:id/polls`
 - `POST /api/watchers/:id/check`
 - `POST /api/watchers/:id/redeploy`
@@ -191,8 +192,11 @@ main.go
 
 ### Self-management
 - `GET /api/self/version`
+- `GET /api/self/config`
+- `PUT /api/self/config`
 - `GET /api/self/update-check`
 - `POST /api/self/update`
+- `POST /api/self/restart`
 - `POST /api/self/uninstall`
 
 ---
@@ -227,11 +231,25 @@ DB_PATH=D:\apps\watcher\watcher.db
 API_PORT=8080
 API_BASE_URL=
 WATCHER_REPO_URL=https://github.com/fanboykun/watcher
+GITHUB_DEPLOY_ENABLED=true
 ```
 
 Notes:
 - `API_BASE_URL` is required for GitHub Deployment API log URLs.
 - Empty `GITHUB_TOKEN` is allowed for public repositories.
+- token precedence: watcher override (`watcher.github_token`) -> global `GITHUB_TOKEN`.
+- deployment environment precedence: watcher override (`watcher.deployment_environment`) -> global `ENVIRONMENT`.
+
+### GitHub token requirements
+- Public repositories: token can be empty.
+- Private repositories: token is required and must be able to read repository releases/assets.
+- Fine-grained PAT minimum:
+  - Repository access: include target repo(s)
+  - Permission: `Contents: Read`
+- If GitHub Deployment API reporting is enabled:
+  - also grant `Deployments: Read and write`
+- Classic PAT fallback:
+  - `repo` scope generally covers private repo release access and deployments endpoints.
 
 ---
 

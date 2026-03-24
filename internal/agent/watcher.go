@@ -102,10 +102,10 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 	return cfg
 }
 
-func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.AppConfig, log *Logger) *RepoWatcher {
+func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus) *RepoWatcher {
 	wcfg := WatcherConfigFromDB(dbWatcher)
 	componentLog := log.WithComponent(wcfg.Name)
-	state := NewStateManager(db, dbWatcher.ID, componentLog)
+	state := NewStateManager(db, dbWatcher.ID, componentLog, events)
 	return &RepoWatcher{
 		wcfg:      wcfg,
 		global:    appCfg,
@@ -199,10 +199,12 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 	var ghDeploymentID int64
 	var ghOwner, ghRepo string
 	resolvedEnv := resolveDeploymentEnvironment(r.wcfg.DeploymentEnvironment, r.global.Environment)
-	useGHDeploy := strings.TrimSpace(r.resolveGitHubToken()) != ""
+	useGHDeploy := r.global.GitHubDeployEnabled && strings.TrimSpace(r.resolveGitHubToken()) != ""
 	logURL := buildDeployLogURL(r.global.APIBaseURL, r.watcherID, deployLogID)
 	r.state.AppendDeployLog(fmt.Sprintf("github_deployment: environment=%q", resolvedEnv))
-	if !useGHDeploy {
+	if !r.global.GitHubDeployEnabled {
+		r.state.AppendDeployLog("github_deployment: disabled by GITHUB_DEPLOY_ENABLED=false")
+	} else if !useGHDeploy {
 		r.state.AppendDeployLog("github_deployment: disabled because GitHub token is empty (watcher + global)")
 	}
 	if useGHDeploy && resolvedEnv == "" {
@@ -327,6 +329,7 @@ type Agent struct {
 	db           *gorm.DB
 	appCfg       *config.AppConfig
 	log          *Logger
+	events       *WatcherEventBus
 	checkTrigger chan uint
 	syncTrigger  chan struct{}
 
@@ -334,11 +337,12 @@ type Agent struct {
 	watchers map[uint]watcherHandle
 }
 
-func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, checkTrigger chan uint, syncTrigger chan struct{}) *Agent {
+func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}) *Agent {
 	return &Agent{
 		db:           db,
 		appCfg:       appCfg,
 		log:          log,
+		events:       events,
 		checkTrigger: checkTrigger,
 		syncTrigger:  syncTrigger,
 		watchers:     make(map[uint]watcherHandle),
@@ -435,7 +439,7 @@ func (a *Agent) syncWatchers(ctx context.Context) {
 
 func (a *Agent) runWatcher(ctx context.Context, dbWatcher *database.Watcher, trigger chan struct{}) {
 	log := a.log.WithComponent(dbWatcher.Name)
-	rw := NewRepoWatcher(dbWatcher, a.db, a.appCfg, a.log)
+	rw := NewRepoWatcher(dbWatcher, a.db, a.appCfg, a.log, a.events)
 
 	log.Info("watcher starting",
 		"service_name", dbWatcher.ServiceName,

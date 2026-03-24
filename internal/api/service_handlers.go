@@ -21,7 +21,7 @@ import (
 
 func (h *Handler) ListAllServices(c *gin.Context) {
 	var services []database.Service
-	if err := h.db.Find(&services).Error; err != nil {
+	if err := h.db.Preload("ConfigFiles").Find(&services).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -121,10 +121,10 @@ func (h *Handler) GetServiceHealth(c *gin.Context) {
 
 	if svc.HealthCheckURL == "" {
 		c.JSON(http.StatusOK, gin.H{
-			"service_id":     svc.ID,
-			"service_name":   svc.WindowsServiceName,
-			"status":         "unknown",
-			"message":        "no health check URL configured",
+			"service_id":   svc.ID,
+			"service_name": svc.WindowsServiceName,
+			"status":       "unknown",
+			"message":      "no health check URL configured",
 		})
 		return
 	}
@@ -155,13 +155,13 @@ func (h *Handler) GetServiceHealth(c *gin.Context) {
 	h.db.Create(&event)
 
 	c.JSON(http.StatusOK, gin.H{
-		"service_id":     svc.ID,
-		"service_name":   svc.WindowsServiceName,
-		"health_url":     svc.HealthCheckURL,
-		"status":         event.Status,
-		"http_status":    event.HTTPStatus,
-		"error":          event.Error,
-		"checked_at":     event.CheckedAt,
+		"service_id":   svc.ID,
+		"service_name": svc.WindowsServiceName,
+		"health_url":   svc.HealthCheckURL,
+		"status":       event.Status,
+		"http_status":  event.HTTPStatus,
+		"error":        event.Error,
+		"checked_at":   event.CheckedAt,
 	})
 }
 
@@ -234,14 +234,35 @@ func (h *Handler) GetServiceDeploys(c *gin.Context) {
 		return
 	}
 
-	// Deploy logs are per-watcher, return all for this service's watcher
-	var logs []database.DeployLog
-	if err := h.db.Where("watcher_id = ?", svc.WatcherID).
-		Order("id desc").Limit(50).Find(&logs).Error; err != nil {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 10
+	}
+
+	// Deploy logs are per-watcher, return paginated history for this service's watcher.
+	query := h.db.Model(&database.DeployLog{}).Where("watcher_id = ?", svc.WatcherID)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, logs)
+
+	offset := (page - 1) * pageSize
+	var logs []database.DeployLog
+	if err := query.Order("id desc").Limit(pageSize).Offset(offset).Find(&logs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":     logs,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -254,7 +275,7 @@ func (h *Handler) findServiceByID(c *gin.Context) (*database.Service, error) {
 	}
 
 	var svc database.Service
-	if err := h.db.First(&svc, id).Error; err != nil {
+	if err := h.db.Preload("ConfigFiles").First(&svc, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "service not found"})
 		return nil, err
 	}

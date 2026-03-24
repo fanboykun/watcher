@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -324,17 +325,48 @@ func (g *GitHubClient) newRequest(ctx context.Context, method, url string) (*htt
 }
 
 // ParseGitHubURL extracts owner and repo from a GitHub URL.
-// Supports: https://github.com/{owner}/{repo}
+// Supports:
+// - https://github.com/{owner}/{repo}
+// - http://github.com/{owner}/{repo}
+// - github.com/{owner}/{repo}
+// - git@github.com:{owner}/{repo}.git
+// Any extra path segments are ignored (e.g. /tree/main, /releases/latest...).
 func ParseGitHubURL(rawURL string) (owner, repo string, err error) {
-	trimmed := strings.TrimPrefix(rawURL, "https://github.com/")
-	if trimmed == rawURL {
-		return "", "", fmt.Errorf("unexpected URL format (expected https://github.com/...): %s", rawURL)
+	s := strings.TrimSpace(rawURL)
+	if s == "" {
+		return "", "", fmt.Errorf("empty GitHub URL")
 	}
-	parts := strings.SplitN(trimmed, "/", 3)
+	if strings.HasPrefix(s, "git@github.com:") {
+		s = "https://github.com/" + strings.TrimPrefix(s, "git@github.com:")
+	}
+	if strings.HasPrefix(s, "github.com/") {
+		s = "https://" + s
+	}
+	if !strings.Contains(s, "://") {
+		return "", "", fmt.Errorf("unexpected URL format (expected github.com/owner/repo): %s", rawURL)
+	}
+
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid GitHub URL: %w", err)
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Host))
+	if host != "github.com" && host != "www.github.com" {
+		return "", "", fmt.Errorf("unsupported host %q (expected github.com)", u.Host)
+	}
+
+	path := strings.Trim(u.Path, "/")
+	parts := strings.Split(path, "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", fmt.Errorf("cannot extract owner/repo from URL: %s", rawURL)
 	}
-	return parts[0], parts[1], nil
+	owner = parts[0]
+	repo = strings.TrimSuffix(parts[1], ".git")
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return "", "", fmt.Errorf("cannot extract owner/repo from URL: %s", rawURL)
+	}
+	return owner, repo, nil
 }
 
 // parseArtifactURL extracts owner, repo, and asset filename from a GitHub release download URL.
@@ -511,7 +543,10 @@ func (g *GitHubClient) FetchLatestRelease(ctx context.Context, repoURL string) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("releases API returned HTTP %d", resp.StatusCode)
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("releases API returned HTTP 404 for %s/%s (repo not found, private without token access, or no published releases)", owner, repo)
+		}
+		return nil, fmt.Errorf("releases API returned HTTP %d for %s/%s", resp.StatusCode, owner, repo)
 	}
 
 	var release githubRelease
@@ -544,7 +579,10 @@ func (g *GitHubClient) FetchMetadataFromRepo(ctx context.Context, repoURL string
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("releases API returned HTTP %d", resp.StatusCode)
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("releases API returned HTTP 404 for %s/%s (repo not found, private without token access, or no published releases)", owner, repo)
+		}
+		return nil, fmt.Errorf("releases API returned HTTP %d for %s/%s", resp.StatusCode, owner, repo)
 	}
 
 	var release githubRelease

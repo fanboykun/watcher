@@ -8,6 +8,7 @@
 	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Download, Info, RotateCcw, AlertTriangle, CheckCircle2, Copy } from '@lucide/svelte';
 
@@ -25,6 +26,7 @@
 	let clearGitHubToken = $state(false);
 
 	let cfgEnvironment = $state('');
+	let cfgGithubDeployEnabled = $state(true);
 	let cfgLogDir = $state('');
 	let cfgNssmPath = $state('');
 	let cfgDBPath = $state('');
@@ -32,6 +34,8 @@
 	let cfgAPIBaseURL = $state('');
 	let cfgWatcherRepoURL = $state('');
 	let cfgWatcherServiceName = $state('');
+	let showRestartDialog = $state(false);
+	let showUpdateDialog = $state(false);
 
 	onMount(() => {
 		const init = async () => {
@@ -48,6 +52,7 @@
 	function syncConfigForm() {
 		if (!agentConfig) return;
 		cfgEnvironment = agentConfig.environment;
+		cfgGithubDeployEnabled = agentConfig.github_deploy_enabled;
 		cfgLogDir = agentConfig.log_dir;
 		cfgNssmPath = agentConfig.nssm_path;
 		cfgDBPath = agentConfig.db_path;
@@ -62,8 +67,9 @@
 		error = '';
 		success = '';
 		try {
-			const payload: Record<string, string> = {
+			const payload: Record<string, string | boolean> = {
 				environment: cfgEnvironment,
+				github_deploy_enabled: cfgGithubDeployEnabled,
 				log_dir: cfgLogDir,
 				nssm_path: cfgNssmPath,
 				db_path: cfgDBPath,
@@ -94,12 +100,12 @@
 	}
 
 	async function restartWatcherService() {
-		if (!confirm('Restart watcher service now? This may temporarily disconnect the dashboard.')) return;
 		error = '';
 		success = '';
 		try {
 			const res = await api.selfRestart();
 			success = `${res.message} (${res.service_name})`;
+			showRestartDialog = false;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to restart watcher service';
 		}
@@ -121,12 +127,11 @@
 	}
 
 	async function performUpdate() {
-		if (!confirm('Are you sure you want to update Watcher? Notice: Watcher will be restarted.')) return;
 		isUpdating = true;
 		error = '';
 		try {
-			const res = await api.selfUpdate();
-			// Using native alert since toaster isn't available
+			await api.selfUpdate();
+			showUpdateDialog = false;
 			setTimeout(() => {
 				window.location.reload();
 			}, 3000);
@@ -192,6 +197,12 @@
 						<Input id="cfg-environment" bind:value={cfgEnvironment} />
 					</div>
 					<div class="space-y-2">
+						<label class="text-sm text-muted-foreground inline-flex items-center gap-2" for="cfg-github-deploy-enabled">
+							<input id="cfg-github-deploy-enabled" type="checkbox" bind:checked={cfgGithubDeployEnabled} />
+							Enable GitHub Deployment API
+						</label>
+					</div>
+					<div class="space-y-2">
 						<label class="text-sm text-muted-foreground" for="cfg-api-port">API Port</label>
 						<Input id="cfg-api-port" bind:value={cfgAPIPort} />
 					</div>
@@ -202,6 +213,15 @@
 							<input type="checkbox" bind:checked={clearGitHubToken} />
 							Clear existing GitHub token
 						</label>
+						<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+							<p class="font-medium text-foreground/90">GitHub token requirements</p>
+							<p>Public repos: token optional. Private repos: token required.</p>
+							<p>Fine-grained PAT minimum: <code>Contents: Read</code>.</p>
+							<p>If GitHub Deployment API is enabled: also grant <code>Deployments: Read and write</code>.</p>
+							<p class="pt-1 font-medium text-foreground/90">Org private repo checklist</p>
+							<p>Token must be authorized for org SSO/SAML and allowed by org PAT policy.</p>
+							<p>Token owner must already have access to the target private repository.</p>
+						</div>
 					</div>
 					<div class="space-y-2 md:col-span-2">
 						<label class="text-sm text-muted-foreground" for="cfg-api-base-url">API Base URL</label>
@@ -237,7 +257,7 @@
 					<Button.Root onclick={saveAgentConfig} disabled={isSavingConfig}>
 						{isSavingConfig ? 'Saving...' : 'Save Agent Config'}
 					</Button.Root>
-					<Button.Root variant="outline" onclick={restartWatcherService}>
+					<Button.Root variant="outline" onclick={() => (showRestartDialog = true)}>
 						Restart Watcher Service
 					</Button.Root>
 				</div>
@@ -294,7 +314,7 @@
 								<p class="text-sm">A new version of Watcher <strong>{updateInfo.latest_version}</strong> is available.</p>
 								<p class="text-xs text-muted-foreground mt-1">Currently running: {updateInfo.current_version}</p>
 							</div>
-							<Button.Root onclick={performUpdate} disabled={isUpdating} class="bg-blue-600 hover:bg-blue-700 text-white">
+							<Button.Root onclick={() => (showUpdateDialog = true)} disabled={isUpdating} class="bg-blue-600 hover:bg-blue-700 text-white">
 								{isUpdating ? 'Updating...' : 'Update & Restart Watcher'}
 							</Button.Root>
 						</div>
@@ -334,3 +354,41 @@
 		</Card.Content>
 	</Card.Root>
 </div>
+
+<Dialog.Root bind:open={showRestartDialog}>
+	<Dialog.Content class="sm:max-w-[460px]">
+		<Dialog.Header>
+			<Dialog.Title>Restart Watcher Service</Dialog.Title>
+			<Dialog.Description>
+				Restart watcher service now? This may temporarily disconnect the dashboard.
+			</Dialog.Description>
+		</Dialog.Header>
+		<Dialog.Footer>
+			<Button.Root variant="outline" type="button" onclick={() => (showRestartDialog = false)}>
+				Cancel
+			</Button.Root>
+			<Button.Root type="button" onclick={restartWatcherService}>
+				Restart
+			</Button.Root>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={showUpdateDialog}>
+	<Dialog.Content class="sm:max-w-[460px]">
+		<Dialog.Header>
+			<Dialog.Title>Update Watcher</Dialog.Title>
+			<Dialog.Description>
+				Update Watcher now? The service will be restarted automatically.
+			</Dialog.Description>
+		</Dialog.Header>
+		<Dialog.Footer>
+			<Button.Root variant="outline" type="button" onclick={() => (showUpdateDialog = false)} disabled={isUpdating}>
+				Cancel
+			</Button.Root>
+			<Button.Root type="button" class="bg-blue-600 hover:bg-blue-700 text-white" onclick={performUpdate} disabled={isUpdating}>
+				{isUpdating ? 'Updating...' : 'Update & Restart'}
+			</Button.Root>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>

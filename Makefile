@@ -41,7 +41,7 @@ OUT := $(BIN_DIR)/$(BINARY_NAME)
 # Targets
 # ==============================================================
 
-.PHONY: all build build-web package test test-github test-verbose run dev clean info help
+.PHONY: all build build-go build-web package test test-github test-verbose run dev clean info help
 
 ## all: run tests then build
 all: test build
@@ -84,6 +84,29 @@ build: build-web
 		$(CMD_PATH)
 	@echo ""
 	@echo "    OK: $(OUT) (SPA embedded)"
+	@echo ""
+
+## build-go: cross-compile watcher.exe using existing web/build/ (no web rebuild)
+build-go:
+	@echo ""
+	@echo ">>> Building Go binary only (reusing existing $(WEB_DIR)/build)"
+	@if [ ! -d "$(WEB_DIR)/build" ]; then \
+		echo "ERROR: $(WEB_DIR)/build not found. Run 'make build-web' first."; \
+		exit 1; \
+	fi
+	@echo "    Go      : $(GO)"
+	@echo "    Module  : $(MODULE)"
+	@echo "    Version : $(VERSION)"
+	@echo "    Target  : $(GOOS)/$(GOARCH)"
+	@echo ""
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build \
+		-ldflags="$(LDFLAGS)" \
+		-o $(OUT) \
+		$(CMD_PATH)
+	@echo ""
+	@echo "    OK: $(OUT) (embedded current $(WEB_DIR)/build)"
 	@echo ""
 
 ## package: build watcher.exe and zip with shell/ scripts + .env.example + INSTALL.md

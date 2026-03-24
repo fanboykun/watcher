@@ -169,17 +169,18 @@ func (h *Handler) SelfConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, SelfConfigResponse{
-		Environment:        h.appCfg.Environment,
-		LogDir:             h.appCfg.LogDir,
-		NssmPath:           h.appCfg.NssmPath,
-		DBPath:             h.appCfg.DBPath,
-		APIPort:            h.appCfg.APIPort,
-		APIBaseURL:         h.appCfg.APIBaseURL,
-		WatcherRepoURL:     h.appCfg.WatcherRepoURL,
-		WatcherServiceName: h.selfServiceName(),
-		HasGitHubToken:     strings.TrimSpace(h.appCfg.GitHubToken) != "",
-		GitHubTokenMasked:  maskToken(h.appCfg.GitHubToken),
-		EnvPath:            h.envPath,
+		Environment:         h.appCfg.Environment,
+		GitHubDeployEnabled: h.appCfg.GitHubDeployEnabled,
+		LogDir:              h.appCfg.LogDir,
+		NssmPath:            h.appCfg.NssmPath,
+		DBPath:              h.appCfg.DBPath,
+		APIPort:             h.appCfg.APIPort,
+		APIBaseURL:          h.appCfg.APIBaseURL,
+		WatcherRepoURL:      h.appCfg.WatcherRepoURL,
+		WatcherServiceName:  h.selfServiceName(),
+		HasGitHubToken:      strings.TrimSpace(h.appCfg.GitHubToken) != "",
+		GitHubTokenMasked:   maskToken(h.appCfg.GitHubToken),
+		EnvPath:             h.envPath,
 	})
 }
 
@@ -202,6 +203,9 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 	}
 	if req.GitHubToken != nil {
 		next.GitHubToken = strings.TrimSpace(*req.GitHubToken)
+	}
+	if req.GitHubDeployEnabled != nil {
+		next.GitHubDeployEnabled = *req.GitHubDeployEnabled
 	}
 	if req.LogDir != nil {
 		next.LogDir = strings.TrimSpace(*req.LogDir)
@@ -231,15 +235,16 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 	}
 
 	updates := map[string]string{
-		"ENVIRONMENT":          next.Environment,
-		"GITHUB_TOKEN":         next.GitHubToken,
-		"LOG_DIR":              next.LogDir,
-		"NSSM_PATH":            next.NssmPath,
-		"DB_PATH":              next.DBPath,
-		"API_PORT":             next.APIPort,
-		"API_BASE_URL":         next.APIBaseURL,
-		"WATCHER_REPO_URL":     next.WatcherRepoURL,
-		"WATCHER_SERVICE_NAME": next.WatcherServiceName,
+		"ENVIRONMENT":           next.Environment,
+		"GITHUB_TOKEN":          next.GitHubToken,
+		"GITHUB_DEPLOY_ENABLED": strconv.FormatBool(next.GitHubDeployEnabled),
+		"LOG_DIR":               next.LogDir,
+		"NSSM_PATH":             next.NssmPath,
+		"DB_PATH":               next.DBPath,
+		"API_PORT":              next.APIPort,
+		"API_BASE_URL":          next.APIBaseURL,
+		"WATCHER_REPO_URL":      next.WatcherRepoURL,
+		"WATCHER_SERVICE_NAME":  next.WatcherServiceName,
 	}
 	if err := config.UpdateEnvFile(h.envPath, updates); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
@@ -263,17 +268,18 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 			"API_PORT and DB_PATH changes require manual service restart to fully take effect",
 		},
 		"config": SelfConfigResponse{
-			Environment:        next.Environment,
-			LogDir:             next.LogDir,
-			NssmPath:           next.NssmPath,
-			DBPath:             next.DBPath,
-			APIPort:            next.APIPort,
-			APIBaseURL:         next.APIBaseURL,
-			WatcherRepoURL:     next.WatcherRepoURL,
-			WatcherServiceName: h.selfServiceName(),
-			HasGitHubToken:     strings.TrimSpace(next.GitHubToken) != "",
-			GitHubTokenMasked:  maskToken(next.GitHubToken),
-			EnvPath:            h.envPath,
+			Environment:         next.Environment,
+			GitHubDeployEnabled: next.GitHubDeployEnabled,
+			LogDir:              next.LogDir,
+			NssmPath:            next.NssmPath,
+			DBPath:              next.DBPath,
+			APIPort:             next.APIPort,
+			APIBaseURL:          next.APIBaseURL,
+			WatcherRepoURL:      next.WatcherRepoURL,
+			WatcherServiceName:  h.selfServiceName(),
+			HasGitHubToken:      strings.TrimSpace(next.GitHubToken) != "",
+			GitHubTokenMasked:   maskToken(next.GitHubToken),
+			EnvPath:             h.envPath,
 		},
 	})
 }
