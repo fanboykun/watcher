@@ -39,6 +39,12 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 }
 
 func ensureSchemaCompatibility(db *gorm.DB) error {
+	// Before/while migrating away from soft-delete semantics, purge historical
+	// soft-deleted rows so names become reusable and old deleted rows don't reappear.
+	if err := purgeLegacySoftDeletedRows(db); err != nil {
+		return fmt.Errorf("purge legacy soft-deleted rows: %w", err)
+	}
+
 	if db.Migrator().HasColumn(&Watcher{}, "git_hub_token") {
 		if !db.Migrator().HasColumn(&Watcher{}, "github_token") {
 			if err := db.Migrator().AddColumn(&Watcher{}, "GitHubToken"); err != nil {
@@ -79,4 +85,53 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 	}
 
 	return nil
+}
+
+func purgeLegacySoftDeletedRows(db *gorm.DB) error {
+	// Child-first ordering keeps FK constraints happy on legacy schemas.
+	tables := []string{
+		"service_config_files",
+		"services",
+		"watchers",
+	}
+
+	for _, table := range tables {
+		ok, err := tableHasColumn(db, table, "deleted_at")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if err := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE deleted_at IS NOT NULL", table)).Error; err != nil {
+			return fmt.Errorf("delete soft-deleted rows in %s: %w", table, err)
+		}
+	}
+
+	return nil
+}
+
+func tableHasColumn(db *gorm.DB, table, col string) (bool, error) {
+	rows, err := db.Raw("PRAGMA table_info(" + table + ")").Rows()
+	if err != nil {
+		return false, fmt.Errorf("pragma table_info(%s): %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt any
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, fmt.Errorf("scan table_info(%s): %w", table, err)
+		}
+		if name == col {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

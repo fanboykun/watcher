@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -875,11 +876,27 @@ func compareSemver(a, b string) int {
 }
 
 func buildWatcherLogURL(apiBaseURL string, watcherID, deployLogID uint) string {
-	base := strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	base := normalizeUIBaseURL(apiBaseURL)
 	if base == "" {
 		return ""
 	}
 	return fmt.Sprintf("%s/watchers/%d/logs/%d", base, watcherID, deployLogID)
+}
+
+func normalizeUIBaseURL(raw string) string {
+	base := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if base == "" {
+		return ""
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	if strings.EqualFold(u.Path, "/api") {
+		u.Path = ""
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	return strings.TrimRight(u.String(), "/")
 }
 
 func enrichWatcherSecrets(w *database.Watcher) {

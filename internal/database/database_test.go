@@ -131,6 +131,55 @@ func TestNewDBRenamesLegacyGitHubTokenColumn(t *testing.T) {
 	}
 }
 
+func TestNewDBPurgesLegacySoftDeletedRows(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "legacy_soft_delete.db")
+
+	db, err := NewDB(dbPath)
+	if err != nil {
+		t.Fatalf("seed db: %v", err)
+	}
+
+	// Simulate legacy soft-delete columns and a soft-deleted watcher row.
+	if err := db.Exec(`ALTER TABLE watchers ADD COLUMN deleted_at datetime`).Error; err != nil {
+		t.Fatalf("add watchers.deleted_at: %v", err)
+	}
+	if err := db.Exec(`ALTER TABLE services ADD COLUMN deleted_at datetime`).Error; err != nil {
+		t.Fatalf("add services.deleted_at: %v", err)
+	}
+	if err := db.Exec(`ALTER TABLE service_config_files ADD COLUMN deleted_at datetime`).Error; err != nil {
+		t.Fatalf("add service_config_files.deleted_at: %v", err)
+	}
+
+	if err := db.Exec(`INSERT INTO watchers (name, service_name, metadata_url, deployment_environment, github_token, check_interval_sec, download_retries, install_dir, paused, max_kept_versions, hc_enabled, hc_url, hc_retries, hc_interval_sec, hc_timeout_sec, current_version, max_ignored_version, status, last_error, deleted_at) VALUES ('legacy', 'dup-name', 'https://example.com', '', '', 300, 3, 'C:\apps\watcher', 0, 3, 0, '', 10, 3, 5, '', '', 'unknown', '', CURRENT_TIMESTAMP)`).Error; err != nil {
+		t.Fatalf("insert soft-deleted watcher: %v", err)
+	}
+
+	if _, err := NewDB(dbPath); err != nil {
+		t.Fatalf("reopen db with migration: %v", err)
+	}
+
+	reopened, err := NewDB(dbPath)
+	if err != nil {
+		t.Fatalf("reopen db second pass: %v", err)
+	}
+
+	// Should be able to reuse service_name immediately because soft-deleted row is purged.
+	w := &Watcher{
+		Name:             "new",
+		ServiceName:      "dup-name",
+		MetadataURL:      "https://example.com",
+		InstallDir:       "C:\\apps\\watcher",
+		CheckIntervalSec: 300,
+		DownloadRetries:  3,
+		MaxKeptVersions:  3,
+	}
+	if err := reopened.Create(w).Error; err != nil {
+		t.Fatalf("expected duplicate service_name to be reusable, create failed: %v", err)
+	}
+}
+
 func columnExists(t *testing.T, db *gorm.DB, table, column string) bool {
 	t.Helper()
 

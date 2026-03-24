@@ -518,5 +518,9 @@ func buildDeployLogURL(apiBaseURL string, watcherID, deployLogID uint) string {
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return ""
 	}
+	if strings.EqualFold(u.Path, "/api") {
+		u.Path = ""
+		base = strings.TrimRight(u.String(), "/")
+	}
 	return fmt.Sprintf("%s/watchers/%d/logs/%d", base, watcherID, deployLogID)
 }

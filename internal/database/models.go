@@ -2,8 +2,6 @@ package database
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // Watcher represents a repository being monitored for releases.
@@ -44,9 +42,8 @@ type Watcher struct {
 	HasGitHubToken    bool   `gorm:"-" json:"has_github_token"`
 	GitHubTokenMasked string `gorm:"-" json:"github_token_masked,omitempty"`
 
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Service represents a managed NSSM or IIS application belonging to a Watcher.
@@ -64,9 +61,8 @@ type Service struct {
 	EnvContent         string              `gorm:"type:text" json:"env_content"`
 	ConfigFiles        []ServiceConfigFile `gorm:"foreignKey:ServiceID;constraint:OnDelete:CASCADE" json:"config_files"`
 
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ServiceConfigFile stores additional managed config files for a service.
@@ -76,9 +72,8 @@ type ServiceConfigFile struct {
 	FilePath  string `gorm:"not null" json:"file_path"`
 	Content   string `gorm:"type:text" json:"content"`
 
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // DeployLog records each deploy attempt for history/timeline.
