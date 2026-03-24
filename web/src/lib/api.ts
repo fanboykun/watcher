@@ -8,7 +8,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 	});
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(body.error || res.statusText);
+		if (body && typeof body === 'object' && 'error' in body) {
+			if ('deploy_log_id' in body) {
+				throw new Error(`${String(body.error)} (deploy_log_id: ${String((body as { deploy_log_id?: unknown }).deploy_log_id ?? '')})`);
+			}
+			throw new Error(String(body.error));
+		}
+		throw new Error(res.statusText);
 	}
 	return res.json();
 }
@@ -26,6 +32,10 @@ export interface Watcher {
 	name: string;
 	service_name: string;
 	metadata_url: string;
+	deployment_environment: string;
+	github_token?: string;
+	has_github_token: boolean;
+	github_token_masked: string;
 	check_interval_sec: number;
 	download_retries: number;
 	install_dir: string;
@@ -59,8 +69,16 @@ export interface Service {
 	iis_site_name: string;
 	public_url: string;
 	env_content: string;
+	config_files: ServiceConfigFile[];
 	created_at: string;
 	updated_at: string;
+}
+
+export interface ServiceConfigFile {
+	id?: number;
+	service_id?: number;
+	file_path: string;
+	content: string;
 }
 
 export interface ServiceWithWatcher extends Service {
@@ -71,6 +89,7 @@ export interface ServiceWithWatcher extends Service {
 export interface DeployLog {
 	id: number;
 	watcher_id: number;
+	triggered_by: 'agent' | 'manual' | string;
 	version: string;
 	from_version: string;
 	status: string;
@@ -80,6 +99,13 @@ export interface DeployLog {
 	logs: string | null;
 	started_at: string | null;
 	completed_at: string | null;
+}
+
+export interface RollbackResponse {
+	message: string;
+	version: string;
+	deploy_log_id: number;
+	log_url: string;
 }
 
 export interface HealthEvent {
@@ -98,6 +124,13 @@ export interface PollEvent {
 	status: string;
 	remote_version: string;
 	error: string;
+}
+
+export interface PaginatedResponse<T> {
+	data: T[];
+	total: number;
+	page: number;
+	pageSize: number;
 }
 
 export interface SystemStatus {
@@ -137,6 +170,7 @@ export interface SelfUpdateCheckResponse {
 
 export interface SelfConfigResponse {
 	environment: string;
+	github_deploy_enabled: boolean;
 	log_dir: string;
 	nssm_path: string;
 	db_path: string;
@@ -152,6 +186,7 @@ export interface SelfConfigResponse {
 export interface UpdateSelfConfigRequest {
 	environment?: string;
 	github_token?: string;
+	github_deploy_enabled?: boolean;
 	log_dir?: string;
 	nssm_path?: string;
 	db_path?: string;
@@ -175,14 +210,27 @@ export const api = {
 	updateWatcher: (id: number, data: Partial<Watcher>) => request<Watcher>(`/watchers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 	deleteWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}`, { method: 'DELETE' }),
 	triggerCheck: (id: number) => request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
-	redeployWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}/redeploy`, { method: 'POST' }),
-	watcherDeploys: (id: number) => request<DeployLog[]>(`/watchers/${id}/deploys`),
+	redeployWatcher: (id: number) =>
+		request<{ message: string; deploy_log_id: number; log_url: string }>(`/watchers/${id}/redeploy`, {
+			method: 'POST'
+		}),
+	watcherDeploys: (id: number, page = 1, pageSize = 10) =>
+		request<PaginatedResponse<DeployLog>>(`/watchers/${id}/deploys?page=${page}&pageSize=${pageSize}`),
 	watcherDeployLog: (id: number, logId: number) => request<DeployLog>(`/watchers/${id}/deploys/${logId}`),
 	watcherVersions: async (id: number) => {
-		const res = await request<{ versions: ReleaseInfo[] }>(`/watchers/${id}/versions`);
-		return res.versions;
+		const res = await request<{ versions: ReleaseInfo[]; current_version: string }>(`/watchers/${id}/versions`);
+		const current = (res.current_version || '').trim();
+		if (!current) return res.versions;
+		return res.versions.map((v) => ({
+			...v,
+			is_current: v.version === current
+		}));
 	},
-	rollbackWatcher: (id: number, version: string) => request<{ message: string }>(`/watchers/${id}/rollback`, { method: 'POST', body: JSON.stringify({ version }) }),
+	rollbackWatcher: (id: number, version: string, reportGithub = true) =>
+		request<RollbackResponse>(`/watchers/${id}/rollback`, {
+			method: 'POST',
+			body: JSON.stringify({ version, report_github: reportGithub })
+		}),
 	resumeWatcherUpdates: (id: number) => request<{ message: string }>(`/watchers/${id}/resume`, { method: 'POST' }),
 	deleteWatcherVersion: (id: number, version: string) => request<{ message: string }>(`/watchers/${id}/versions/${version}`, { method: 'DELETE' }),
 	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') => request<{ data: PollEvent[], total: number, page: number, pageSize: number }>(`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`),
@@ -196,15 +244,22 @@ export const api = {
 	serviceHealth: (id: number) => request<{ status: string; http_status: number; error: string }>(`/services/${id}/health`),
 	healthHistory: (id: number, limit = 50) => request<HealthEvent[]>(`/services/${id}/health/history?limit=${limit}`),
 	serviceLogs: (id: number, lines = 100, type = 'out') => request<{ lines: string[] }>(`/services/${id}/logs?lines=${lines}&type=${type}`),
-	serviceDeploys: (id: number) => request<DeployLog[]>(`/services/${id}/deploys`),
+	serviceDeploys: (id: number, page = 1, pageSize = 10) =>
+		request<PaginatedResponse<DeployLog>>(`/services/${id}/deploys?page=${page}&pageSize=${pageSize}`),
 	syncServiceEnv: (id: number, envContent: string) => request<{ message: string }>(`/services/${id}/env`, { method: 'PUT', body: JSON.stringify({ env_content: envContent }) }),
 
 	// Services (nested under watcher)
 	createService: (watcherId: number, data: Partial<Service>) => request<Service>(`/watchers/${watcherId}/services`, { method: 'POST', body: JSON.stringify(data) }),
+	updateService: (watcherId: number, serviceId: number, data: Partial<Service>) =>
+		request<Service>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'PUT', body: JSON.stringify(data) }),
 	deleteService: (watcherId: number, serviceId: number) => request<{ message: string }>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'DELETE' }),
 
 	// GitHub Integration
-	inspectRepo: (repoUrl: string) => request<InspectRepoResponse>('/github/inspect', { method: 'POST', body: JSON.stringify({ repo_url: repoUrl }) }),
+	inspectRepo: (repoUrl: string, githubToken = '') =>
+		request<InspectRepoResponse>('/github/inspect', {
+			method: 'POST',
+			body: JSON.stringify({ repo_url: repoUrl, github_token: githubToken })
+		}),
 
 	// Agent Self-Management
 	selfVersion: () => request<SelfVersionResponse>('/self/version'),

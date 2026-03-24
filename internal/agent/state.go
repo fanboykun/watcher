@@ -23,10 +23,11 @@ type StateManager struct {
 	db        *gorm.DB
 	watcherID uint
 	log       *Logger
+	events    *WatcherEventBus
 }
 
-func NewStateManager(db *gorm.DB, watcherID uint, log *Logger) *StateManager {
-	return &StateManager{db: db, watcherID: watcherID, log: log}
+func NewStateManager(db *gorm.DB, watcherID uint, log *Logger, events *WatcherEventBus) *StateManager {
+	return &StateManager{db: db, watcherID: watcherID, log: log, events: events}
 }
 
 func (s *StateManager) ReadVersion() (string, string, error) {
@@ -38,11 +39,15 @@ func (s *StateManager) ReadVersion() (string, string, error) {
 }
 
 func (s *StateManager) WriteVersion(version string) error {
-	return s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
+	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
 		Updates(map[string]any{
 			"current_version":     version,
 			"max_ignored_version": "",
 		}).Error
+	if err == nil {
+		s.publish(EventVersionChanged, map[string]any{"version": version})
+	}
+	return err
 }
 
 func (s *StateManager) SetChecked() error {
@@ -64,17 +69,38 @@ func (s *StateManager) SetDeploying(version, fromVersion string) (uint, error) {
 		return 0, err
 	}
 
-	// Record in deploy log
-	dlog := database.DeployLog{
-		WatcherID:   s.watcherID,
-		Version:     version,
-		FromVersion: fromVersion,
-		Status:      string(StatusDeploying),
-		StartedAt:   &now,
+	// Reuse an existing open deploy log if present (e.g. manual redeploy queued from API),
+	// otherwise create a new deploy log.
+	var dlog database.DeployLog
+	if err := s.db.Where("watcher_id = ? AND completed_at IS NULL", s.watcherID).Order("id desc").First(&dlog).Error; err == nil {
+		if err := s.db.Model(&dlog).Updates(map[string]any{
+			"status":       string(StatusDeploying),
+			"version":      version,
+			"from_version": fromVersion,
+			"started_at":   &now,
+			"error":        "",
+		}).Error; err != nil {
+			return 0, err
+		}
+	} else {
+		dlog = database.DeployLog{
+			WatcherID:   s.watcherID,
+			TriggeredBy: "agent",
+			Version:     version,
+			FromVersion: fromVersion,
+			Status:      string(StatusDeploying),
+			StartedAt:   &now,
+		}
+		if err := s.db.Create(&dlog).Error; err != nil {
+			return 0, err
+		}
 	}
-	if err := s.db.Create(&dlog).Error; err != nil {
-		return 0, err
-	}
+	s.publish(EventDeployStarted, map[string]any{
+		"deploy_log_id": dlog.ID,
+		"version":       version,
+		"from_version":  fromVersion,
+	})
+	s.publish(EventStatusChanged, map[string]any{"status": string(StatusDeploying)})
 	return dlog.ID, nil
 }
 
@@ -110,7 +136,13 @@ func (s *StateManager) SetHealthy(version string) error {
 			"completed_at": &now,
 			"duration_ms":  durationMs,
 		})
+		s.publish(EventDeployFinished, map[string]any{
+			"deploy_log_id": log.ID,
+			"status":        string(StatusHealthy),
+			"version":       version,
+		})
 	}
+	s.publish(EventStatusChanged, map[string]any{"status": string(StatusHealthy)})
 	return nil
 }
 
@@ -140,7 +172,13 @@ func (s *StateManager) SetFailed(errMsg string) error {
 			"completed_at": &now,
 			"duration_ms":  durationMs,
 		})
+		s.publish(EventDeployFinished, map[string]any{
+			"deploy_log_id": log.ID,
+			"status":        string(StatusFailed),
+			"error":         errMsg,
+		})
 	}
+	s.publish(EventStatusChanged, map[string]any{"status": string(StatusFailed), "error": errMsg})
 	return nil
 }
 
@@ -156,12 +194,17 @@ func (s *StateManager) SetRolledBack(version string) error {
 		return err
 	}
 
-	return s.db.Model(&database.DeployLog{}).
+	err = s.db.Model(&database.DeployLog{}).
 		Where("watcher_id = ? AND completed_at IS NULL", s.watcherID).
 		Updates(map[string]any{
 			"status":       string(StatusRollback),
 			"completed_at": &now,
 		}).Error
+	if err == nil {
+		s.publish(EventStatusChanged, map[string]any{"status": string(StatusRollback), "version": version})
+		s.publish(EventVersionChanged, map[string]any{"version": version})
+	}
+	return err
 }
 
 func (s *StateManager) AppendDeployLog(text string) {
@@ -183,6 +226,11 @@ func (s *StateManager) RecordPollEvent(status, remoteVersion, errMsg string) {
 	if err := s.db.Create(&evt).Error; err != nil {
 		s.log.Warn("failed to record poll event", "error", err)
 	}
+	s.publish(EventPollEvent, map[string]any{
+		"status":         status,
+		"remote_version": remoteVersion,
+		"error":          errMsg,
+	})
 
 	// Keep only the last 50 poll events for this watcher
 	s.db.Exec(`
@@ -194,6 +242,16 @@ func (s *StateManager) RecordPollEvent(status, remoteVersion, errMsg string) {
 			ORDER BY id DESC 
 			LIMIT 50
 		)`, s.watcherID, s.watcherID)
+}
+
+func (s *StateManager) publish(eventType string, data map[string]any) {
+	if s.events == nil {
+		return
+	}
+	s.events.Publish(s.watcherID, WatcherEvent{
+		Type: eventType,
+		Data: data,
+	})
 }
 
 // ConsecutiveFailuresForVersion returns the number of consecutive failed deploys

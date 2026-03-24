@@ -71,7 +71,7 @@
 				</Card.Header>
 				<Card.Content>
 					<div class="text-2xl font-bold capitalize">{status.status}</div>
-					<p class="text-xs text-muted-foreground">v{status.version} • {status.uptime_human}</p>
+					<p class="text-xs text-muted-foreground">{status.version} • {status.uptime_human}</p>
 				</Card.Content>
 			</Card.Root>
 

@@ -16,6 +16,10 @@ type AppConfig struct {
 	// GitHubToken is a PAT with repo scope, shared across all watched repos
 	GitHubToken string `mapstructure:"GITHUB_TOKEN"`
 
+	// GitHubDeployEnabled toggles GitHub Deployment API integration.
+	// Defaults to true.
+	GitHubDeployEnabled bool `mapstructure:"GITHUB_DEPLOY_ENABLED"`
+
 	// LogDir is where watcher writes its own logs
 	LogDir string `mapstructure:"LOG_DIR"`
 
@@ -56,6 +60,7 @@ func LoadConfig(envPath string) (*AppConfig, error) {
 	v.SetDefault("WATCHER_REPO_URL", "https://github.com/fanboykun/watcher")
 	v.SetDefault("WATCHER_REPO_URL", "https://github.com/fanboykun/watcher")
 	v.SetDefault("ENVIRONMENT", "production")
+	v.SetDefault("GITHUB_DEPLOY_ENABLED", true)
 	v.SetDefault("WATCHER_SERVICE_NAME", "app-watcher")
 
 	// Read .env file

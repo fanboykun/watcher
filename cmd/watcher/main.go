@@ -60,8 +60,11 @@ func main() {
 	// Channel for API → Agent to trigger a config reload
 	syncTrigger := make(chan struct{}, 1)
 
+	// In-memory watcher event bus for UI real-time updates.
+	events := agent.NewWatcherEventBus()
+
 	// Start API server in background
-	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, *envPath, cfg, checkTrigger, syncTrigger)
+	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, *envPath, cfg, events, checkTrigger, syncTrigger)
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.APIPort),
 		Handler: router,
@@ -75,7 +78,7 @@ func main() {
 	}()
 
 	// Start watcher agent (blocks until ctx cancelled)
-	a := agent.NewAgent(db, cfg, log, checkTrigger, syncTrigger)
+	a := agent.NewAgent(db, cfg, log, events, checkTrigger, syncTrigger)
 	a.Run(ctx)
 
 	// Graceful shutdown of API server

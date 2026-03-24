@@ -23,6 +23,7 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 	if err := db.AutoMigrate(
 		&Watcher{},
 		&Service{},
+		&ServiceConfigFile{},
 		&DeployLog{},
 		&HealthEvent{},
 		&PollEvent{},

@@ -7,6 +7,8 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import { Select } from '$lib/components/ui/select';
+	import { Textarea } from '$lib/components/ui/textarea';
 	import { Eye, Plus, Trash2, Zap, Clock, AlertCircle, ArrowRight, Check } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 
@@ -16,6 +18,10 @@
 	let showCreate = $state(false);
 	let creating = $state(false);
 	let inspecting = $state(false);
+	let showDeleteDialog = $state(false);
+	let deleting = $state(false);
+	let deleteWatcherID = $state<number | null>(null);
+	let deleteWatcherName = $state('');
 
 	let createStep = $state(1);
 	let inspectResult = $state<InspectRepoResponse | null>(null);
@@ -28,6 +34,9 @@
 	let formInterval = $state(60);
 	let formHcEnabled = $state(false);
 	let formHcURL = $state('');
+	let formDeploymentEnvironment = $state('');
+	let formGitHubToken = $state('');
+	let useCustomGitHubToken = $state(false);
 	let formServices = $state<Partial<Service>[]>([]);
 
 	onMount(load);
@@ -43,12 +52,17 @@
 
 	async function inspectRepo() {
 		if (!formMetadataURL) return;
+		if (useCustomGitHubToken && !formGitHubToken.trim()) {
+			error = 'Custom GitHub token is enabled but empty.';
+			return;
+		}
 		inspecting = true;
 		error = '';
 		try {
 			// Trim to proper repo URL if accidentally copied trailing parts
 			let cleaned = formMetadataURL.split('/releases')[0];
-			inspectResult = await api.inspectRepo(cleaned);
+			const token = useCustomGitHubToken ? formGitHubToken.trim() : '';
+			inspectResult = await api.inspectRepo(cleaned, token);
 			formMetadataURL = cleaned;
 			
 			const parts = cleaned.split('/');
@@ -73,6 +87,8 @@
 				windows_service_name: formServiceName,
 				binary_name: formServiceName ? `${formServiceName}.exe` : 'app.exe',
 				env_file: '.env',
+				env_content: '',
+				config_files: [],
 				health_check_url: formHcURL,
 			}];
 		}
@@ -86,6 +102,8 @@
 				name: formName,
 				service_name: formServiceName,
 				metadata_url: formMetadataURL,
+				deployment_environment: formDeploymentEnvironment,
+				github_token: useCustomGitHubToken ? formGitHubToken.trim() : '',
 				install_dir: formInstallDir,
 				check_interval_sec: formInterval,
 				hc_enabled: formHcEnabled,
@@ -115,6 +133,9 @@
 		formInterval = 60;
 		formHcEnabled = false;
 		formHcURL = '';
+		formDeploymentEnvironment = '';
+		formGitHubToken = '';
+		useCustomGitHubToken = false;
 		formServices = [];
 		inspectResult = null;
 		error = '';
@@ -126,11 +147,30 @@
 			windows_service_name: `${formServiceName}-extra`,
 			binary_name: formServiceName ? `${formServiceName}-extra.exe` : 'app.exe',
 			env_file: '.env',
+			env_content: '',
+			config_files: [],
 		}];
 	}
 	
 	function removeServiceDraft(idx: number) {
 		formServices = formServices.filter((_, i) => i !== idx);
+	}
+
+	function addConfigFileDraft(serviceIndex: number) {
+		const next = [...formServices];
+		const svc = next[serviceIndex];
+		const configFiles = [...(svc.config_files || []), { file_path: '', content: '' }];
+		next[serviceIndex] = { ...svc, config_files: configFiles };
+		formServices = next;
+	}
+
+	function removeConfigFileDraft(serviceIndex: number, fileIndex: number) {
+		const next = [...formServices];
+		const svc = next[serviceIndex];
+		const configFiles = [...(svc.config_files || [])];
+		configFiles.splice(fileIndex, 1);
+		next[serviceIndex] = { ...svc, config_files: configFiles };
+		formServices = next;
 	}
 
 	async function triggerCheck(id: number) {
@@ -143,13 +183,23 @@
 		}
 	}
 
-	async function deleteWatcher(id: number, name: string) {
-		if (!confirm(`Delete watcher "${name}" and all its services?`)) return;
+	function openDeleteWatcherDialog(id: number, name: string) {
+		deleteWatcherID = id;
+		deleteWatcherName = name;
+		showDeleteDialog = true;
+	}
+
+	async function confirmDeleteWatcher() {
+		if (!deleteWatcherID) return;
+		deleting = true;
 		try {
-			await api.deleteWatcher(id);
+			await api.deleteWatcher(deleteWatcherID);
 			await load();
+			showDeleteDialog = false;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Delete failed';
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -260,7 +310,7 @@
 										variant="ghost"
 										size="icon"
 										class="h-8 w-8 text-red-400 hover:text-red-300"
-										onclick={() => deleteWatcher(w.id, w.name)}
+										onclick={() => openDeleteWatcherDialog(w.id, w.name)}
 										title="Delete"
 									>
 										<Trash2 class="h-4 w-4" />
@@ -328,6 +378,33 @@
 							{inspecting ? 'Inspecting...' : 'Next'} <ArrowRight class="ml-2 h-4 w-4" />
 						</Button.Root>
 					</div>
+					<div class="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+						<label class="inline-flex items-center gap-2 text-sm">
+							<input type="checkbox" bind:checked={useCustomGitHubToken} class="rounded border-border" />
+							Use custom GitHub token for this watcher
+						</label>
+						<Input
+							id="watcherGithubTokenStep1"
+							type="password"
+							placeholder="ghp_xxx"
+							bind:value={formGitHubToken}
+							disabled={!useCustomGitHubToken}
+						/>
+						<p class="text-xs text-muted-foreground">
+							Useful for private repos or when global <code>GITHUB_TOKEN</code> cannot access this repo.
+						</p>
+						<p class="text-xs text-muted-foreground">
+							Fine-grained PAT minimum: <code>Contents: Read</code>. If deployment status reporting is used, also add <code>Deployments: Read and write</code>.
+						</p>
+						<div class="rounded border border-border bg-background/60 p-2 text-xs text-muted-foreground space-y-1">
+							<p class="font-medium text-foreground/90">Org private repo checklist</p>
+							<p>1. Token has access to the target org repo(s).</p>
+							<p>2. SSO/SAML authorization for this token is approved.</p>
+							<p>3. Token owner has repo/team access in the org.</p>
+							<p>4. Org policy allows PAT type being used (fine-grained/classic).</p>
+							<p>5. Repo has at least one published release (not only draft/prerelease).</p>
+						</div>
+					</div>
 					<p class="text-xs text-muted-foreground">
 						Supported: Public & Private Repositories (if token configured).
 						We will fetch the latest release and find the corresponding assets.
@@ -370,6 +447,18 @@
 					</div>
 				</div>
 
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div class="space-y-2">
+						<Label for="deploymentEnvironment">Deployment Environment (GitHub)</Label>
+						<Input id="deploymentEnvironment" placeholder="production" bind:value={formDeploymentEnvironment} />
+						<p class="text-xs text-muted-foreground">Optional. Falls back to global `ENVIRONMENT` if empty.</p>
+					</div>
+					<div class="space-y-2 text-xs text-muted-foreground">
+						<p>GitHub token mode:</p>
+						<p class="font-medium">{useCustomGitHubToken && formGitHubToken.trim() ? 'Custom watcher token configured' : 'Using global GITHUB_TOKEN'}</p>
+					</div>
+				</div>
+
 				<div class="flex items-center gap-2">
 					<input
 						type="checkbox"
@@ -396,10 +485,10 @@
 							<div class="grid gap-3 sm:grid-cols-2">
 								<div class="space-y-1">
 									<Label class="text-xs">Type</Label>
-									<select bind:value={svc.service_type} class="w-full text-xs rounded border bg-transparent p-2">
+									<Select bind:value={svc.service_type} class="h-8 text-xs">
 										<option value="nssm">NSSM Native Windows</option>
 										<option value="static">Static IIS App</option>
-									</select>
+									</Select>
 								</div>
 								<div class="space-y-1">
 									<Label class="text-xs">Window Service Name</Label>
@@ -412,6 +501,53 @@
 								<div class="space-y-1">
 									<Label class="text-xs">Env file relative path</Label>
 									<Input class="h-8 text-xs" bind:value={svc.env_file} placeholder=".env.prod" />
+								</div>
+								<div class="space-y-1 sm:col-span-2">
+									<Label class="text-xs">Env content (optional)</Label>
+									<Textarea
+										class="min-h-[120px] font-mono text-xs text-blue-300"
+										bind:value={svc.env_content}
+										placeholder="KEY=VALUE&#10;API_PORT=3000"
+									/>
+									<p class="text-[11px] text-muted-foreground">
+										If provided, watcher writes this to <code>{svc.env_file || '.env'}</code> in install dir.
+									</p>
+								</div>
+								<div class="space-y-2 sm:col-span-2">
+									<div class="flex items-center justify-between">
+										<Label class="text-xs">Additional managed config files</Label>
+										<Button.Root variant="outline" size="sm" type="button" class="h-7 px-2 text-xs" onclick={() => addConfigFileDraft(i)}>
+											<Plus class="mr-1 h-3 w-3" /> Add file
+										</Button.Root>
+									</div>
+									{#if (svc.config_files || []).length > 0}
+										<div class="space-y-3 rounded-md border border-border/70 bg-background/50 p-3">
+											{#each svc.config_files || [] as file, fileIndex (fileIndex)}
+												<div class="space-y-2 rounded-md border border-border/60 bg-card/60 p-3">
+													<div class="flex items-center justify-between">
+														<Label class="text-xs">Config file #{fileIndex + 1}</Label>
+														<Button.Root
+															variant="ghost"
+															size="icon"
+															type="button"
+															class="h-7 w-7 text-red-400 hover:text-red-300"
+															onclick={() => removeConfigFileDraft(i, fileIndex)}
+														>
+															<Trash2 class="h-3 w-3" />
+														</Button.Root>
+													</div>
+													<Input class="h-8 text-xs" bind:value={file.file_path} placeholder="config.json or config/appsettings.json" />
+													<Textarea
+														class="min-h-[120px] font-mono text-xs text-blue-300"
+														bind:value={file.content}
+														placeholder={'{\n  "port": 3000\n}'}
+													/>
+												</div>
+											{/each}
+										</div>
+									{:else}
+										<p class="text-[11px] text-muted-foreground">Use this for files like <code>config.json</code>, <code>appsettings.json</code>, or other runtime config.</p>
+									{/if}
 								</div>
 							</div>
 						</div>
@@ -434,5 +570,24 @@
 				</Dialog.Footer>
 			{/if}
 		</form>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={showDeleteDialog}>
+	<Dialog.Content class="sm:max-w-[420px]">
+		<Dialog.Header>
+			<Dialog.Title>Delete Watcher</Dialog.Title>
+			<Dialog.Description>
+				This will delete watcher <span class="font-medium">{deleteWatcherName}</span> and all linked services.
+			</Dialog.Description>
+		</Dialog.Header>
+		<Dialog.Footer>
+			<Button.Root variant="outline" type="button" onclick={() => (showDeleteDialog = false)} disabled={deleting}>
+				Cancel
+			</Button.Root>
+			<Button.Root type="button" class="bg-red-600 text-white hover:bg-red-700" onclick={confirmDeleteWatcher} disabled={deleting}>
+				{deleting ? 'Deleting...' : 'Delete'}
+			</Button.Root>
+		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

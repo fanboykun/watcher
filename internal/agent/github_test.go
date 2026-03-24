@@ -53,9 +53,28 @@ func TestParseGitHubURL(t *testing.T) {
 			wantRepo:  "simple",
 		},
 		{
-			name:            "missing https scheme",
-			url:             "github.com/my-org/my-repo/releases/latest/download/version.json",
-			wantErrContains: "unexpected URL format",
+			name:      "missing https scheme",
+			url:       "github.com/my-org/my-repo/releases/latest/download/version.json",
+			wantOwner: "my-org",
+			wantRepo:  "my-repo",
+		},
+		{
+			name:      "http scheme is accepted",
+			url:       "http://github.com/fanboykun/watcher",
+			wantOwner: "fanboykun",
+			wantRepo:  "watcher",
+		},
+		{
+			name:      "repo dot git suffix is normalized",
+			url:       "https://github.com/fanboykun/watcher.git",
+			wantOwner: "fanboykun",
+			wantRepo:  "watcher",
+		},
+		{
+			name:      "ssh URL is accepted",
+			url:       "git@github.com:fanboykun/watcher.git",
+			wantOwner: "fanboykun",
+			wantRepo:  "watcher",
 		},
 		{
 			name:            "only owner no repo",
@@ -65,7 +84,7 @@ func TestParseGitHubURL(t *testing.T) {
 		{
 			name:            "empty string",
 			url:             "",
-			wantErrContains: "unexpected URL format",
+			wantErrContains: "empty GitHub URL",
 		},
 	}
 

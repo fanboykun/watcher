@@ -21,7 +21,6 @@ type RepoWatcher struct {
 	wcfg      *WatcherConfig // converted from DB model
 	global    *config.AppConfig
 	log       *Logger
-	github    *GitHubClient
 	state     *StateManager
 	deployer  *Deployer
 	db        *gorm.DB
@@ -31,16 +30,18 @@ type RepoWatcher struct {
 // WatcherConfig is the in-memory representation used by the deploy pipeline.
 // Constructed from a database.Watcher + its database.Service records.
 type WatcherConfig struct {
-	Name             string
-	ServiceName      string
-	MetadataURL      string
-	CheckIntervalSec int
-	DownloadRetries  int
-	InstallDir       string
-	Paused           bool
-	MaxKeptVersions  int
-	HealthCheck      HealthCheckConfig
-	Services         []ServiceConfig
+	Name                  string
+	ServiceName           string
+	MetadataURL           string
+	DeploymentEnvironment string
+	GitHubToken           string
+	CheckIntervalSec      int
+	DownloadRetries       int
+	InstallDir            string
+	Paused                bool
+	MaxKeptVersions       int
+	HealthCheck           HealthCheckConfig
+	Services              []ServiceConfig
 }
 
 type HealthCheckConfig struct {
@@ -65,14 +66,16 @@ type ServiceConfig struct {
 // used by the deploy pipeline.
 func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 	cfg := &WatcherConfig{
-		Name:             w.Name,
-		ServiceName:      w.ServiceName,
-		MetadataURL:      w.MetadataURL,
-		CheckIntervalSec: w.CheckIntervalSec,
-		DownloadRetries:  w.DownloadRetries,
-		InstallDir:       w.InstallDir,
-		Paused:           w.Paused,
-		MaxKeptVersions:  max(w.MaxKeptVersions, 1),
+		Name:                  w.Name,
+		ServiceName:           w.ServiceName,
+		MetadataURL:           w.MetadataURL,
+		DeploymentEnvironment: strings.TrimSpace(w.DeploymentEnvironment),
+		GitHubToken:           strings.TrimSpace(w.GitHubToken),
+		CheckIntervalSec:      w.CheckIntervalSec,
+		DownloadRetries:       w.DownloadRetries,
+		InstallDir:            w.InstallDir,
+		Paused:                w.Paused,
+		MaxKeptVersions:       max(w.MaxKeptVersions, 1),
 		HealthCheck: HealthCheckConfig{
 			Enabled:     w.HcEnabled,
 			URL:         w.HcURL,
@@ -99,15 +102,14 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 	return cfg
 }
 
-func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.AppConfig, log *Logger) *RepoWatcher {
+func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus) *RepoWatcher {
 	wcfg := WatcherConfigFromDB(dbWatcher)
 	componentLog := log.WithComponent(wcfg.Name)
-	state := NewStateManager(db, dbWatcher.ID, componentLog)
+	state := NewStateManager(db, dbWatcher.ID, componentLog, events)
 	return &RepoWatcher{
 		wcfg:      wcfg,
 		global:    appCfg,
 		log:       componentLog,
-		github:    NewGitHubClient(appCfg.GitHubToken, componentLog),
 		state:     state,
 		deployer:  NewDeployer(wcfg, appCfg.NssmPath, componentLog, state.AppendDeployLog),
 		db:        db,
@@ -126,7 +128,8 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 
 	_ = r.state.SetChecked()
 
-	meta, err := r.github.FetchMetadata(ctx, r.wcfg.MetadataURL)
+	gh := NewGitHubClient(r.resolveGitHubToken(), r.log)
+	meta, err := gh.FetchMetadata(ctx, r.wcfg.MetadataURL)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			r.state.RecordPollEvent("error", "", err.Error())
@@ -179,7 +182,7 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 		return nil
 	}
 
-	if err := r.deploy(ctx, svcMeta, targetVersion, localVersion); err != nil {
+	if err := r.deploy(ctx, gh, svcMeta, targetVersion, localVersion); err != nil {
 		if !errors.Is(err, context.Canceled) {
 			_ = r.state.SetFailed(err.Error())
 		}
@@ -189,14 +192,25 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 	return nil
 }
 
-func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVersion, previousVersion string) error {
+func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta ServiceMeta, targetVersion, previousVersion string) error {
 	deployLogID, _ := r.state.SetDeploying(targetVersion, previousVersion)
 
 	// ── GitHub Deployment API integration (optional) ──────────────
 	var ghDeploymentID int64
 	var ghOwner, ghRepo string
-	useGHDeploy := strings.TrimSpace(r.global.GitHubToken) != ""
+	resolvedEnv := resolveDeploymentEnvironment(r.wcfg.DeploymentEnvironment, r.global.Environment)
+	useGHDeploy := r.global.GitHubDeployEnabled && strings.TrimSpace(r.resolveGitHubToken()) != ""
 	logURL := buildDeployLogURL(r.global.APIBaseURL, r.watcherID, deployLogID)
+	r.state.AppendDeployLog(fmt.Sprintf("github_deployment: environment=%q", resolvedEnv))
+	if !r.global.GitHubDeployEnabled {
+		r.state.AppendDeployLog("github_deployment: disabled by GITHUB_DEPLOY_ENABLED=false")
+	} else if !useGHDeploy {
+		r.state.AppendDeployLog("github_deployment: disabled because GitHub token is empty (watcher + global)")
+	}
+	if useGHDeploy && resolvedEnv == "" {
+		r.state.AppendDeployLog("github_deployment: disabled because deployment environment is empty (watcher + global ENVIRONMENT)")
+		useGHDeploy = false
+	}
 
 	if useGHDeploy {
 		var err error
@@ -214,8 +228,8 @@ func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVer
 		}
 		desc := fmt.Sprintf("Deploying %s %s", r.wcfg.ServiceName, targetVersion)
 		deployRef := resolveDeploymentRef(targetVersion, svcMeta.ArtifactURL)
-		r.state.AppendDeployLog("github_deployment: creating deployment")
-		id, err := r.github.CreateDeployment(ctx, ghOwner, ghRepo, deployRef, r.global.Environment, desc)
+		r.state.AppendDeployLog(fmt.Sprintf("github_deployment: creating deployment repo=%s/%s ref=%s env=%q", ghOwner, ghRepo, deployRef, resolvedEnv))
+		id, err := gh.CreateDeployment(ctx, ghOwner, ghRepo, deployRef, resolvedEnv, desc)
 		if err != nil {
 			r.state.AppendDeployLog("github_deployment: create deployment failed: " + err.Error())
 			r.log.Warn("failed to create GitHub deployment", "error", err)
@@ -225,7 +239,7 @@ func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVer
 			_ = r.state.SetGitHubDeploymentID(deployLogID, ghDeploymentID)
 			r.state.AppendDeployLog(fmt.Sprintf("github_deployment: created deployment id=%d", ghDeploymentID))
 			r.state.AppendDeployLog("github_deployment: setting status=in_progress")
-			if err := r.github.UpdateDeploymentStatus(ctx, ghOwner, ghRepo, ghDeploymentID, "in_progress", logURL, desc); err != nil {
+			if err := gh.UpdateDeploymentStatus(ctx, ghOwner, ghRepo, ghDeploymentID, "in_progress", logURL, desc); err != nil {
 				r.state.AppendDeployLog("github_deployment: set status=in_progress failed: " + err.Error())
 			}
 		}
@@ -233,19 +247,19 @@ func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVer
 
 	// ── Actual deploy ─────────────────────────────────────────────
 	if err := os.MkdirAll(r.wcfg.InstallDir, 0755); err != nil {
-		r.ghDeployFailure(ctx, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
+		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
 		return fmt.Errorf("create install dir: %w", err)
 	}
 
 	if svcMeta.ArtifactURL == "" {
 		err := fmt.Errorf("artifact_url missing in version.json for %s", targetVersion)
-		r.ghDeployFailure(ctx, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
+		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
 		return err
 	}
 
 	zipPath := filepath.Join(r.wcfg.InstallDir, targetVersion+".zip")
-	if err := r.github.DownloadArtifact(ctx, svcMeta.ArtifactURL, zipPath, r.wcfg.DownloadRetries); err != nil {
-		r.ghDeployFailure(ctx, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
+	if err := gh.DownloadArtifact(ctx, svcMeta.ArtifactURL, zipPath, r.wcfg.DownloadRetries); err != nil {
+		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
 		return fmt.Errorf("download artifact: %w", err)
 	}
 	defer func() {
@@ -254,7 +268,7 @@ func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVer
 	}()
 
 	if err := r.deployer.Deploy(ctx, targetVersion, zipPath, previousVersion); err != nil {
-		r.ghDeployFailure(ctx, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
+		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
 		return err
 	}
 
@@ -268,7 +282,7 @@ func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVer
 	// ── GitHub Deployment: success ────────────────────────────────
 	if useGHDeploy {
 		r.state.AppendDeployLog("github_deployment: setting status=success")
-		if err := r.github.UpdateDeploymentStatus(ctx, ghOwner, ghRepo, ghDeploymentID, "success", logURL,
+		if err := gh.UpdateDeploymentStatus(ctx, ghOwner, ghRepo, ghDeploymentID, "success", logURL,
 			fmt.Sprintf("Deployed %s %s", r.wcfg.ServiceName, targetVersion)); err != nil {
 			r.state.AppendDeployLog("github_deployment: set status=success failed: " + err.Error())
 		}
@@ -284,15 +298,22 @@ func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVer
 }
 
 // ghDeployFailure updates the GitHub deployment status to "failure" if integration is active.
-func (r *RepoWatcher) ghDeployFailure(ctx context.Context, active bool, owner, repo string, deploymentID int64, deployLogID uint, errMsg string) {
+func (r *RepoWatcher) ghDeployFailure(ctx context.Context, gh *GitHubClient, active bool, owner, repo string, deploymentID int64, deployLogID uint, errMsg string) {
 	if !active {
 		return
 	}
 	logURL := buildDeployLogURL(r.global.APIBaseURL, r.watcherID, deployLogID)
 	r.state.AppendDeployLog("github_deployment: setting status=failure")
-	if err := r.github.UpdateDeploymentStatus(ctx, owner, repo, deploymentID, "failure", logURL, errMsg); err != nil {
+	if err := gh.UpdateDeploymentStatus(ctx, owner, repo, deploymentID, "failure", logURL, errMsg); err != nil {
 		r.state.AppendDeployLog("github_deployment: set status=failure failed: " + err.Error())
 	}
+}
+
+func (r *RepoWatcher) resolveGitHubToken() string {
+	if t := strings.TrimSpace(r.wcfg.GitHubToken); t != "" {
+		return t
+	}
+	return strings.TrimSpace(r.global.GitHubToken)
 }
 
 // ── Agent — runs all RepoWatchers concurrently ────────────────────────────────
@@ -308,6 +329,7 @@ type Agent struct {
 	db           *gorm.DB
 	appCfg       *config.AppConfig
 	log          *Logger
+	events       *WatcherEventBus
 	checkTrigger chan uint
 	syncTrigger  chan struct{}
 
@@ -315,11 +337,12 @@ type Agent struct {
 	watchers map[uint]watcherHandle
 }
 
-func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, checkTrigger chan uint, syncTrigger chan struct{}) *Agent {
+func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}) *Agent {
 	return &Agent{
 		db:           db,
 		appCfg:       appCfg,
 		log:          log,
+		events:       events,
 		checkTrigger: checkTrigger,
 		syncTrigger:  syncTrigger,
 		watchers:     make(map[uint]watcherHandle),
@@ -416,7 +439,7 @@ func (a *Agent) syncWatchers(ctx context.Context) {
 
 func (a *Agent) runWatcher(ctx context.Context, dbWatcher *database.Watcher, trigger chan struct{}) {
 	log := a.log.WithComponent(dbWatcher.Name)
-	rw := NewRepoWatcher(dbWatcher, a.db, a.appCfg, a.log)
+	rw := NewRepoWatcher(dbWatcher, a.db, a.appCfg, a.log, a.events)
 
 	log.Info("watcher starting",
 		"service_name", dbWatcher.ServiceName,
@@ -477,6 +500,13 @@ func resolveDeploymentRef(targetVersion, artifactURL string) string {
 		}
 	}
 	return targetVersion
+}
+
+func resolveDeploymentEnvironment(watcherEnv, globalEnv string) string {
+	if env := strings.TrimSpace(watcherEnv); env != "" {
+		return env
+	}
+	return strings.TrimSpace(globalEnv)
 }
 
 func buildDeployLogURL(apiBaseURL string, watcherID, deployLogID uint) string {

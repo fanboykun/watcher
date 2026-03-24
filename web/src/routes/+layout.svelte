@@ -2,7 +2,7 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { page } from '$app/state';
-	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock, Settings } from '@lucide/svelte';
+	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock, Settings, Github } from '@lucide/svelte';
 	import * as Button from '$lib/components/ui/button';
 	import Separator from '$lib/components/ui/separator/separator.svelte';
 	import { resolve } from '$app/paths';
@@ -69,7 +69,15 @@
 
 		<Separator />
 		<div class="p-4">
-			<p class="text-[11px] text-muted-foreground">Watcher Agent</p>
+			<a
+				href="https://github.com/fanboykun/watcher"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="inline-flex w-full items-center justify-center gap-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+			>
+				<Github class="h-3.5 w-3.5" />
+				Watcher Agent
+			</a>
 		</div>
 	</aside>
 

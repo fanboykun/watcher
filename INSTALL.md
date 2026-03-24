@@ -21,7 +21,7 @@ watcher-vX.Y.Z.zip
 - Windows 10/11 or Windows Server 2022
 - Administrator access
 - Outbound HTTPS access to `github.com`
-- A GitHub PAT with `repo` scope (for private repos) or no token needed (public repos)
+- GitHub token is optional for public repos, required for private repos
 
 ---
 
@@ -100,20 +100,46 @@ Fill in your values:
 ```env
 ENVIRONMENT=production
 GITHUB_TOKEN=ghp_your_pat_here
+GITHUB_DEPLOY_ENABLED=true
 LOG_DIR=D:\apps\watcher\logs
 NSSM_PATH=C:\ProgramData\chocolatey\bin\nssm.exe
 DB_PATH=D:\apps\watcher\watcher.db
 API_PORT=8080
+API_BASE_URL=http://localhost:8080
 ```
 
 | Variable       | Description                                                  |
 | -------------- | ------------------------------------------------------------ |
-| `ENVIRONMENT`  | Label for this environment (informational only)              |
-| `GITHUB_TOKEN` | PAT with `repo` scope. Leave empty for public repos          |
+| `ENVIRONMENT`  | Deployment environment label (used as fallback for GitHub Deployments) |
+| `GITHUB_TOKEN` | Global GitHub token fallback. Leave empty for public repos   |
+| `GITHUB_DEPLOY_ENABLED` | Enable/disable GitHub Deployment API reporting globally |
 | `LOG_DIR`      | Where agent writes its logs                                  |
 | `NSSM_PATH`    | Full path to nssm.exe                                        |
 | `DB_PATH`      | SQLite database file path                                    |
 | `API_PORT`     | Port for the API server and dashboard (default: `8080`)      |
+| `API_BASE_URL` | Public URL used for GitHub Deployment status `log_url` links |
+
+### GitHub token setup (recommended)
+
+Use **Fine-grained PAT** when possible:
+
+1. GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens**
+2. Select repository access for target repo(s)
+3. Grant permissions:
+   - `Contents: Read` (required for release inspect/download)
+   - `Deployments: Read and write` (required only if GitHub Deployment API reporting is enabled)
+4. Save token in either:
+   - global `.env` (`GITHUB_TOKEN`), or
+   - watcher-level override in dashboard (Watchers wizard / watcher edit)
+
+Classic PAT fallback:
+- `repo` scope generally works for private release access.
+
+Troubleshooting `releases API returned HTTP 404`:
+- repo has no published release yet,
+- token cannot access target private repo,
+- repo URL owner/name is wrong,
+- org SSO policy has not approved the token.
 
 ### Step 5 — Secure `.env` permissions
 
@@ -165,6 +191,10 @@ After installation, use the **dashboard** at `http://localhost:8080`:
    - **Name**: display name (e.g. `my-project`)
    - **Service Name**: must match `APP_NAME` in the repo's `release.yml`
    - **Metadata URL**: `https://github.com/your-org/your-repo/releases/latest/download/version.json`
+     - or native repo URL: `https://github.com/your-org/your-repo`
+   - **Custom GitHub Token (optional in Step 1)**:
+     - enable when global token cannot access this repo
+     - token is saved as watcher override if provided
    - **Install Dir**: e.g. `C:\apps\my-project`
    - **Check Interval**: poll frequency in seconds (default: 60)
 3. After creating the watcher, click into it and **Add Service**:
@@ -207,6 +237,7 @@ Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/watchers/1/servic
 > **Important**: 
 > - **For NSSM Services**: Create the `.env` files for your app services before the first deploy. The watcher deploys binaries but does NOT manage `.env` files.
 > - **For IIS Services**: Ensure the IIS Site and App Pool are created in IIS Manager and pointed to the `C:\apps\my-project\current` junction folder before the first payload deploys.
+- **Token precedence**: watcher token override is used first, then global `GITHUB_TOKEN`.
 
 ---
 
@@ -238,12 +269,8 @@ nssm remove  app-watcher confirm    # uninstall
 # Live logs
 Get-Content D:\apps\watcher\logs\watcher.out.log -Wait
 
-# Force manual rollback of a watched service
-# Note: This manually changes version.txt, but doesn't set the High-Watermark Pin in the DB.
-# It is recommended to use the Dashboard for rollbacks.
-nssm stop app-watcher
-Set-Content D:\apps\my-service\version.txt "v1.0.0"
-nssm start app-watcher
+# Manual rollback is supported via Dashboard (Watcher Detail -> Versions -> Rollback)
+# Avoid editing on-disk state files manually; deploy state is DB-backed.
 
 # Test without NSSM (run directly)
 .\watcher.exe -config .env
