@@ -25,6 +25,9 @@ The agent polls GitHub releases, deploys new artifacts, manages services, perfor
 - Manual rollback with high-watermark pinning (`max_ignored_version`)
 - Poll-event history (`new_release`, `no_update`, `skipped`, `error`, etc.)
 - Optional GitHub Deployment API status reporting
+- Per-watcher GitHub override settings:
+  - `deployment_environment` (fallback: global `ENVIRONMENT`)
+  - `github_token` (fallback: global `GITHUB_TOKEN`)
 - Self-management endpoints (version, update-check, update, uninstall script)
 - Embedded Svelte SPA dashboard served by the same Go process
 
@@ -172,6 +175,10 @@ Notes:
 - `GITHUB_TOKEN` is required for private repos.
 - `API_BASE_URL` enables GitHub Deployment API `log_url` linking.
 - `WATCHER_REPO_URL` is used by self-update check/update.
+- Watcher-level config can override deploy environment/token per repo:
+  - `deployment_environment` -> used first for GitHub Deployments environment
+  - `github_token` -> used first for GitHub metadata/artifact/deployment API calls
+  - if empty, watcher falls back to global `.env` values.
 
 ---
 
@@ -248,4 +255,3 @@ Typical flow on Windows:
 - `binary_name` must match the extracted file for `nssm` services.
 - Manual rollback sets `max_ignored_version`; auto-deploy ignores versions `<=` that value until resumed or a newer version appears.
 - After repeated failures for the same target version, auto deploy is suspended for that version until manual redeploy.
-

@@ -63,6 +63,9 @@ func (h *Handler) ListWatchers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	for i := range watchers {
+		enrichWatcherSecrets(&watchers[i])
+	}
 	c.JSON(http.StatusOK, watchers)
 }
 
@@ -72,6 +75,7 @@ func (h *Handler) GetWatcher(c *gin.Context) {
 	if err != nil {
 		return // response already sent
 	}
+	enrichWatcherSecrets(watcher)
 	c.JSON(http.StatusOK, watcher)
 }
 
@@ -84,20 +88,22 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 	}
 
 	watcher := database.Watcher{
-		Name:             req.Name,
-		ServiceName:      req.ServiceName,
-		MetadataURL:      req.MetadataURL,
-		CheckIntervalSec: withDefault(req.CheckIntervalSec, 60),
-		DownloadRetries:  withDefault(req.DownloadRetries, 3),
-		InstallDir:       req.InstallDir,
-		HcEnabled:        req.HcEnabled,
-		HcURL:            req.HcURL,
-		HcRetries:        withDefault(req.HcRetries, 10),
-		HcIntervalSec:    withDefault(req.HcIntervalSec, 3),
-		HcTimeoutSec:     withDefault(req.HcTimeoutSec, 5),
-		Paused:           req.Paused,
-		MaxKeptVersions:  withDefault(req.MaxKeptVersions, 3),
-		Status:           "unknown",
+		Name:                  req.Name,
+		ServiceName:           req.ServiceName,
+		MetadataURL:           req.MetadataURL,
+		DeploymentEnvironment: strings.TrimSpace(req.DeploymentEnvironment),
+		GitHubToken:           strings.TrimSpace(req.GitHubToken),
+		CheckIntervalSec:      withDefault(req.CheckIntervalSec, 60),
+		DownloadRetries:       withDefault(req.DownloadRetries, 3),
+		InstallDir:            req.InstallDir,
+		HcEnabled:             req.HcEnabled,
+		HcURL:                 req.HcURL,
+		HcRetries:             withDefault(req.HcRetries, 10),
+		HcIntervalSec:         withDefault(req.HcIntervalSec, 3),
+		HcTimeoutSec:          withDefault(req.HcTimeoutSec, 5),
+		Paused:                req.Paused,
+		MaxKeptVersions:       withDefault(req.MaxKeptVersions, 3),
+		Status:                "unknown",
 	}
 
 	// Create watcher
@@ -128,6 +134,7 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 
 	// Reload with services
 	h.db.Preload("Services").First(&watcher, watcher.ID)
+	enrichWatcherSecrets(&watcher)
 	c.JSON(http.StatusCreated, watcher)
 }
 
@@ -153,6 +160,12 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	}
 	if req.MetadataURL != nil {
 		updates["metadata_url"] = *req.MetadataURL
+	}
+	if req.DeploymentEnvironment != nil {
+		updates["deployment_environment"] = strings.TrimSpace(*req.DeploymentEnvironment)
+	}
+	if req.GitHubToken != nil {
+		updates["github_token"] = strings.TrimSpace(*req.GitHubToken)
 	}
 	if req.CheckIntervalSec != nil {
 		updates["check_interval_sec"] = *req.CheckIntervalSec
@@ -199,6 +212,7 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 
 	// Reload
 	h.db.Preload("Services").First(watcher, watcher.ID)
+	enrichWatcherSecrets(watcher)
 	c.JSON(http.StatusOK, watcher)
 }
 
@@ -557,6 +571,15 @@ func withDefault(val, def int) int {
 		return def
 	}
 	return val
+}
+
+func enrichWatcherSecrets(w *database.Watcher) {
+	if w == nil {
+		return
+	}
+	token := strings.TrimSpace(w.GitHubToken)
+	w.HasGitHubToken = token != ""
+	w.GitHubTokenMasked = maskToken(token)
 }
 
 // timeNow returns a pointer to the current UTC time.

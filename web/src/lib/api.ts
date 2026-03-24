@@ -26,6 +26,10 @@ export interface Watcher {
 	name: string;
 	service_name: string;
 	metadata_url: string;
+	deployment_environment: string;
+	github_token?: string;
+	has_github_token: boolean;
+	github_token_masked: string;
 	check_interval_sec: number;
 	download_retries: number;
 	install_dir: string;

@@ -69,7 +69,7 @@
 
 		<Separator />
 		<div class="p-4">
-			<p class="text-[11px] text-muted-foreground">Watcher Agent</p>
+			<p class="text-[11px] text-center text-muted-foreground">Watcher Agent</p>
 		</div>
 	</aside>
 

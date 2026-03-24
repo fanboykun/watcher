@@ -46,6 +46,9 @@ main.go
 - A watcher goroutine is restarted when its `updated_at` changes.
 - Each watcher run records poll events and updates deploy state in DB.
 - Consecutive failures are capped per target version (`maxDeployRetries = 3`) to prevent infinite loops.
+- GitHub settings precedence is watcher-first:
+  - deployment environment: `watcher.deployment_environment` -> global `ENVIRONMENT`
+  - token: `watcher.github_token` -> global `GITHUB_TOKEN`
 
 ---
 
@@ -118,6 +121,7 @@ main.go
 
 ### `Watcher`
 - identity/config: `name`, `service_name`, `metadata_url`, `install_dir`
+- GitHub overrides: `deployment_environment`, `github_token` (stored; API returns masked status fields)
 - polling/deploy knobs: `check_interval_sec`, `download_retries`, `max_kept_versions`, `paused`
 - health defaults: `hc_enabled`, `hc_url`, `hc_retries`, `hc_interval_sec`, `hc_timeout_sec`
 - runtime state: `current_version`, `max_ignored_version`, `status`, `last_checked`, `last_deployed`, `last_error`
@@ -309,4 +313,3 @@ Current tests are concentrated in `internal/agent`:
 - self-update helpers/version compare (`self_update_test.go`)
 
 There is no broad integration test suite for API handlers or end-to-end deploy orchestration yet.
-

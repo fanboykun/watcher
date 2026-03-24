@@ -4,37 +4,41 @@ package api
 
 // CreateWatcherRequest is the body for POST /api/watchers
 type CreateWatcherRequest struct {
-	Name             string                 `json:"name" binding:"required"`
-	ServiceName      string                 `json:"service_name" binding:"required"`
-	MetadataURL      string                 `json:"metadata_url" binding:"required"`
-	CheckIntervalSec int                    `json:"check_interval_sec"`
-	DownloadRetries  int                    `json:"download_retries"`
-	InstallDir       string                 `json:"install_dir" binding:"required"`
-	HcEnabled        bool                   `json:"hc_enabled"`
-	HcURL            string                 `json:"hc_url"`
-	HcRetries        int                    `json:"hc_retries"`
-	HcIntervalSec    int                    `json:"hc_interval_sec"`
-	HcTimeoutSec     int                    `json:"hc_timeout_sec"`
-	Paused           bool                   `json:"paused"`
-	MaxKeptVersions  int                    `json:"max_kept_versions"`
-	Services         []CreateServiceRequest `json:"services"`
+	Name                  string                 `json:"name" binding:"required"`
+	ServiceName           string                 `json:"service_name" binding:"required"`
+	MetadataURL           string                 `json:"metadata_url" binding:"required"`
+	DeploymentEnvironment string                 `json:"deployment_environment"`
+	GitHubToken           string                 `json:"github_token"`
+	CheckIntervalSec      int                    `json:"check_interval_sec"`
+	DownloadRetries       int                    `json:"download_retries"`
+	InstallDir            string                 `json:"install_dir" binding:"required"`
+	HcEnabled             bool                   `json:"hc_enabled"`
+	HcURL                 string                 `json:"hc_url"`
+	HcRetries             int                    `json:"hc_retries"`
+	HcIntervalSec         int                    `json:"hc_interval_sec"`
+	HcTimeoutSec          int                    `json:"hc_timeout_sec"`
+	Paused                bool                   `json:"paused"`
+	MaxKeptVersions       int                    `json:"max_kept_versions"`
+	Services              []CreateServiceRequest `json:"services"`
 }
 
 // UpdateWatcherRequest is the body for PUT /api/watchers/:id
 type UpdateWatcherRequest struct {
-	Name             *string `json:"name"`
-	ServiceName      *string `json:"service_name"`
-	MetadataURL      *string `json:"metadata_url"`
-	CheckIntervalSec *int    `json:"check_interval_sec"`
-	DownloadRetries  *int    `json:"download_retries"`
-	InstallDir       *string `json:"install_dir"`
-	HcEnabled        *bool   `json:"hc_enabled"`
-	HcURL            *string `json:"hc_url"`
-	HcRetries        *int    `json:"hc_retries"`
-	HcIntervalSec    *int    `json:"hc_interval_sec"`
-	HcTimeoutSec     *int    `json:"hc_timeout_sec"`
-	Paused           *bool   `json:"paused"`
-	MaxKeptVersions  *int    `json:"max_kept_versions"`
+	Name                  *string `json:"name"`
+	ServiceName           *string `json:"service_name"`
+	MetadataURL           *string `json:"metadata_url"`
+	DeploymentEnvironment *string `json:"deployment_environment"`
+	GitHubToken           *string `json:"github_token"`
+	CheckIntervalSec      *int    `json:"check_interval_sec"`
+	DownloadRetries       *int    `json:"download_retries"`
+	InstallDir            *string `json:"install_dir"`
+	HcEnabled             *bool   `json:"hc_enabled"`
+	HcURL                 *string `json:"hc_url"`
+	HcRetries             *int    `json:"hc_retries"`
+	HcIntervalSec         *int    `json:"hc_interval_sec"`
+	HcTimeoutSec          *int    `json:"hc_timeout_sec"`
+	Paused                *bool   `json:"paused"`
+	MaxKeptVersions       *int    `json:"max_kept_versions"`
 }
 
 // ── Service DTOs ──────────────────────────────────────────────

@@ -28,6 +28,8 @@
 	let formInterval = $state(60);
 	let formHcEnabled = $state(false);
 	let formHcURL = $state('');
+	let formDeploymentEnvironment = $state('');
+	let formGitHubToken = $state('');
 	let formServices = $state<Partial<Service>[]>([]);
 
 	onMount(load);
@@ -86,6 +88,8 @@
 				name: formName,
 				service_name: formServiceName,
 				metadata_url: formMetadataURL,
+				deployment_environment: formDeploymentEnvironment,
+				github_token: formGitHubToken,
 				install_dir: formInstallDir,
 				check_interval_sec: formInterval,
 				hc_enabled: formHcEnabled,
@@ -115,6 +119,8 @@
 		formInterval = 60;
 		formHcEnabled = false;
 		formHcURL = '';
+		formDeploymentEnvironment = '';
+		formGitHubToken = '';
 		formServices = [];
 		inspectResult = null;
 		error = '';
@@ -367,6 +373,19 @@
 					<div class="space-y-2">
 						<Label for="hcURL">Global Health Check URL (optional)</Label>
 						<Input id="hcURL" placeholder="http://localhost:3000/health" bind:value={formHcURL} />
+					</div>
+				</div>
+
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div class="space-y-2">
+						<Label for="deploymentEnvironment">Deployment Environment (GitHub)</Label>
+						<Input id="deploymentEnvironment" placeholder="production" bind:value={formDeploymentEnvironment} />
+						<p class="text-xs text-muted-foreground">Optional. Falls back to global `ENVIRONMENT` if empty.</p>
+					</div>
+					<div class="space-y-2">
+						<Label for="watcherGithubToken">GitHub Access Token (Watcher Override)</Label>
+						<Input id="watcherGithubToken" type="password" placeholder="ghp_xxx" bind:value={formGitHubToken} />
+						<p class="text-xs text-muted-foreground">Optional. Falls back to global `GITHUB_TOKEN` if empty.</p>
 					</div>
 				</div>
 

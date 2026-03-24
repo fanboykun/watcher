@@ -67,6 +67,9 @@
 	let editHcEnabled = $state(false);
 	let editHcURL = $state('');
 	let editMaxKeptVersions = $state(3);
+	let editDeploymentEnvironment = $state('');
+	let editGitHubToken = $state('');
+	let editUseGlobalToken = $state(false);
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'overview');
 
@@ -165,6 +168,9 @@
 		editHcEnabled = watcher.hc_enabled;
 		editHcURL = watcher.hc_url;
 		editMaxKeptVersions = watcher.max_kept_versions;
+		editDeploymentEnvironment = watcher.deployment_environment || '';
+		editGitHubToken = '';
+		editUseGlobalToken = !watcher.has_github_token;
 	}
 
 	async function saveEdit() {
@@ -173,6 +179,8 @@
 			watcher = await api.updateWatcher(id, {
 				check_interval_sec: editInterval,
 				metadata_url: editMetadataURL,
+				deployment_environment: editDeploymentEnvironment,
+				github_token: editUseGlobalToken ? '' : (editGitHubToken.trim() !== '' ? editGitHubToken : undefined),
 				install_dir: editInstallDir,
 				hc_enabled: editHcEnabled,
 				hc_url: editHcURL,
@@ -472,6 +480,22 @@
 								<Input id="editMaxKeptVersions" type="number" min="1" max="10" bind:value={editMaxKeptVersions} />
 							</div>
 						</div>
+						<div class="grid gap-4 sm:grid-cols-2">
+							<div class="space-y-2">
+								<Label for="editDeploymentEnvironment">Deployment Environment (GitHub)</Label>
+								<Input id="editDeploymentEnvironment" bind:value={editDeploymentEnvironment} placeholder="production" />
+								<p class="text-xs text-muted-foreground">Optional. Falls back to global `ENVIRONMENT` if empty.</p>
+							</div>
+							<div class="space-y-2">
+								<Label for="editGitHubToken">GitHub Access Token Override</Label>
+								<Input id="editGitHubToken" type="password" bind:value={editGitHubToken} placeholder="Paste new token to replace override" disabled={editUseGlobalToken} />
+								<div class="flex items-center gap-2">
+									<input type="checkbox" id="editUseGlobalToken" bind:checked={editUseGlobalToken} class="rounded border-border" />
+									<Label for="editUseGlobalToken">Use global `GITHUB_TOKEN`</Label>
+								</div>
+								<p class="text-xs text-muted-foreground">Current: {watcher.has_github_token ? (watcher.github_token_masked || 'set') : 'using global token'}</p>
+							</div>
+						</div>
 						<div class="flex items-center gap-2">
 							<input
 								type="checkbox"
@@ -568,6 +592,12 @@
 								<span class="text-muted-foreground">Health Check</span><span
 									>{watcher.hc_enabled ? 'Enabled' : 'Disabled'}</span
 								>
+							</div>
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">Deploy Environment</span><span>{watcher.deployment_environment || 'Global default'}</span>
+							</div>
+							<div class="flex justify-between">
+								<span class="text-muted-foreground">GitHub Token</span><span>{watcher.has_github_token ? (watcher.github_token_masked || 'Configured') : 'Global default'}</span>
 							</div>
 						</Card.Content>
 					</Card.Root>
@@ -779,7 +809,7 @@
 									<Table.Row class="border-border">
 										<Table.Cell class="font-mono text-sm font-medium">{v.version}</Table.Cell>
 										<Table.Cell class="text-muted-foreground">{formatDate(v.mod_time)}</Table.Cell>
-										<Table.Cell class="text-muted-foreground">{v.size_human}</Table.Cell>
+											<Table.Cell class="text-muted-foreground">{v.size_bytes > 0 ? filesize(v.size_bytes) : (v.size_human || '0 B')}</Table.Cell>
 										<Table.Cell>
 											{#if v.is_current}
 												<span class="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400">
@@ -1017,4 +1047,3 @@
 		</form>
 	</Dialog.Content>
 </Dialog.Root>
-
