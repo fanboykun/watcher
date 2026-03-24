@@ -29,17 +29,20 @@ func NewStateManager(db *gorm.DB, watcherID uint, log *Logger) *StateManager {
 	return &StateManager{db: db, watcherID: watcherID, log: log}
 }
 
-func (s *StateManager) ReadVersion() (string, error) {
-	var watcher database.Watcher
-	if err := s.db.Select("current_version").First(&watcher, s.watcherID).Error; err != nil {
-		return "", nil // treat as no version yet
+func (s *StateManager) ReadVersion() (string, string, error) {
+	var w database.Watcher
+	if err := s.db.Select("current_version", "max_ignored_version").First(&w, s.watcherID).Error; err != nil {
+		return "", "", nil // treat as no version yet
 	}
-	return watcher.CurrentVersion, nil
+	return w.CurrentVersion, w.MaxIgnoredVersion, nil
 }
 
 func (s *StateManager) WriteVersion(version string) error {
 	return s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
-		Update("current_version", version).Error
+		Updates(map[string]any{
+			"current_version":     version,
+			"max_ignored_version": "",
+		}).Error
 }
 
 func (s *StateManager) SetChecked() error {
@@ -48,7 +51,7 @@ func (s *StateManager) SetChecked() error {
 		Update("last_checked", &now).Error
 }
 
-func (s *StateManager) SetDeploying(version, fromVersion string) error {
+func (s *StateManager) SetDeploying(version, fromVersion string) (uint, error) {
 	now := time.Now().UTC()
 	// Update watcher state
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
@@ -58,17 +61,27 @@ func (s *StateManager) SetDeploying(version, fromVersion string) error {
 			"last_error":   "",
 		}).Error
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Record in deploy log
-	return s.db.Create(&database.DeployLog{
+	dlog := database.DeployLog{
 		WatcherID:   s.watcherID,
 		Version:     version,
 		FromVersion: fromVersion,
 		Status:      string(StatusDeploying),
 		StartedAt:   &now,
-	}).Error
+	}
+	if err := s.db.Create(&dlog).Error; err != nil {
+		return 0, err
+	}
+	return dlog.ID, nil
+}
+
+// SetGitHubDeploymentID stores the GitHub Deployment API ID on a deploy log record.
+func (s *StateManager) SetGitHubDeploymentID(deployLogID uint, ghDeploymentID int64) error {
+	return s.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).
+		Update("github_deployment_id", ghDeploymentID).Error
 }
 
 func (s *StateManager) SetHealthy(version string) error {

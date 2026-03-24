@@ -33,16 +33,16 @@
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { timeAgo } from '$lib/utils';
+	import { filesize } from 'filesize';
 
 	let watcher = $state<Watcher | null>(null);
 	let deploys = $state<DeployLog[]>([]);
 	let polls = $state<import('$lib/api').PollEvent[]>([]);
+	let versions = $state<import('$lib/api').ReleaseInfo[]>([]);
 	let pollPage = $state(1);
 	let pollPageSize = $state(10);
 	let pollStatus = $state('all');
 	let pollTotal = $state(0);
-	let selectedDeployLog = $state<DeployLog | null>(null);
-	let showDeployLog = $state(false);
 	let error = $state('');
 	let triggerMsg = $state('');
 	let showAddService = $state(false);
@@ -66,6 +66,7 @@
 	let editInstallDir = $state('');
 	let editHcEnabled = $state(false);
 	let editHcURL = $state('');
+	let editMaxKeptVersions = $state(3);
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'overview');
 
@@ -88,7 +89,11 @@
 	onMount(() => {
 		const init = async () => {
 			try {
-				[watcher, deploys] = await Promise.all([api.getWatcher(id), api.watcherDeploys(id)]);
+				[watcher, deploys, versions] = await Promise.all([
+					api.getWatcher(id), 
+					api.watcherDeploys(id),
+					api.watcherVersions(id).catch(() => []) // Catch if missing dir error
+				]);
 				await loadPolls();
 				syncEditForm();
 			} catch (e) {
@@ -159,6 +164,7 @@
 		editInstallDir = watcher.install_dir;
 		editHcEnabled = watcher.hc_enabled;
 		editHcURL = watcher.hc_url;
+		editMaxKeptVersions = watcher.max_kept_versions;
 	}
 
 	async function saveEdit() {
@@ -169,7 +175,8 @@
 				metadata_url: editMetadataURL,
 				install_dir: editInstallDir,
 				hc_enabled: editHcEnabled,
-				hc_url: editHcURL
+				hc_url: editHcURL,
+				max_kept_versions: editMaxKeptVersions
 			});
 			editing = false;
 		} catch (e) {
@@ -253,6 +260,51 @@
 			watcher = await api.updateWatcher(id, { paused: newPaused });
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Toggle pause failed';
+		}
+	}
+
+	async function rollback(version: string) {
+		if (
+			!confirm(
+				`Are you SURE you want to rollback to ${version}? This will stop the running services, swap the binary dir, and restart the services.`
+			)
+		) {
+			return;
+		}
+		
+		try {
+			triggerMsg = `Starting rollback to ${version}...`;
+			const res = await api.rollbackWatcher(id, version);
+			triggerMsg = res.message;
+			setTimeout(() => (triggerMsg = ''), 3000);
+			// Refresh data
+			[watcher, deploys, versions] = await Promise.all([
+				api.getWatcher(id),
+				api.watcherDeploys(id),
+				api.watcherVersions(id).catch(() => [])
+			]);
+		} catch (e) {
+			error = e instanceof Error ? e.message : `Rollback to ${version} failed`;
+		}
+	}
+
+	async function deleteVersion(version: string) {
+		if (!confirm(`Are you SURE you want to delete ${version} from disk?`)) return;
+		try {
+			await api.deleteWatcherVersion(id, version);
+			versions = await api.watcherVersions(id).catch(() => []);
+		} catch (e) {
+			error = e instanceof Error ? e.message : `Delete ${version} failed`;
+		}
+	}
+
+	async function resumeAutoDeploy() {
+		try {
+			await api.resumeWatcherUpdates(id);
+			triggerMsg = `Auto-deploy resumed!`;
+			watcher = await api.getWatcher(id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : `Failed to resume auto deploy`;
 		}
 	}
 
@@ -370,6 +422,20 @@
 	{/if}
 
 	{#if watcher}
+		{#if watcher.max_ignored_version}
+			<div class="mb-4 flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
+				<div class="flex items-center gap-2">
+					<AlertCircle class="h-4 w-4" />
+					<span>
+						<strong>Updates pinned up to {watcher.max_ignored_version}.</strong> New releases will only auto-deploy if they are newer than this version.
+					</span>
+				</div>
+				<Button.Root variant="outline" size="sm" class="border-amber-500/30 hover:bg-amber-500/20" onclick={resumeAutoDeploy}>
+					Resume Updates
+				</Button.Root>
+			</div>
+		{/if}
+
 		<!-- Inline Edit Form -->
 		{#if editing}
 			<Card.Root class="border-blue-500/30 bg-card">
@@ -400,6 +466,10 @@
 							<div class="space-y-2">
 								<Label for="editHcURL">Health Check URL</Label>
 								<Input id="editHcURL" bind:value={editHcURL} />
+							</div>
+							<div class="space-y-2">
+								<Label for="editMaxKeptVersions">Max Kept Versions</Label>
+								<Input id="editMaxKeptVersions" type="number" min="1" max="10" bind:value={editMaxKeptVersions} />
 							</div>
 						</div>
 						<div class="flex items-center gap-2">
@@ -450,13 +520,18 @@
 		<Tabs.Root
 			bind:value={activeTab}
 			onValueChange={(v) => {
-				if (v) goto(`?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true });
+				if (v) {
+					goto(`${page.url.pathname}?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true }).catch(
+						() => {}
+					);
+				}
 			}}
 		>
 			<Tabs.List>
 				<Tabs.Trigger value="overview">Overview</Tabs.Trigger>
 				<Tabs.Trigger value="services">Services ({watcher.services.length})</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploy History ({deploys.length})</Tabs.Trigger>
+				<Tabs.Trigger value="versions">Versions ({versions.length})</Tabs.Trigger>
 				<Tabs.Trigger value="polling">Polling History</Tabs.Trigger>
 			</Tabs.List>
 
@@ -556,7 +631,8 @@
 												>{svc.windows_service_name}</a
 											>
 											{#if svc.public_url}
-												<a href={resolve(svc.public_url)}
+												<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+												<a href={svc.public_url}
 													target="_blank"
 													rel="noopener noreferrer"
 													class="ml-1.5 inline-flex items-center text-muted-foreground hover:text-foreground"
@@ -653,18 +729,22 @@
 											>{d.error || ''}</Table.Cell
 										>
 										<Table.Cell class="text-right">
-											{#if d.logs}
-												<Button.Root
-													variant="ghost"
-													size="sm"
-													onclick={() => {
-														selectedDeployLog = d;
-														showDeployLog = true;
-													}}
-												>
-													View Logs
-												</Button.Root>
-											{/if}
+											<div class="flex items-center justify-end gap-2">
+												{#if d.github_deployment_id > 0}
+													<span title="Reported to GitHub" class="text-muted-foreground/60 border border-muted-foreground/20 rounded bg-muted/30 px-1 py-0.5 text-[10px] inline-flex items-center">
+														<svg class="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+														GitHub
+													</span>
+												{/if}
+												{#if d.logs}
+													<a
+														href={resolve(`/watchers/${id}/logs/${d.id}`)}
+														class="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+													>
+														Logs <ExternalLink class="ml-1.5 h-3 w-3 text-muted-foreground" />
+													</a>
+												{/if}
+											</div>
 										</Table.Cell>
 									</Table.Row>
 								{/each}
@@ -676,6 +756,76 @@
 						<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
 							<Rocket class="mb-3 h-8 w-8 text-muted-foreground/40" />
 							<p class="text-sm text-muted-foreground">No deployments yet</p>
+						</Card.Content>
+					</Card.Root>
+				{/if}
+			</Tabs.Content>
+
+			<Tabs.Content value="versions" class="mt-4">
+				{#if versions.length > 0}
+					<Card.Root class="border-border bg-card">
+						<Table.Root>
+							<Table.Header>
+								<Table.Row class="border-border hover:bg-transparent">
+									<Table.Head>Version</Table.Head>
+									<Table.Head>Modified At</Table.Head>
+									<Table.Head>Size</Table.Head>
+									<Table.Head>Status</Table.Head>
+									<Table.Head class="text-right">Action</Table.Head>
+								</Table.Row>
+							</Table.Header>
+							<Table.Body>
+								{#each versions as v (v.version)}
+									<Table.Row class="border-border">
+										<Table.Cell class="font-mono text-sm font-medium">{v.version}</Table.Cell>
+										<Table.Cell class="text-muted-foreground">{formatDate(v.mod_time)}</Table.Cell>
+										<Table.Cell class="text-muted-foreground">{v.size_human}</Table.Cell>
+										<Table.Cell>
+											{#if v.is_current}
+												<span class="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400">
+													<CheckCircle2 class="h-3 w-3" />
+													Current
+												</span>
+											{:else}
+												<span class="inline-flex items-center gap-1 rounded bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+													Inactive
+												</span>
+											{/if}
+										</Table.Cell>
+										<Table.Cell class="text-right">
+											<div class="flex items-center justify-end gap-2">
+												{#if !v.is_current}
+													<Button.Root
+														variant="outline"
+														size="sm"
+														class="h-8"
+														onclick={() => rollback(v.version)}
+													>
+														<RotateCcw class="mr-1.5 h-3 w-3" />
+														Rollback
+													</Button.Root>
+													<Button.Root
+														variant="default"
+														size="sm"
+														class="h-8 bg-red-500/10 text-red-500 hover:bg-red-500/20"
+														title="Delete Version"
+														onclick={() => deleteVersion(v.version)}
+													>
+														<Trash2 class="h-3 w-3" />
+													</Button.Root>
+												{/if}
+											</div>
+										</Table.Cell>
+									</Table.Row>
+								{/each}
+							</Table.Body>
+						</Table.Root>
+					</Card.Root>
+				{:else}
+					<Card.Root class="border-dashed border-border bg-card">
+						<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
+							<Server class="mb-3 h-8 w-8 text-muted-foreground/40" />
+							<p class="text-sm text-muted-foreground">No extracted versions on disk</p>
 						</Card.Content>
 					</Card.Root>
 				{/if}
@@ -868,21 +1018,3 @@
 	</Dialog.Content>
 </Dialog.Root>
 
-<!-- Deploy Log Dialog -->
-<Dialog.Root bind:open={showDeployLog}>
-	<Dialog.Content class="flex max-h-[85vh] flex-col sm:max-w-[700px]">
-		<Dialog.Header>
-			<Dialog.Title>Deployment Logs: {selectedDeployLog?.version}</Dialog.Title>
-		</Dialog.Header>
-
-		<div class="mt-4 min-h-0 flex-1 overflow-y-auto rounded bg-muted/50 p-4 font-mono text-xs">
-			<div class="h-full wrap-break-word whitespace-pre-wrap text-muted-foreground">
-				{selectedDeployLog?.logs || 'No logs available.'}
-			</div>
-		</div>
-
-		<Dialog.Footer class="mt-4">
-			<Button.Root variant="outline" onclick={() => (showDeployLog = false)}>Close</Button.Root>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>

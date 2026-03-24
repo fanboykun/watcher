@@ -4,18 +4,19 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/web"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 // NewRouter creates a Gin engine with all API routes and embedded SPA.
-func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken string, checkTrigger chan uint, syncTrigger chan struct{}) *gin.Engine {
+func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken string, appCfg *config.AppConfig, checkTrigger chan uint, syncTrigger chan struct{}) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	h := NewHandler(db, nssmPath, logDir, version, githubToken, checkTrigger, syncTrigger)
+	h := NewHandler(db, nssmPath, logDir, version, githubToken, appCfg, checkTrigger, syncTrigger)
 
 	apiGroup := r.Group("/api")
 	{
@@ -57,10 +58,26 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken string, check
 
 			// Deploy logs and trigger
 			watchers.GET("/:id/deploys", h.ListDeployLogs)
+			watchers.GET("/:id/deploys/:did", h.GetDeployLog)
 			watchers.GET("/:id/deploy/stream", h.StreamDeployLogs)
 			watchers.GET("/:id/polls", h.ListPollEvents)
 			watchers.POST("/:id/check", h.TriggerCheck)
 			watchers.POST("/:id/redeploy", h.RedeployWatcher)
+
+			// Version management and rollback
+			watchers.GET("/:id/versions", h.ListAvailableVersions)
+			watchers.POST("/:id/rollback", h.RollbackWatcher)
+			watchers.POST("/:id/resume", h.ResumeWatcherUpdates)
+			watchers.DELETE("/:id/versions/:version", h.DeleteWatcherVersion)
+		}
+
+		// ── Self-management ──────────────────────────────────
+		self := apiGroup.Group("/self")
+		{
+			self.GET("/version", h.SelfVersion)
+			self.GET("/update-check", h.SelfUpdateCheck)
+			self.POST("/update", h.SelfUpdate)
+			self.POST("/uninstall", h.SelfUninstall)
 		}
 	}
 

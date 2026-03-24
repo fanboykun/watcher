@@ -16,6 +16,7 @@ type Watcher struct {
 	DownloadRetries  int            `gorm:"not null;default:3" json:"download_retries"`
 	InstallDir       string         `gorm:"not null" json:"install_dir"`
 	Paused           bool           `gorm:"not null;default:false" json:"paused"`
+	MaxKeptVersions  int            `gorm:"not null;default:3" json:"max_kept_versions"`
 
 	// Health check settings (flattened)
 	HcEnabled     bool   `gorm:"not null;default:false" json:"hc_enabled"`
@@ -25,8 +26,9 @@ type Watcher struct {
 	HcTimeoutSec  int    `gorm:"not null;default:5" json:"hc_timeout_sec"`
 
 	// Deploy state (replaces version.txt + state.json)
-	CurrentVersion string     `gorm:"not null;default:''" json:"current_version"`
-	Status         string     `gorm:"not null;default:'unknown'" json:"status"`
+	CurrentVersion    string     `gorm:"not null;default:''" json:"current_version"`
+	MaxIgnoredVersion string     `gorm:"not null;default:''" json:"max_ignored_version"`
+	Status            string     `gorm:"not null;default:'unknown'" json:"status"`
 	LastChecked    *time.Time `json:"last_checked"`
 	LastDeployed   *time.Time `json:"last_deployed"`
 	LastError      string     `gorm:"not null;default:''" json:"last_error"`
@@ -62,16 +64,17 @@ type Service struct {
 
 // DeployLog records each deploy attempt for history/timeline.
 type DeployLog struct {
-	ID          uint       `gorm:"primaryKey" json:"id"`
-	WatcherID   uint       `gorm:"not null;index" json:"watcher_id"`
-	Version     string     `gorm:"not null" json:"version"`
-	FromVersion string     `gorm:"not null;default:''" json:"from_version"`
-	Status      string     `gorm:"not null" json:"status"`
-	Error       string     `gorm:"not null;default:''" json:"error"`
-	DurationMs  int64      `gorm:"not null;default:0" json:"duration_ms"`
-	Logs        string     `gorm:"type:text" json:"logs"`
-	StartedAt   *time.Time `json:"started_at"`
-	CompletedAt *time.Time `json:"completed_at"`
+	ID                 uint       `gorm:"primaryKey" json:"id"`
+	WatcherID          uint       `gorm:"not null;index" json:"watcher_id"`
+	Version            string     `gorm:"not null" json:"version"`
+	FromVersion        string     `gorm:"not null;default:''" json:"from_version"`
+	Status             string     `gorm:"not null" json:"status"`
+	Error              string     `gorm:"not null;default:''" json:"error"`
+	DurationMs         int64      `gorm:"not null;default:0" json:"duration_ms"`
+	Logs               string     `gorm:"type:text" json:"logs"`
+	GitHubDeploymentID int64      `gorm:"not null;default:0" json:"github_deployment_id"`
+	StartedAt          *time.Time `json:"started_at"`
+	CompletedAt        *time.Time `json:"completed_at"`
 }
 
 // HealthEvent records each health check attempt for a service.

@@ -16,6 +16,7 @@ type CreateWatcherRequest struct {
 	HcIntervalSec    int                    `json:"hc_interval_sec"`
 	HcTimeoutSec     int                    `json:"hc_timeout_sec"`
 	Paused           bool                   `json:"paused"`
+	MaxKeptVersions  int                    `json:"max_kept_versions"`
 	Services         []CreateServiceRequest `json:"services"`
 }
 
@@ -33,6 +34,7 @@ type UpdateWatcherRequest struct {
 	HcIntervalSec    *int    `json:"hc_interval_sec"`
 	HcTimeoutSec     *int    `json:"hc_timeout_sec"`
 	Paused           *bool   `json:"paused"`
+	MaxKeptVersions  *int    `json:"max_kept_versions"`
 }
 
 // ── Service DTOs ──────────────────────────────────────────────
@@ -71,4 +73,10 @@ type ErrorResponse struct {
 
 type MessageResponse struct {
 	Message string `json:"message"`
+}
+
+// ── Rollback DTOs ─────────────────────────────────────────────
+
+type RollbackRequest struct {
+	Version string `json:"version" binding:"required"`
 }
