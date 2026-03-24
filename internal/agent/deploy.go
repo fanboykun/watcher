@@ -69,7 +69,9 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 
 	d.l("stopping services")
 	for _, svc := range d.wcfg.Services {
-		d.stopServiceByType(svc)
+		if err := d.stopServiceByType(svc); err != nil {
+			return fmt.Errorf("stop %s: %w", svc.WindowsServiceName, err)
+		}
 	}
 
 	// Now that services are stopped, safely remove the old releaseDir if it exists (for redeploys)
@@ -134,7 +136,9 @@ func (d *Deployer) Rollback(ctx context.Context, version string) error {
 	}
 
 	for _, svc := range d.wcfg.Services {
-		d.stopServiceByType(svc)
+		if err := d.stopServiceByType(svc); err != nil {
+			return fmt.Errorf("stop %s during rollback: %w", svc.WindowsServiceName, err)
+		}
 	}
 
 	if err := d.swapCurrent(releaseDir, currentDir); err != nil {
@@ -199,7 +203,7 @@ func (d *Deployer) extractZip(zipPath, destDir string) error {
 }
 
 func extractZipFile(f *zip.File, destDir string) error {
-	destPath := filepath.Join(destDir, filepath.Clean("/"+f.Name)[1:])
+	destPath := filepath.Join(destDir, filepath.Clean("/" + f.Name)[1:])
 	if destPath == destDir {
 		return nil
 	}
@@ -336,25 +340,51 @@ func (d *Deployer) serviceExists(name string) bool {
 }
 
 // stopServiceByType dispatches to the correct stop logic based on ServiceType.
-func (d *Deployer) stopServiceByType(svc ServiceConfig) {
+func (d *Deployer) stopServiceByType(svc ServiceConfig) error {
 	switch svc.ServiceType {
 	case "static":
 		// Static services don't have a process to stop.
 		// Optionally stop the IIS app pool, but usually unnecessary
 		// since we just swap the junction.
 		d.l("static service -- skipping stop", "name", svc.WindowsServiceName)
+		return nil
 	default: // "nssm"
-		d.stopService(svc.WindowsServiceName)
+		return d.stopService(svc.WindowsServiceName)
 	}
 }
 
-func (d *Deployer) stopService(name string) {
+func (d *Deployer) stopService(name string) error {
+	const (
+		gracefulTimeout = 45 * time.Second
+		forceTimeout    = 20 * time.Second
+		pollInterval    = 2 * time.Second
+	)
+
 	d.l("stopping service", "name", name)
 	out, err := exec.Command(d.nssmPath, "stop", name, "confirm").CombinedOutput()
-	if err != nil {
-		d.log.Debug("stop returned non-zero (may already be stopped)", "name", name, "output", string(out))
+	if err != nil && !isServiceMissingOutput(string(out)) {
+		d.lWarn("nssm stop returned non-zero", "name", name, "error", err, "output", string(out))
 	}
-	time.Sleep(2 * time.Second)
+
+	state, waitErr := d.waitForServiceState(name, []string{"SERVICE_STOPPED", "SERVICE_MISSING"}, gracefulTimeout, pollInterval)
+	if waitErr == nil {
+		d.l("service stopped", "name", name, "state", state)
+		return nil
+	}
+
+	d.lWarn("service did not stop gracefully, forcing stop", "name", name, "error", waitErr)
+	killOut, killErr := exec.Command("taskkill", "/F", "/FI", fmt.Sprintf("SERVICES eq %s", name)).CombinedOutput()
+	if killErr != nil {
+		d.lWarn("taskkill fallback failed", "name", name, "error", killErr, "output", string(killOut))
+	}
+
+	state, waitErr = d.waitForServiceState(name, []string{"SERVICE_STOPPED", "SERVICE_MISSING"}, forceTimeout, pollInterval)
+	if waitErr != nil {
+		return fmt.Errorf("failed to stop service %s: %w", name, waitErr)
+	}
+
+	d.lWarn("service stopped after force fallback", "name", name, "state", state)
+	return nil
 }
 
 // startServiceByType dispatches to the correct start logic based on ServiceType.
@@ -368,10 +398,15 @@ func (d *Deployer) startServiceByType(svc ServiceConfig) error {
 }
 
 func (d *Deployer) startService(name string) error {
+	const (
+		startTimeout = 60 * time.Second
+		pollInterval = 2 * time.Second
+	)
+
 	d.l("starting service", "name", name)
 	outBytes, err := exec.Command(d.nssmPath, "start", name).CombinedOutput()
 	out := string(outBytes)
-	
+
 	if err != nil && !strings.Contains(out, "SERVICE_START_PENDING") && !strings.Contains(out, "SERVICE_RUNNING") {
 		return fmt.Errorf("nssm start %s: %w (output: %s)", name, err, out)
 	}
@@ -379,7 +414,12 @@ func (d *Deployer) startService(name string) error {
 		d.l("service start pending or already running", "name", name, "output", out)
 	}
 
-	time.Sleep(2 * time.Second)
+	state, waitErr := d.waitForServiceState(name, []string{"SERVICE_RUNNING"}, startTimeout, pollInterval)
+	if waitErr != nil {
+		return fmt.Errorf("service %s did not reach running state: %w", name, waitErr)
+	}
+
+	d.l("service running", "name", name, "state", state)
 	return nil
 }
 
@@ -445,6 +485,79 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+func parseServiceState(output string) string {
+	up := strings.ToUpper(output)
+	for _, state := range []string{
+		"SERVICE_RUNNING",
+		"SERVICE_STOPPED",
+		"SERVICE_START_PENDING",
+		"SERVICE_STOP_PENDING",
+		"SERVICE_PAUSED",
+	} {
+		if strings.Contains(up, state) {
+			return state
+		}
+	}
+	return ""
+}
+
+func isServiceMissingOutput(output string) bool {
+	return containsAny(output,
+		"Can't open service",
+		"does not exist",
+		"OpenService()",
+		"SERVICE_DOES_NOT_EXIST",
+	)
+}
+
+func (d *Deployer) queryServiceState(name string) (string, error) {
+	out, err := exec.Command(d.nssmPath, "status", name).CombinedOutput()
+	text := string(out)
+	state := parseServiceState(text)
+	if err != nil {
+		if isServiceMissingOutput(text) {
+			return "SERVICE_MISSING", nil
+		}
+		if state != "" {
+			return state, nil
+		}
+		return "", fmt.Errorf("nssm status %s: %w (output: %s)", name, err, text)
+	}
+	if state == "" {
+		return "", fmt.Errorf("nssm status %s returned unknown state (output: %s)", name, text)
+	}
+	return state, nil
+}
+
+func (d *Deployer) waitForServiceState(name string, expected []string, timeout, interval time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	lastState := ""
+	var lastErr error
+	for {
+		state, err := d.queryServiceState(name)
+		lastState = state
+		lastErr = err
+		if err == nil {
+			for _, exp := range expected {
+				if state == exp {
+					return state, nil
+				}
+			}
+			d.l("waiting for service state", "name", name, "current", state, "expected", strings.Join(expected, ","))
+		} else {
+			d.lWarn("service status check failed", "name", name, "error", err)
+		}
+
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return "", fmt.Errorf("timeout waiting for %s; last status error: %w", strings.Join(expected, ","), lastErr)
+			}
+			return "", fmt.Errorf("timeout waiting for %s; last observed state=%s", strings.Join(expected, ","), lastState)
+		}
+		time.Sleep(interval)
+	}
 }
 
 func copyDir(src, dst string) error {

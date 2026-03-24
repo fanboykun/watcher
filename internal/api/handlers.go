@@ -708,6 +708,12 @@ func (h *Handler) ListAvailableVersions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	currentVersion := strings.TrimSpace(watcher.CurrentVersion)
+	if currentVersion != "" {
+		for i := range versions {
+			versions[i].IsCurrent = versions[i].Version == currentVersion
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"watcher_id":      watcher.ID,
