@@ -105,12 +105,14 @@ func PerformSelfUpdate(ctx context.Context, downloadURL, token, nssmPath, servic
 			return fmt.Errorf("install new binary: %w", err)
 		}
 
-		// Restart the watcher service via NSSM
+		// Restart the watcher service via NSSM.
+		// This must be detached from the current process; otherwise the restart command
+		// can be interrupted when NSSM stops this service process, leaving it stopped.
 		if nssmPath != "" && serviceName != "" {
 			log.Info("restarting watcher service", "service", serviceName)
-			go func() {
-				exec.Command(nssmPath, "restart", serviceName).CombinedOutput()
-			}()
+			if err := scheduleDetachedServiceRestart(nssmPath, serviceName, exeDir); err != nil {
+				return fmt.Errorf("schedule service restart: %w", err)
+			}
 		}
 	} else {
 		// On Linux (dev), just swap the file
@@ -119,6 +121,30 @@ func PerformSelfUpdate(ctx context.Context, downloadURL, token, nssmPath, servic
 		}
 	}
 
+	return nil
+}
+
+// scheduleDetachedServiceRestart creates a temporary cmd script and runs it detached.
+// The script calls `nssm restart` and then `nssm start` after a short delay as a fallback
+// in case restart is interrupted during service stop.
+func scheduleDetachedServiceRestart(nssmPath, serviceName, workDir string) error {
+	scriptPath := filepath.Join(workDir, "watcher-self-restart.cmd")
+	script := fmt.Sprintf(`@echo off
+"%s" restart "%s" >nul 2>&1
+ping 127.0.0.1 -n 4 >nul
+"%s" start "%s" >nul 2>&1
+del "%%~f0" >nul 2>&1
+`, nssmPath, serviceName, nssmPath, serviceName)
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+		return fmt.Errorf("write restart script: %w", err)
+	}
+
+	// Use cmd/start to detach execution from the current service process.
+	cmd := exec.Command("cmd", "/C", "start", "", "/B", scriptPath)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start detached restart script: %w", err)
+	}
 	return nil
 }
 
