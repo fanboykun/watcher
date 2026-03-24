@@ -59,6 +59,7 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath stri
 			// Deploy logs and trigger
 			watchers.GET("/:id/deploys", h.ListDeployLogs)
 			watchers.GET("/:id/deploys/:did", h.GetDeployLog)
+			watchers.GET("/:id/deploys/:did", h.GetDeployLog)
 			watchers.GET("/:id/deploy/stream", h.StreamDeployLogs)
 			watchers.GET("/:id/polls", h.ListPollEvents)
 			watchers.POST("/:id/check", h.TriggerCheck)

@@ -184,6 +184,9 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	if req.MaxKeptVersions != nil {
 		updates["max_kept_versions"] = *req.MaxKeptVersions
 	}
+	if req.MaxKeptVersions != nil {
+		updates["max_kept_versions"] = *req.MaxKeptVersions
+	}
 
 	if len(updates) > 0 {
 		if err := h.db.Model(watcher).Updates(updates).Error; err != nil {

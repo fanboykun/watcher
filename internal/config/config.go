@@ -54,6 +54,7 @@ func LoadConfig(envPath string) (*AppConfig, error) {
 	v.SetDefault("DB_PATH", `watcher.db`)
 	v.SetDefault("API_PORT", "8080")
 	v.SetDefault("WATCHER_REPO_URL", "https://github.com/fanboykun/watcher")
+	v.SetDefault("WATCHER_REPO_URL", "https://github.com/fanboykun/watcher")
 	v.SetDefault("ENVIRONMENT", "production")
 	v.SetDefault("WATCHER_SERVICE_NAME", "app-watcher")
 
