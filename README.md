@@ -1,353 +1,251 @@
 # Watcher Agent
 
-[![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/go-1.25+-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-A pull-based deployment agent for Go services on private Windows servers with no inbound network access.
+Watcher is a pull-based deployment agent for Windows machines.
 
-The watcher runs as a Windows service, polls GitHub Releases on a configurable interval, and deploys new versions automatically — no SSH, no VPN, no push access required. Includes a built-in web dashboard for managing watchers, services, and viewing deploy history.
+It runs as a single binary (`watcher.exe`) that hosts:
+- a background deployment agent
+- a REST API
+- an embedded Svelte dashboard
 
----
-
-## Table of contents
-
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [How it works](#how-it-works)
-- [Requirements for watched services](#requirements-for-watched-services)
-- [Project structure](#project-structure)
-- [Installation](#installation)
-- [Dashboard](#dashboard)
-- [Rollback](#rollback)
-- [Disk layout](#disk-layout)
-- [Configuration reference](#configuration-reference)
-- [Development & Contributing](#development--contributing)
+The agent polls GitHub releases, deploys new artifacts, manages services, performs health checks, and records state/history in SQLite.
 
 ---
 
-## Features
+## What It Does
 
-- **Pull-based deployment** — polls GitHub Releases over HTTPS, no inbound access required
-- **Multi-watcher** — watch multiple repos from a single agent
-- **Dual service support** — manages both NSSM background binaries and IIS static sites
-- **Health checks** — validates deploys with HTTP health endpoints, auto-rollbacks on failure
-- **Web dashboard** — embedded SvelteKit SPA served from the single binary
-- **REST API** — full API for managing watchers, services, deploys, and logs
-- **SQLite database** — stores watchers, services, deploy history, and health events
-- **Single binary** — one `.exe` file contains the agent, API server, and dashboard
-- **Zero-downtime swap** — uses NTFS junctions (`mklink /J`) for atomic directory switching
-
----
-
-## Screenshots
-
-![Dashboard View](assets/dashboard.png)
-
-![Watcher Details](assets/watcher.png)
-
-![Service Deployments](assets/service.png)
+- Pull-based deploys from GitHub Releases (no inbound SSH required)
+- Multiple watchers (one poll loop per watcher)
+- Service types:
+  - `nssm` binaries (managed start/stop/restart)
+  - `static` apps (IIS app pool recycle support)
+- Automatic rollback on failed post-deploy health checks
+- Manual rollback with high-watermark pinning (`max_ignored_version`)
+- Poll-event history (`new_release`, `no_update`, `skipped`, `error`, etc.)
+- Optional GitHub Deployment API status reporting
+- Self-management endpoints (version, update-check, update, uninstall script)
+- Embedded Svelte SPA dashboard served by the same Go process
 
 ---
 
-## Requirements for watched services
+## Runtime Architecture
 
-> **Any service managed by this watcher must use the same `release.yml` workflow.**
+```text
+cmd/watcher/main.go
+  ├─ load .env config (Viper)
+  ├─ open SQLite (GORM + glebarez/sqlite)
+  ├─ start Gin API server
+  └─ run Agent
+       ├─ sync watchers from DB
+       ├─ one goroutine per watcher
+       ├─ immediate check trigger channel (API -> agent)
+       └─ sync trigger channel (API -> agent)
+```
 
-The watcher is tightly coupled to the release format that `release.yml` produces. If a service repo uses a different release workflow or a different artifact structure, the watcher will fail to deploy it.
+Each watcher loop:
+1. Fetch release metadata from GitHub
+2. Compare remote version vs `current_version`
+3. Enforce rollback high-watermark (`max_ignored_version`)
+4. Deploy if needed:
+   - download artifact (retry with backoff)
+   - extract to `releases/<version>`
+   - stop services
+   - swap `current` junction (`mklink /J`, copy fallback)
+   - ensure service registration (NSSM for `nssm` type)
+   - start services / recycle IIS app pools
+   - health checks
+   - rollback on failure
+5. Persist state and deploy logs in SQLite
 
-### What `release.yml` must produce
+---
 
-Every watched service repo must publish a GitHub Release containing exactly these two assets:
+## Metadata Sources
 
-**1. `version.json`** — the version metadata file the watcher polls:
+`metadata_url` accepts either:
+- a release `version.json` URL (classic flow), or
+- a repo URL like `https://github.com/<owner>/<repo>` (native repo mode)
+
+### `version.json` shape
 
 ```json
 {
   "services": {
-    "<APP_NAME>": {
-      "version": "v1.2.0",
-      "artifact": "my-service-v1.2.0.zip",
-      "artifact_url": "https://github.com/your-org/my-service/releases/download/v1.2.0/my-service-v1.2.0.zip",
+    "<service_name>": {
+      "version": "v1.2.3",
+      "artifact": "my-app-v1.2.3.zip",
+      "artifact_url": "https://github.com/<owner>/<repo>/releases/download/v1.2.3/my-app-v1.2.3.zip",
       "published_at": "2024-01-15T10:00:00Z"
     }
   }
 }
 ```
 
-**2. `<APP_NAME>-<version>.zip`** — a flat zip archive containing the binaries:
+### Artifact expectations
 
-```
-my-service-v1.2.0.zip
-  ├── web.exe       ← at root level, no subdirectory
-  └── worker.exe    ← at root level, no subdirectory
-```
-
-> Binaries **must be at the root** of the zip. The watcher extracts directly into `releases/<version>/` and expects `releases/<version>/web.exe` — not `releases/<version>/dist/web.exe`.
-
-### How to set up `release.yml` in a new service repo
-
-1. Copy `workflows/release.yml` from this repo into `.github/workflows/release.yml` of the target service repo
-2. Edit only the config block at the top of the file
-3. Add the same secrets to the repo's `production` environment
-
-### The contract between `release.yml` and the watcher database
-
-These values must stay in sync between the service repo's `release.yml` and the watcher's configuration (managed via the dashboard or API):
-
-| `release.yml`   | Watcher config              | Must match                                             |
-| --------------- | --------------------------- | ------------------------------------------------------ |
-| `APP_NAME`      | Watcher `service_name`      | Exact string match — this is the key in `version.json` |
-| `WEB_BINARY`    | Service `binary_name`       | Exact filename inside the zip                          |
-| `WORKER_BINARY` | Service `binary_name`       | Exact filename inside the zip                          |
+- Zip artifacts should contain deploy binaries/content.
+- For `nssm` services, `binary_name` must exist after extraction under `current/`.
 
 ---
 
-## How it works
+## API Summary
 
-```
-Developer
-  └── git push origin main
-        ↓
-GitHub Actions (release.yml in app repo)
-  └── auto-tags + builds + creates GitHub Release
-  └── uploads artifact.zip + version.json
-        ↓  (HTTPS poll)
-Watcher Agent  [Windows Service]
-  └── polls version.json → detects new version
-  └── downloads artifact zip
-  └── extracts to releases/<version>/
-  └── stops services (if NSSM binary)
-  └── swaps current/ junction → new release
-  └── starts services / recycles app pools (if IIS static)
-  └── health check → rollback on failure
-  └── records deploy in SQLite database
-        ↓
-Dashboard  [http://localhost:8080]
-  └── view deploy status, history, service health
-  └── manage watchers and services
-  └── trigger immediate checks
-  └── start/stop/restart services
-```
+Base path: `/api`
 
----
+### System
+- `GET /status`
+- `GET /logs`
+- `GET /logs/stream`
+- `POST /github/inspect`
 
-## Project structure
+### Watchers
+- `GET /watchers`
+- `POST /watchers`
+- `GET /watchers/:id`
+- `PUT /watchers/:id`
+- `DELETE /watchers/:id`
+- `GET /watchers/:id/services`
+- `POST /watchers/:id/services`
+- `PUT /watchers/:id/services/:sid`
+- `DELETE /watchers/:id/services/:sid`
+- `GET /watchers/:id/deploys`
+- `GET /watchers/:id/deploys/:did`
+- `GET /watchers/:id/deploy/stream`
+- `GET /watchers/:id/polls`
+- `POST /watchers/:id/check`
+- `POST /watchers/:id/redeploy`
+- `GET /watchers/:id/versions`
+- `POST /watchers/:id/rollback`
+- `POST /watchers/:id/resume`
+- `DELETE /watchers/:id/versions/:version`
 
-```
-watcher/
-  cmd/watcher/main.go             entrypoint — signal handling, starts Agent + API server
-  internal/
-    agent/
-      watcher.go                   Agent + RepoWatcher — one goroutine per watched repo
-      deploy.go                    extract zip, swap junction, NSSM management, rollback
-      github.go                    fetch version.json, download artifact (public/private)
-      github_test.go               httptest-based tests for GitHubClient
-      state.go                     deploy state tracking via SQLite
-      logger.go                    structured JSON logger with per-component context
-      ticker.go                    ticker helper
-    api/
-      router.go                    Gin router — API routes + embedded SPA serving
-      handlers.go                  watcher CRUD handlers
-      service_handlers.go          service management handlers (start/stop/restart/health)
-      system_handlers.go           system status + log tail endpoints
-      dto.go                       request/response DTOs
-    config/
-      config.go                    LoadConfig() from .env file
-    database/
-      database.go                  SQLite via GORM (pure-Go driver, no CGO)
-      models.go                    Watcher, Service, DeployLog, HealthEvent models
-  web/
-    embed.go                       go:embed directive for the SPA
-    build/                         SvelteKit build output (embedded into binary)
-    src/                           SvelteKit source
-    package.json                   SvelteKit + Tailwind + shadcn-svelte
-  shell/
-    install-watcher.ps1            bootstrap script — installs Chocolatey, NSSM, registers service
-  workflows/
-    release.yml                    template release workflow for watched app repos
-  .github/workflows/
-    release.yml                    this repo's release workflow (builds SPA + Go binary)
-  .env.example                     example config
-  Makefile                         build, test, dev targets
-```
+### Services (flat)
+- `GET /services`
+- `GET /services/:id`
+- `POST /services/:id/start`
+- `POST /services/:id/stop`
+- `POST /services/:id/restart`
+- `PUT /services/:id/env`
+- `GET /services/:id/health`
+- `GET /services/:id/health/history`
+- `GET /services/:id/logs`
+- `GET /services/:id/deploys`
+
+### Self
+- `GET /self/version`
+- `GET /self/update-check`
+- `POST /self/update`
+- `POST /self/uninstall`
 
 ---
 
-## Installation
+## Dashboard Routes
 
-For step-by-step instructions, see **[INSTALL.md](./INSTALL.md)**.
+- `/` Dashboard
+- `/watchers`
+- `/watchers/:id`
+- `/services`
+- `/services/:id`
+- `/polling`
+- `/logs`
+- `/settings`
 
-Quick start:
+---
 
-```cmd
-# On Windows:
-# 1. Copy watcher.exe and the shell/ directory to your target machine
-# 2. Double-click install.bat
-# 3. Follow the GUI wizard to select desired features (NSSM, IIS, ARR)
-# 4. Open http://localhost:8080
+## Config (`.env`)
+
+Example is in `.env.example`.
+
+```env
+ENVIRONMENT=production
+GITHUB_TOKEN=
+LOG_DIR=D:\apps\watcher\logs
+NSSM_PATH=C:\ProgramData\chocolatey\bin\nssm.exe
+DB_PATH=D:\apps\watcher\watcher.db
+API_PORT=8080
+API_BASE_URL=
+WATCHER_REPO_URL=https://github.com/fanboykun/watcher
 ```
 
-The installation script presents an interactive GUI wizard to safely install Chocolatey, NSSM, IIS features, and ARR depending on your deployment needs. It automatically requests Administrator privileges and handles `.env` creation, registration, and startup.
+Notes:
+- `GITHUB_TOKEN` is required for private repos.
+- `API_BASE_URL` enables GitHub Deployment API `log_url` linking.
+- `WATCHER_REPO_URL` is used by self-update check/update.
 
 ---
 
-## Dashboard
+## Data Model
 
-The web dashboard is embedded in the binary and served at `http://localhost:<API_PORT>` (default: 8080).
+Tables auto-migrated on startup:
+- `watchers`
+- `services`
+- `deploy_logs`
+- `health_events`
+- `poll_events`
 
-### Pages
-
-- **Dashboard** — system overview with watcher status cards
-- **Watchers** — list, add, edit, delete watchers; trigger immediate checks
-- **Watcher Detail** — configuration, deploy state, services list, deploy history
-- **Services** — list all services with start/stop/restart/health actions
-- **Service Detail** — health history, log viewer (stdout/stderr), deploy history
-- **Logs** — agent log viewer
-
-### REST API
-
-All dashboard operations are available via the REST API at `/api/*`:
-
-| Method   | Endpoint                          | Description                |
-|----------|-----------------------------------|----------------------------|
-| `GET`    | `/api/status`                     | System status              |
-| `GET`    | `/api/logs`                       | Agent log tail             |
-| `GET`    | `/api/watchers`                   | List watchers              |
-| `POST`   | `/api/watchers`                   | Create watcher             |
-| `GET`    | `/api/watchers/:id`               | Get watcher detail         |
-| `PUT`    | `/api/watchers/:id`               | Update watcher             |
-| `DELETE` | `/api/watchers/:id`               | Delete watcher             |
-| `POST`   | `/api/watchers/:id/check`         | Trigger immediate check    |
-| `GET`    | `/api/watchers/:id/deploys`       | Watcher deploy history     |
-| `GET`    | `/api/watchers/:id/services`      | List watcher's services    |
-| `POST`   | `/api/watchers/:id/services`      | Add service to watcher     |
-| `GET`    | `/api/services`                   | List all services          |
-| `GET`    | `/api/services/:id`               | Service detail             |
-| `POST`   | `/api/services/:id/start`         | Start service (NSSM)       |
-| `POST`   | `/api/services/:id/stop`          | Stop service (NSSM)        |
-| `POST`   | `/api/services/:id/restart`       | Restart service (NSSM)     |
-| `GET`    | `/api/services/:id/health`        | Run health check           |
-| `GET`    | `/api/services/:id/health/history`| Health check history       |
-| `GET`    | `/api/services/:id/logs`          | Service log tail           |
-| `GET`    | `/api/services/:id/deploys`       | Service deploy history     |
+Highlights:
+- Watcher state fields: `current_version`, `max_ignored_version`, `status`, `last_checked`, `last_deployed`, `last_error`
+- Service fields include `service_type`, `binary_name`, `env_file`, `health_check_url`, `iis_app_pool`, `iis_site_name`, `public_url`, `env_content`
+- Deploy log includes `github_deployment_id` and raw text `logs`
 
 ---
 
-## Development & Contributing
+## Build and Dev
 
-### Prerequisites
+### Requirements
+- Go `1.25.x` (module currently uses `go 1.25.6`)
+- Bun (for web build)
 
-- Go 1.21+
-- Bun (for SvelteKit)
-- Air (auto-installed by `make dev`)
-
-### Dev workflow
-
-Run the Go backend and SvelteKit dev server in two terminals:
+### Common commands
 
 ```bash
-# Terminal 1: Go backend with hot reload
+make help
 make dev
-
-# Terminal 2: SvelteKit dev server (with API proxy to :8080)
-cd web && bun run dev
+make build-web
+make build
+make test
+make test-verbose
+make test-github
+make run
+make package
+make clean
 ```
 
-### Build targets
-
-```bash
-make build         # Build SPA + cross-compile watcher.exe for Windows
-make build-web     # Build SvelteKit SPA only
-make test          # Run all Go tests
-make test-verbose  # Run tests with -v
-make test-github   # Run only GitHub client tests
-make dev           # Start Air hot-reload for Go backend
-make package       # Build + zip for distribution
-make clean         # Remove bin/ and web/build/
-make info          # Print Go environment
-make help          # Show all targets
-```
-
-### Releasing the Watcher (Internal)
-
-The watcher uses **auto-tagging via semantic versioning**. Push a commit to `main` with a recognized pattern:
-
-#### Commit patterns
-
-| Pattern                                 | Bump     |
-| --------------------------------------- | -------- |
-| `feat: <msg>`                           | minor    |
-| `fix: / perf: / refactor: <msg>`        | patch    |
-| `feat!: <msg>` / `BREAKING CHANGE`      | major    |
-| `chore: / docs: / ci: / test:`          | skip     |
-| `minor: / patch: / major: <msg>`        | respective |
-| `bump: minor / patch / major`           | respective |
-| `release: <msg>` / `[release]`          | patch    |
-
-**Fallback**: If only skip-pattern commits exist but important files changed (code, workflows, config), the workflow defaults to a **patch** bump.
-
-#### Manual trigger
-
-**Actions → Release Watcher → Run workflow** → set `force_bump` to `patch`, `minor`, or `major`.
-
-#### Skip release
-
-Add `[skip ci]` anywhere in a commit message.
+`make build` builds the web app first, then embeds `web/build` into the Go binary.
 
 ---
 
-## Rollback
+## CI / Release Files
 
-Rollback is automatic when a health check fails after deploy.
-
-For manual rollback, stop the watcher, edit `version.txt`, then restart:
-
-```powershell
-nssm stop app-watcher
-Set-Content D:\apps\my-service\version.txt "v1.0.0"
-nssm start app-watcher
-```
-
----
-
-## Disk layout
-
-```
-D:\apps\watcher\                    ← watcher agent home
-  watcher.exe                       ← single binary (agent + API + dashboard)
-  .env                              ← SECURED (SYSTEM + Admins only)
-  watcher.db                        ← SQLite database
-  shell\install-watcher.ps1
-  logs\
-    watcher.out.log                 ← NSSM stdout redirect
-    watcher.err.log                 ← NSSM stderr redirect
-
-D:\apps\<service>\                  ← per-service install directory
-  current\                          ← junction → releases/<version>/
-  releases\
-    v1.0.0\                         ← previous version (kept for rollback)
-    v1.1.0\                         ← current version
-  version.txt                       ← "v1.1.0"
-  state.json                        ← deploy status
-  .env.web.1                        ← service env file (not managed by watcher)
-  logs\
-    <service>-web-1.out.log
-```
+- `.github/workflows/release.yml`
+  - releases the watcher itself
+- `workflows/release-go-nssm.yml`
+  - template for Go/NSSM app repos watched by watcher
+- `workflows/release-bun-iis.yml`
+  - template for static/Bun app repos watched by watcher
+- `workflows/deploy.yml`
+  - additional deployment workflow template
 
 ---
 
-## Configuration reference
+## Install
 
-Configuration is via `.env` file (passed with `-config .env`):
+See `INSTALL.md`.
 
-| Variable       | Required | Default                                  | Description                             |
-| -------------- | -------- | ---------------------------------------- | --------------------------------------- |
-| `ENVIRONMENT`  | no       | —                                        | Human-readable label (logs only)        |
-| `GITHUB_TOKEN` | no       | —                                        | PAT for private repos. Empty for public |
-| `LOG_DIR`      | no       | `D:\apps\watcher\logs`                   | Agent log directory                     |
-| `NSSM_PATH`    | no       | `C:\ProgramData\chocolatey\bin\nssm.exe` | Full path to nssm.exe                   |
-| `DB_PATH`      | no       | `watcher.db`                             | SQLite database file path               |
-| `API_PORT`     | no       | `8080`                                   | API + dashboard port                    |
+Typical flow on Windows:
+1. Extract release zip
+2. Run `install.bat`
+3. Complete wizard (`shell/install-watcher.ps1`)
+4. Open dashboard on `http://localhost:<API_PORT>`
 
-Watchers and services are managed via the dashboard or REST API, stored in the SQLite database.
+---
+
+## Important Operational Notes
+
+- API has no built-in auth; deploy behind a trusted network.
+- `service_name` must match metadata service key for `version.json` flow.
+- `binary_name` must match the extracted file for `nssm` services.
+- Manual rollback sets `max_ignored_version`; auto-deploy ignores versions `<=` that value until resumed or a newer version appears.
+- After repeated failures for the same target version, auto deploy is suspended for that version until manual redeploy.
+

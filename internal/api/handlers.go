@@ -31,20 +31,22 @@ type Handler struct {
 	logDir       string
 	version      string
 	githubToken  string
+	envPath      string
 	appCfg       *config.AppConfig
 	startTime    time.Time
-	checkTrigger chan uint    // send watcher ID for immediate poll
+	checkTrigger chan uint     // send watcher ID for immediate poll
 	syncTrigger  chan struct{} // trigger background agent to sync DB
 }
 
 // NewHandler creates a new Handler with the given dependencies.
-func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken string, appCfg *config.AppConfig, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
+func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
 	return &Handler{
 		db:           db,
 		nssmPath:     nssmPath,
 		logDir:       logDir,
 		version:      version,
 		githubToken:  githubToken,
+		envPath:      envPath,
 		appCfg:       appCfg,
 		startTime:    time.Now(),
 		checkTrigger: checkTrigger,
@@ -214,6 +216,7 @@ func (h *Handler) DeleteWatcher(c *gin.Context) {
 	h.triggerSync()
 	c.JSON(http.StatusOK, MessageResponse{Message: "watcher deleted"})
 }
+
 // ── Service CRUD (nested under watcher) ───────────────────────
 
 // GetServiceDetail returns a single service with parent watcher info (flat route).
@@ -282,7 +285,7 @@ func (h *Handler) CreateService(c *gin.Context) {
 	}
 
 	h.syncServiceEnvFile(&svc, watcher.InstallDir)
-	
+
 	h.db.Model(&database.Watcher{}).Where("id = ?", watcher.ID).UpdateColumn("updated_at", time.Now())
 	h.triggerSync()
 
@@ -566,6 +569,11 @@ func (h *Handler) triggerSync() {
 	}
 }
 
+// touchWatchersUpdatedAt forces the agent to recreate repo watchers on next sync.
+func (h *Handler) touchWatchersUpdatedAt() {
+	h.db.Model(&database.Watcher{}).Where("1 = 1").UpdateColumn("updated_at", time.Now())
+}
+
 type inspectRequest struct {
 	RepoURL string `json:"repo_url" binding:"required"`
 }
@@ -755,9 +763,9 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 	h.triggerSync()
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":     fmt.Sprintf("rolled back to %s", req.Version),
-		"version":     req.Version,
-		"deploy_log":  dlog,
+		"message":    fmt.Sprintf("rolled back to %s", req.Version),
+		"version":    req.Version,
+		"deploy_log": dlog,
 	})
 }
 
@@ -795,4 +803,3 @@ func (h *Handler) DeleteWatcherVersion(c *gin.Context) {
 		"version": version,
 	})
 }
-

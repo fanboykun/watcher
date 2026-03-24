@@ -29,7 +29,7 @@ type AppConfig struct {
 	APIPort string `mapstructure:"API_PORT"`
 
 	// APIBaseURL is the externally reachable base URL for this watcher instance.
-	// Used to construct deploy log URLs for GitHub Deployment API.
+	// Used to construct deploy log UI URLs for GitHub Deployment API.
 	// Example: "http://192.168.1.100:8080"
 	// If empty, GitHub Deployment API integration is disabled.
 	APIBaseURL string `mapstructure:"API_BASE_URL"`
@@ -37,6 +37,10 @@ type AppConfig struct {
 	// WatcherRepoURL is the GitHub repository URL for the watcher project itself.
 	// Used for self-update checks.
 	WatcherRepoURL string `mapstructure:"WATCHER_REPO_URL"`
+
+	// WatcherServiceName is the NSSM service name for the watcher itself.
+	// Used by self-update/restart/uninstall actions.
+	WatcherServiceName string `mapstructure:"WATCHER_SERVICE_NAME"`
 }
 
 // LoadConfig reads configuration from a .env file and environment variables.
@@ -51,6 +55,7 @@ func LoadConfig(envPath string) (*AppConfig, error) {
 	v.SetDefault("API_PORT", "8080")
 	v.SetDefault("WATCHER_REPO_URL", "https://github.com/fanboykun/watcher")
 	v.SetDefault("ENVIRONMENT", "production")
+	v.SetDefault("WATCHER_SERVICE_NAME", "app-watcher")
 
 	// Read .env file
 	if envPath != "" {
@@ -91,8 +96,5 @@ func cleanWindowsPath(s string) string {
 }
 
 func (c *AppConfig) validate() error {
-	if c.GitHubToken == "" {
-		return fmt.Errorf("GITHUB_TOKEN is required")
-	}
 	return nil
 }
