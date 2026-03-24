@@ -9,8 +9,7 @@ config*.json
 !config.example.json
 tmp
 *.db*
-logs
-!web/src/routes/logs
+/logs
 
 # OS
 .DS_Store
