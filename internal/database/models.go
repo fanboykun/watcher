@@ -13,7 +13,7 @@ type Watcher struct {
 	ServiceName           string `gorm:"not null;uniqueIndex" json:"service_name"`
 	MetadataURL           string `gorm:"not null" json:"metadata_url"`
 	DeploymentEnvironment string `gorm:"not null;default:''" json:"deployment_environment"`
-	GitHubToken           string `gorm:"not null;default:''" json:"-"`
+	GitHubToken           string `gorm:"column:github_token;not null;default:''" json:"-"`
 	CheckIntervalSec      int    `gorm:"not null;default:300" json:"check_interval_sec"`
 	DownloadRetries       int    `gorm:"not null;default:3" json:"download_retries"`
 	InstallDir            string `gorm:"not null" json:"install_dir"`

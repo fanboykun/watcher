@@ -16,6 +16,8 @@ $Config = @{
 }
 
 $allGood = $true
+$UrlRewriteDll = "C:\Windows\System32\inetsrv\rewrite.dll"
+$ArrRouterDll  = "C:\Program Files\IIS\Application Request Routing\requestRouter.dll"
 
 function Write-OK   { param($msg) Write-Host "  OK: $msg" -ForegroundColor Green }
 function Write-Skip { param($msg) Write-Host "  SKIP: $msg" -ForegroundColor Yellow }
@@ -51,14 +53,14 @@ try {
     Write-OK "IIS is available (WebAdministration module loaded)"
 
     # Check URL Rewrite
-    if (Test-Path "C:\Windows\System32\inetsrv\rewrite.dll") {
+    if (Test-Path $UrlRewriteDll) {
         Write-OK "URL Rewrite installed"
     } else {
         Write-Info "URL Rewrite not installed"
     }
 
     # Check ARR
-    if (Test-Path "C:\Windows\System32\inetsrv\arr.dll") {
+    if (Test-Path $ArrRouterDll) {
         Write-OK "ARR installed"
 
         $arrEnabled = Get-WebConfigurationProperty `

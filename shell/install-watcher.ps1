@@ -38,6 +38,9 @@ function Write-Fail {
     }
 }
 
+$UrlRewriteDll = "C:\Windows\System32\inetsrv\rewrite.dll"
+$ArrRouterDll  = "C:\Program Files\IIS\Application Request Routing\requestRouter.dll"
+
 # ── Admin check ───────────────────────────────────────────────
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     if (-not $Silent) {
@@ -475,10 +478,15 @@ if ($installIIS) {
     }
 
     Write-Step "[3b] URL Rewrite"
-    if (Test-Path "C:\Windows\System32\inetsrv\rewrite.dll") {
+    if (Test-Path $UrlRewriteDll) {
         Write-Skip "URL Rewrite already installed"
     } else {
+        Write-Host "  Installing URL Rewrite via Chocolatey..." -ForegroundColor Yellow
         choco install urlrewrite -y --force
+        if (-not (Test-Path $UrlRewriteDll)) {
+            Write-Fail "URL Rewrite install finished but rewrite.dll was not found at $UrlRewriteDll"
+            exit 1
+        }
         Write-OK "URL Rewrite installed"
     }
 } else {
@@ -491,26 +499,32 @@ if ($installIIS) {
 # ==============================================================
 if ($installARR) {
     Write-Step "[4] ARR (Application Request Routing)"
-    if (Test-Path "C:\Windows\System32\inetsrv\arr.dll") {
+    if (Test-Path $ArrRouterDll) {
         Write-Skip "ARR already installed"
     } else {
+        Write-Host "  Installing ARR via Chocolatey..." -ForegroundColor Yellow
         choco install iis-arr -y --force
+        if (-not (Test-Path $ArrRouterDll)) {
+            Write-Fail "ARR install finished but requestRouter.dll was not found at $ArrRouterDll"
+            exit 1
+        }
         Write-OK "ARR installed"
     }
 
     Write-Step "[4b] Enabling ARR proxy"
-    Import-Module WebAdministration
+    Import-Module WebAdministration -ErrorAction Stop
     $arrEnabled = Get-WebConfigurationProperty `
         -PSPath "MACHINE/WEBROOT/APPHOST" `
         -Filter "system.webServer/proxy" `
-        -Name "enabled" -ErrorAction SilentlyContinue
+        -Name "enabled" -ErrorAction Stop
     if ($arrEnabled.Value -eq $true) {
         Write-Skip "ARR proxy already enabled"
     } else {
+        Write-Host "  Enabling ARR proxy..." -ForegroundColor Yellow
         Set-WebConfigurationProperty `
             -PSPath "MACHINE/WEBROOT/APPHOST" `
             -Filter "system.webServer/proxy" `
-            -Name "enabled" -Value "True"
+            -Name "enabled" -Value "True" -ErrorAction Stop
         Write-OK "ARR proxy enabled"
     }
 } else {
