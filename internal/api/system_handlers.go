@@ -6,12 +6,15 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fanboykun/watcher/internal/agent"
+	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
 )
@@ -30,13 +33,13 @@ func (h *Handler) SystemStatus(c *gin.Context) {
 	h.db.Model(&database.DeployLog{}).Where("started_at > ?", dayAgo).Count(&deployCount)
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":           "running",
-		"version":          h.version,
-		"uptime_seconds":   int(uptime.Seconds()),
-		"uptime_human":     formatDuration(uptime),
-		"watcher_count":    watcherCount,
-		"service_count":    serviceCount,
-		"deploys_24h":      deployCount,
+		"status":         "running",
+		"version":        h.version,
+		"uptime_seconds": int(uptime.Seconds()),
+		"uptime_human":   formatDuration(uptime),
+		"watcher_count":  watcherCount,
+		"service_count":  serviceCount,
+		"deploys_24h":    deployCount,
 	})
 }
 
@@ -158,6 +161,123 @@ func (h *Handler) SelfVersion(c *gin.Context) {
 	})
 }
 
+// SelfConfig returns the current agent configuration loaded from .env.
+func (h *Handler) SelfConfig(c *gin.Context) {
+	if h.appCfg == nil {
+		c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: "app config is not available"})
+		return
+	}
+
+	c.JSON(http.StatusOK, SelfConfigResponse{
+		Environment:        h.appCfg.Environment,
+		LogDir:             h.appCfg.LogDir,
+		NssmPath:           h.appCfg.NssmPath,
+		DBPath:             h.appCfg.DBPath,
+		APIPort:            h.appCfg.APIPort,
+		APIBaseURL:         h.appCfg.APIBaseURL,
+		WatcherRepoURL:     h.appCfg.WatcherRepoURL,
+		WatcherServiceName: h.selfServiceName(),
+		HasGitHubToken:     strings.TrimSpace(h.appCfg.GitHubToken) != "",
+		GitHubTokenMasked:  maskToken(h.appCfg.GitHubToken),
+		EnvPath:            h.envPath,
+	})
+}
+
+// UpdateSelfConfig updates selected agent config values and persists them to .env.
+// For fields used by running watcher loops, the agent goroutines are recreated.
+func (h *Handler) UpdateSelfConfig(c *gin.Context) {
+	if h.appCfg == nil {
+		c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: "app config is not available"})
+		return
+	}
+	var req UpdateSelfConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	next := *h.appCfg
+	if req.Environment != nil {
+		next.Environment = strings.TrimSpace(*req.Environment)
+	}
+	if req.GitHubToken != nil {
+		next.GitHubToken = strings.TrimSpace(*req.GitHubToken)
+	}
+	if req.LogDir != nil {
+		next.LogDir = strings.TrimSpace(*req.LogDir)
+	}
+	if req.NssmPath != nil {
+		next.NssmPath = strings.TrimSpace(*req.NssmPath)
+	}
+	if req.DBPath != nil {
+		next.DBPath = strings.TrimSpace(*req.DBPath)
+	}
+	if req.APIPort != nil {
+		port := strings.TrimSpace(*req.APIPort)
+		if err := validatePort(port); err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return
+		}
+		next.APIPort = port
+	}
+	if req.APIBaseURL != nil {
+		next.APIBaseURL = strings.TrimSpace(*req.APIBaseURL)
+	}
+	if req.WatcherRepoURL != nil {
+		next.WatcherRepoURL = strings.TrimSpace(*req.WatcherRepoURL)
+	}
+	if req.WatcherServiceName != nil {
+		next.WatcherServiceName = strings.TrimSpace(*req.WatcherServiceName)
+	}
+
+	updates := map[string]string{
+		"ENVIRONMENT":          next.Environment,
+		"GITHUB_TOKEN":         next.GitHubToken,
+		"LOG_DIR":              next.LogDir,
+		"NSSM_PATH":            next.NssmPath,
+		"DB_PATH":              next.DBPath,
+		"API_PORT":             next.APIPort,
+		"API_BASE_URL":         next.APIBaseURL,
+		"WATCHER_REPO_URL":     next.WatcherRepoURL,
+		"WATCHER_SERVICE_NAME": next.WatcherServiceName,
+	}
+	if err := config.UpdateEnvFile(h.envPath, updates); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	// Apply changes to in-memory runtime config.
+	*h.appCfg = next
+	h.githubToken = next.GitHubToken
+	h.nssmPath = next.NssmPath
+	h.logDir = next.LogDir
+
+	// Recreate watcher goroutines so they pick up updated global values.
+	h.touchWatchersUpdatedAt()
+	h.triggerSync()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "agent configuration saved",
+		"notes": []string{
+			"watcher loops were reloaded to apply runtime fields",
+			"API_PORT and DB_PATH changes require manual service restart to fully take effect",
+		},
+		"config": SelfConfigResponse{
+			Environment:        next.Environment,
+			LogDir:             next.LogDir,
+			NssmPath:           next.NssmPath,
+			DBPath:             next.DBPath,
+			APIPort:            next.APIPort,
+			APIBaseURL:         next.APIBaseURL,
+			WatcherRepoURL:     next.WatcherRepoURL,
+			WatcherServiceName: h.selfServiceName(),
+			HasGitHubToken:     strings.TrimSpace(next.GitHubToken) != "",
+			GitHubTokenMasked:  maskToken(next.GitHubToken),
+			EnvPath:            h.envPath,
+		},
+	})
+}
+
 // SelfUpdateCheck checks for a newer version of the watcher from its GitHub repo.
 func (h *Handler) SelfUpdateCheck(c *gin.Context) {
 	if h.appCfg == nil || h.appCfg.WatcherRepoURL == "" {
@@ -202,7 +322,7 @@ func (h *Handler) SelfUpdate(c *gin.Context) {
 	}
 
 	// Perform the update (this may restart the process on Windows)
-	if err := agent.PerformSelfUpdate(c.Request.Context(), info.DownloadURL, h.githubToken, h.nssmPath, "WatcherAgent"); err != nil {
+	if err := agent.PerformSelfUpdate(c.Request.Context(), info.DownloadURL, h.githubToken, h.nssmPath, h.selfServiceName()); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -214,12 +334,42 @@ func (h *Handler) SelfUpdate(c *gin.Context) {
 	})
 }
 
+// SelfRestart restarts the watcher Windows service via NSSM.
+func (h *Handler) SelfRestart(c *gin.Context) {
+	if runtime.GOOS != "windows" {
+		c.JSON(http.StatusServiceUnavailable, ErrorResponse{
+			Error: fmt.Sprintf("self restart is only available on Windows (running on %s)", runtime.GOOS),
+		})
+		return
+	}
+	if strings.TrimSpace(h.nssmPath) == "" {
+		c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: "NSSM_PATH is not configured"})
+		return
+	}
+	svc := h.selfServiceName()
+	if svc == "" {
+		c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: "WATCHER_SERVICE_NAME is not configured"})
+		return
+	}
+
+	// Respond first so the client can receive status before process restart affects connectivity.
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":      "watcher restart triggered",
+		"service_name": svc,
+	})
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		exec.Command(h.nssmPath, "restart", svc).CombinedOutput()
+	}()
+}
+
 // SelfUninstall returns a PowerShell uninstall script for the watcher.
 func (h *Handler) SelfUninstall(c *gin.Context) {
 	exePath, _ := os.Executable()
 	installDir := filepath.Dir(exePath)
 
-	script := agent.GenerateUninstallScript(h.nssmPath, "WatcherAgent", installDir)
+	script := agent.GenerateUninstallScript(h.nssmPath, h.selfServiceName(), installDir)
 
 	c.JSON(http.StatusOK, gin.H{
 		"script":      script,
@@ -239,4 +389,33 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh %dm", hours, mins)
 	}
 	return fmt.Sprintf("%dm", mins)
+}
+
+func validatePort(port string) error {
+	if port == "" {
+		return fmt.Errorf("api_port cannot be empty")
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("api_port must be a valid number between 1 and 65535")
+	}
+	return nil
+}
+
+func maskToken(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	if len(token) <= 8 {
+		return "********"
+	}
+	return token[:4] + strings.Repeat("*", len(token)-8) + token[len(token)-4:]
+}
+
+func (h *Handler) selfServiceName() string {
+	if h.appCfg != nil && strings.TrimSpace(h.appCfg.WatcherServiceName) != "" {
+		return strings.TrimSpace(h.appCfg.WatcherServiceName)
+	}
+	return "app-watcher"
 }

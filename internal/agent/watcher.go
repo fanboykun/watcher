@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/fanboykun/watcher/internal/config"
@@ -16,14 +18,14 @@ import (
 // RepoWatcher manages the poll loop for a single watcher entry from the database.
 // Multiple RepoWatchers run concurrently inside the main Agent.
 type RepoWatcher struct {
-	wcfg       *WatcherConfig // converted from DB model
-	global     *config.AppConfig
-	log        *Logger
-	github     *GitHubClient
-	state      *StateManager
-	deployer   *Deployer
-	db         *gorm.DB
-	watcherID  uint
+	wcfg      *WatcherConfig // converted from DB model
+	global    *config.AppConfig
+	log       *Logger
+	github    *GitHubClient
+	state     *StateManager
+	deployer  *Deployer
+	db        *gorm.DB
+	watcherID uint
 }
 
 // WatcherConfig is the in-memory representation used by the deploy pipeline.
@@ -193,28 +195,39 @@ func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVer
 	// ── GitHub Deployment API integration (optional) ──────────────
 	var ghDeploymentID int64
 	var ghOwner, ghRepo string
-	useGHDeploy := r.global.APIBaseURL != "" && r.global.GitHubToken != ""
+	useGHDeploy := strings.TrimSpace(r.global.GitHubToken) != ""
+	logURL := buildDeployLogURL(r.global.APIBaseURL, r.watcherID, deployLogID)
 
 	if useGHDeploy {
 		var err error
-		ghOwner, ghRepo, err = ParseGitHubURL(r.wcfg.MetadataURL)
+		ghOwner, ghRepo, err = resolveDeploymentRepo(r.wcfg.MetadataURL, svcMeta.ArtifactURL)
 		if err != nil {
+			r.state.AppendDeployLog("github_deployment: parse repo failed: " + err.Error())
 			r.log.Warn("cannot parse repo for GitHub Deployment API", "error", err)
 			useGHDeploy = false
 		}
 	}
 
 	if useGHDeploy {
-		logURL := fmt.Sprintf("%s/api/watchers/%d/deploys/%d", r.global.APIBaseURL, r.watcherID, deployLogID)
+		if logURL == "" && strings.TrimSpace(r.global.APIBaseURL) != "" {
+			r.state.AppendDeployLog("github_deployment: invalid API_BASE_URL, skipping log_url in deployment statuses")
+		}
 		desc := fmt.Sprintf("Deploying %s %s", r.wcfg.ServiceName, targetVersion)
-		id, err := r.github.CreateDeployment(ctx, ghOwner, ghRepo, targetVersion, r.global.Environment, desc)
+		deployRef := resolveDeploymentRef(targetVersion, svcMeta.ArtifactURL)
+		r.state.AppendDeployLog("github_deployment: creating deployment")
+		id, err := r.github.CreateDeployment(ctx, ghOwner, ghRepo, deployRef, r.global.Environment, desc)
 		if err != nil {
+			r.state.AppendDeployLog("github_deployment: create deployment failed: " + err.Error())
 			r.log.Warn("failed to create GitHub deployment", "error", err)
 			useGHDeploy = false
 		} else {
 			ghDeploymentID = id
 			_ = r.state.SetGitHubDeploymentID(deployLogID, ghDeploymentID)
-			_ = r.github.UpdateDeploymentStatus(ctx, ghOwner, ghRepo, ghDeploymentID, "in_progress", logURL, desc)
+			r.state.AppendDeployLog(fmt.Sprintf("github_deployment: created deployment id=%d", ghDeploymentID))
+			r.state.AppendDeployLog("github_deployment: setting status=in_progress")
+			if err := r.github.UpdateDeploymentStatus(ctx, ghOwner, ghRepo, ghDeploymentID, "in_progress", logURL, desc); err != nil {
+				r.state.AppendDeployLog("github_deployment: set status=in_progress failed: " + err.Error())
+			}
 		}
 	}
 
@@ -254,9 +267,11 @@ func (r *RepoWatcher) deploy(ctx context.Context, svcMeta ServiceMeta, targetVer
 
 	// ── GitHub Deployment: success ────────────────────────────────
 	if useGHDeploy {
-		logURL := fmt.Sprintf("%s/api/watchers/%d/deploys/%d", r.global.APIBaseURL, r.watcherID, deployLogID)
-		_ = r.github.UpdateDeploymentStatus(ctx, ghOwner, ghRepo, ghDeploymentID, "success", logURL,
-			fmt.Sprintf("Deployed %s %s", r.wcfg.ServiceName, targetVersion))
+		r.state.AppendDeployLog("github_deployment: setting status=success")
+		if err := r.github.UpdateDeploymentStatus(ctx, ghOwner, ghRepo, ghDeploymentID, "success", logURL,
+			fmt.Sprintf("Deployed %s %s", r.wcfg.ServiceName, targetVersion)); err != nil {
+			r.state.AppendDeployLog("github_deployment: set status=success failed: " + err.Error())
+		}
 	}
 
 	// ── Clean old releases ────────────────────────────────────────
@@ -273,8 +288,11 @@ func (r *RepoWatcher) ghDeployFailure(ctx context.Context, active bool, owner, r
 	if !active {
 		return
 	}
-	logURL := fmt.Sprintf("%s/api/watchers/%d/deploys/%d", r.global.APIBaseURL, r.watcherID, deployLogID)
-	_ = r.github.UpdateDeploymentStatus(ctx, owner, repo, deploymentID, "failure", logURL, errMsg)
+	logURL := buildDeployLogURL(r.global.APIBaseURL, r.watcherID, deployLogID)
+	r.state.AppendDeployLog("github_deployment: setting status=failure")
+	if err := r.github.UpdateDeploymentStatus(ctx, owner, repo, deploymentID, "failure", logURL, errMsg); err != nil {
+		r.state.AppendDeployLog("github_deployment: set status=failure failed: " + err.Error())
+	}
 }
 
 // ── Agent — runs all RepoWatchers concurrently ────────────────────────────────
@@ -299,9 +317,9 @@ type Agent struct {
 
 func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, checkTrigger chan uint, syncTrigger chan struct{}) *Agent {
 	return &Agent{
-		db:           db, 
-		appCfg:       appCfg, 
-		log:          log, 
+		db:           db,
+		appCfg:       appCfg,
+		log:          log,
 		checkTrigger: checkTrigger,
 		syncTrigger:  syncTrigger,
 		watchers:     make(map[uint]watcherHandle),
@@ -439,4 +457,36 @@ func keys[K comparable, V any](m map[K]V) []K {
 		out = append(out, k)
 	}
 	return out
+}
+
+func resolveDeploymentRepo(metadataURL, artifactURL string) (owner, repo string, err error) {
+	if artifactURL != "" {
+		aOwner, aRepo, _, _, aErr := parseReleaseDownloadURL(artifactURL)
+		if aErr == nil {
+			return aOwner, aRepo, nil
+		}
+	}
+	return ParseGitHubURL(metadataURL)
+}
+
+func resolveDeploymentRef(targetVersion, artifactURL string) string {
+	if artifactURL != "" {
+		_, _, tag, _, err := parseReleaseDownloadURL(artifactURL)
+		if err == nil && strings.TrimSpace(tag) != "" {
+			return tag
+		}
+	}
+	return targetVersion
+}
+
+func buildDeployLogURL(apiBaseURL string, watcherID, deployLogID uint) string {
+	base := strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	if base == "" {
+		return ""
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	return fmt.Sprintf("%s/watchers/%d/logs/%d", base, watcherID, deployLogID)
 }

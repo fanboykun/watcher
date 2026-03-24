@@ -59,14 +59,18 @@ func NewGitHubClient(token string, log *Logger) *GitHubClient {
 // FetchMetadata downloads and parses version.json from a GitHub release.
 //
 // For PUBLIC repos:
-//   Uses the direct releases/latest/download/version.json URL (no token needed)
+//
+//	Uses the direct releases/latest/download/version.json URL (no token needed)
 //
 // For PRIVATE repos:
-//   Uses the GitHub API to find the asset, then downloads via the asset API URL.
-//   Requires github_token in .env with repo scope.
+//
+//	Uses the GitHub API to find the asset, then downloads via the asset API URL.
+//	Requires github_token in .env with repo scope.
 //
 // The metadata_url configuration should always be:
-//   https://github.com/{owner}/{repo}/releases/latest/download/version.json
+//
+//	https://github.com/{owner}/{repo}/releases/latest/download/version.json
+//
 // This function handles routing to the correct method automatically.
 func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionMetadata, error) {
 	g.log.Debug("fetching metadata", "url", url)
@@ -336,16 +340,27 @@ func ParseGitHubURL(rawURL string) (owner, repo string, err error) {
 // parseArtifactURL extracts owner, repo, and asset filename from a GitHub release download URL.
 // Supports: https://github.com/{owner}/{repo}/releases/download/{tag}/{filename}
 func parseArtifactURL(rawURL string) (owner, repo, assetName string, err error) {
+	owner, repo, _, assetName, err = parseReleaseDownloadURL(rawURL)
+	return owner, repo, assetName, err
+}
+
+// parseReleaseDownloadURL extracts owner, repo, release tag, and asset filename
+// from a GitHub release download URL.
+// Supports: https://github.com/{owner}/{repo}/releases/download/{tag}/{filename}
+func parseReleaseDownloadURL(rawURL string) (owner, repo, tag, assetName string, err error) {
 	trimmed := strings.TrimPrefix(rawURL, "https://github.com/")
 	if trimmed == rawURL {
-		return "", "", "", fmt.Errorf("unexpected URL format: %s", rawURL)
+		return "", "", "", "", fmt.Errorf("unexpected URL format: %s", rawURL)
 	}
 	// owner/repo/releases/download/vX.Y.Z/filename.zip
 	parts := strings.SplitN(trimmed, "/", 6)
 	if len(parts) < 6 || parts[5] == "" {
-		return "", "", "", fmt.Errorf("cannot extract asset name from URL: %s", rawURL)
+		return "", "", "", "", fmt.Errorf("cannot extract asset name from URL: %s", rawURL)
 	}
-	return parts[0], parts[1], parts[5], nil
+	if parts[2] != "releases" || parts[3] != "download" || parts[4] == "" {
+		return "", "", "", "", fmt.Errorf("unexpected release download URL format: %s", rawURL)
+	}
+	return parts[0], parts[1], parts[4], parts[5], nil
 }
 
 // InspectRepoResponse represents the payload returned for the UI to preview releases.
@@ -379,10 +394,10 @@ func (g *GitHubClient) CreateDeployment(ctx context.Context, owner, repo, ref, e
 	apiURL := fmt.Sprintf("%s/repos/%s/%s/deployments", g.apiBase, owner, repo)
 
 	body := map[string]any{
-		"ref":              ref,
-		"environment":      environment,
-		"description":      description,
-		"auto_merge":       false,
+		"ref":               ref,
+		"environment":       environment,
+		"description":       description,
+		"auto_merge":        false,
 		"required_contexts": []string{}, // skip status checks — we're deploying ourselves
 	}
 	bodyJSON, _ := json.Marshal(body)
@@ -404,7 +419,8 @@ func (g *GitHubClient) CreateDeployment(ctx context.Context, owner, repo, ref, e
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("create deployment returned HTTP %d: %s", resp.StatusCode, string(respBody))
+		hint := githubDeployHint(resp.StatusCode)
+		return 0, fmt.Errorf("create deployment returned HTTP %d: %s%s", resp.StatusCode, string(respBody), hint)
 	}
 
 	var result struct {
@@ -449,11 +465,27 @@ func (g *GitHubClient) UpdateDeploymentStatus(ctx context.Context, owner, repo s
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("update deployment status returned HTTP %d: %s", resp.StatusCode, string(respBody))
+		hint := githubDeployHint(resp.StatusCode)
+		return fmt.Errorf("update deployment status returned HTTP %d: %s%s", resp.StatusCode, string(respBody), hint)
 	}
 
 	g.log.Debug("deployment status updated", "deployment_id", deploymentID, "state", state)
 	return nil
+}
+
+func githubDeployHint(status int) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return " (hint: check GITHUB_TOKEN validity and scopes)"
+	case http.StatusForbidden:
+		return " (hint: token may lack Deployments write permission)"
+	case http.StatusNotFound:
+		return " (hint: owner/repo/ref may be wrong, or token cannot access the repo)"
+	case http.StatusUnprocessableEntity:
+		return " (hint: ref may not exist in repo, environment/log_url may be invalid, or branch protection blocks deployments)"
+	default:
+		return ""
+	}
 }
 
 // FetchLatestRelease fetches the latest release info from a GitHub repository.
@@ -550,4 +582,3 @@ func (g *GitHubClient) FetchMetadataFromRepo(ctx context.Context, repoURL string
 
 	return meta, nil
 }
-

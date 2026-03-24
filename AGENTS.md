@@ -4,319 +4,309 @@
 
 **Name**: Watcher  
 **Module**: `github.com/fanboykun/watcher`  
-**Language**: Go 1.21+ with SvelteKit frontend  
-**Dependencies**: Gin (HTTP), GORM + pure-Go SQLite, godotenv; SvelteKit + Tailwind + shadcn-svelte  
-**Target OS**: Windows 10/11 / Windows Server 2022 (cross-compiled from Linux/WSL)  
-**Purpose**: Pull-based deployment agent with web dashboard. Runs as a Windows service, polls GitHub Releases, deploys new versions automatically, and provides a management UI.
+**Language**: Go + SvelteKit frontend  
+**Go module target**: `go 1.25.6`  
+**Target OS**: Windows 10/11 and Windows Server 2022 (cross-built from Linux/WSL)  
+**Purpose**: Pull-based deployment agent with dashboard, API, rollback, and self-management.
 
 ---
 
-## Architecture Overview
+## Current Stack
 
-```
-main.go (entrypoint)
-  ├── API Server (Gin)
-  │     ├── /api/*        REST endpoints (handlers.go, service_handlers.go, system_handlers.go)
-  │     └── /*            Embedded SvelteKit SPA (via go:embed + NoRoute fallback)
-  ├── Agent (watcher.go)
-  │     ├── RepoWatcher[0] (goroutine)
-  │     │     ├── GitHubClient   (github.go)   — fetch version.json, download artifacts
-  │     │     ├── Deployer       (deploy.go)   — extract, swap, NSSM, rollback, health
-  │     │     └── StateManager   (state.go)    — deploy status via SQLite
-  │     ├── RepoWatcher[1] ...
-  │     └── RepoWatcher[N] ...
-  └── SQLite Database (GORM)
-        ├── watchers        — watched repo configurations
-        ├── services        — NSSM service definitions
-        ├── deploy_logs     — deploy history with version, status, duration
-        └── health_events   — health check results
-```
+### Backend
+- Gin (`github.com/gin-gonic/gin`) for API server
+- GORM (`gorm.io/gorm`) for persistence
+- SQLite via pure-Go driver (`github.com/glebarez/sqlite`)
+- Viper (`github.com/spf13/viper`) for `.env` + env var config loading
 
-### Key design decisions
-
-- **One goroutine per watched repo** — each `RepoWatcher` has its own ticker, poll loop, and state
-- **SQLite via pure-Go driver** — `github.com/glebarez/sqlite` (no CGO needed for cross-compilation)
-- **Embedded SPA** — SvelteKit dashboard bundled into the binary via `go:embed`
-- **Single binary** — one `.exe` serves API + dashboard + runs the agent
-- **Junction-based swap** — `mklink /J` for zero-downtime; falls back to `copyDir` if junctions fail
-- **Auto-registration** — `ensureService()` installs NSSM services on first deploy
-- **Automatic rollback** — if health check fails after deploy, rolls back to previous version
-- **API-triggered checks** — dashboard can trigger immediate polls via a channel to the agent
+### Frontend
+- SvelteKit (SPA/static build, SSR off)
+- Tailwind CSS + shadcn-svelte components
+- Embedded into Go binary via `go:embed`
 
 ---
 
-## Directory Structure
+## Runtime Architecture
 
+```text
+main.go
+  ├─ Load config from .env
+  ├─ Open SQLite + auto-migrate
+  ├─ Start Gin API server
+  └─ Start Agent loop
+       ├─ syncWatchers() from DB
+       ├─ one goroutine per watcher
+       ├─ ticker-based poll cycle per watcher
+       ├─ API-triggered immediate checks (checkTrigger chan uint)
+       └─ API-triggered watcher syncs (syncTrigger chan struct{})
 ```
-watcher/
-  cmd/watcher/main.go              entrypoint — flag parsing, signal handling, starts Agent + API
-  internal/
-    agent/
-      watcher.go                    Agent + RepoWatcher — orchestration and poll loop
-      deploy.go                     Deployer — extract, swap junction, NSSM, health, rollback
-      github.go                     GitHubClient — version.json + artifact download (public/private)
-      github_test.go                Tests for GitHubClient (httptest-based)
-      state.go                      StateManager — deploy state tracking via SQLite
-      logger.go                     Structured JSON logger (custom, no slog/zap/zerolog)
-      ticker.go                     newTicker() helper
-    api/
-      router.go                     Gin router — API routes + embedded SPA serving
-      handlers.go                   Watcher CRUD + deploy log handlers
-      service_handlers.go           Service management (start/stop/restart/health/logs)
-      system_handlers.go            System status + agent log tail
-      dto.go                        Request/response DTOs
-    config/
-      config.go                     LoadConfig() from .env via godotenv
-    database/
-      database.go                   SQLite via GORM (pure-Go, no CGO)
-      models.go                     Watcher, Service, DeployLog, HealthEvent models
-  web/
-    embed.go                        go:embed all:build — bundles SPA into binary
-    build/                          SvelteKit build output (gitignored, built by `make build-web`)
-    src/
-      routes/                       SvelteKit pages (dashboard, watchers, services, logs)
-      lib/api.ts                    Typed API client
-      lib/components/ui/            shadcn-svelte components
-  install.bat                       Wrapper to auto-elevate and launch the GUI wizard
-  shell/
-    install-watcher.ps1             GUI Bootstrap — installs dependencies, registers service
-  workflows/
-    release.yml                     Template release workflow for watched app repos
-  .github/workflows/
-    release.yml                     This repo's release workflow (builds SPA + Go binary)
-  .env.example                      Example config (committed to git)
-  .env                              Live config (gitignored, contains real token)
-  Makefile                          Build, test, dev, package targets
-  README.md                         Full documentation
-  INSTALL.md                        Step-by-step installation guide
-  go.mod / go.sum                   Go module definition
-```
+
+### Agent behavior
+- Watchers are not static; they are reloaded from DB when CRUD changes occur.
+- A watcher goroutine is restarted when its `updated_at` changes.
+- Each watcher run records poll events and updates deploy state in DB.
+- Consecutive failures are capped per target version (`maxDeployRetries = 3`) to prevent infinite loops.
 
 ---
 
-## Config
+## Core Packages
 
-Configuration is loaded from a `.env` file via `godotenv`:
+### `cmd/watcher/main.go`
+- Entry point and lifecycle wiring.
+- Starts API server and agent concurrently.
+- Handles shutdown via `signal.NotifyContext`.
+
+### `internal/agent/watcher.go`
+- `Agent`, `RepoWatcher`, and deploy orchestration.
+- `WatcherConfigFromDB` maps DB models into runtime config.
+- Handles version comparisons, rollback high-watermark checks, and deployment start.
+- Optional GitHub Deployment API status reporting.
+
+### `internal/agent/deploy.go`
+- Deploy pipeline:
+  - extract artifact
+  - stop services
+  - replace release dir
+  - swap `current` junction (`mklink /J` fallback to copy)
+  - ensure/start services
+  - health checks
+  - rollback on failure
+- Supports `service_type`:
+  - `nssm`: install/update/start via NSSM
+  - `static`: no NSSM registration; optional IIS app pool recycle
+- Provides version retention utilities:
+  - `ListAvailableVersions`
+  - `CleanOldReleases`
+  - `DeleteVersion`
+
+### `internal/agent/github.go`
+- GitHub metadata and artifact download logic.
+- Supports:
+  - `version.json` release-asset mode
+  - native repo mode (`https://github.com/<owner>/<repo>`)
+- Private repo support uses GitHub API and token auth.
+- Includes GitHub Deployment API calls (`CreateDeployment`, `UpdateDeploymentStatus`).
+
+### `internal/agent/self_update.go`
+- Self update check against `WATCHER_REPO_URL`.
+- Downloads release zip, extracts new executable, swaps binary.
+- On Windows, attempts service restart via NSSM.
+- Generates uninstall PowerShell script.
+
+### `internal/agent/state.go`
+- DB-backed state manager for watcher deploy lifecycle.
+- Records watcher status, deploy logs, poll events, and failure status.
+- Trims poll history to last 50 entries per watcher.
+
+### `internal/api/*`
+- API routing and handlers.
+- SSE streams for deploy logs and agent logs.
+- Watcher/service CRUD and operational actions.
+- Self-management endpoints exposed under `/api/self/*`.
+
+### `internal/config/config.go`
+- Config loading with Viper defaults + `.env` + env override.
+- Handles Windows path unescaping edge cases.
+
+### `internal/database/*`
+- SQLite connection setup and automigration.
+- Data model definitions.
+
+---
+
+## Database Models (Authoritative)
+
+### `Watcher`
+- identity/config: `name`, `service_name`, `metadata_url`, `install_dir`
+- polling/deploy knobs: `check_interval_sec`, `download_retries`, `max_kept_versions`, `paused`
+- health defaults: `hc_enabled`, `hc_url`, `hc_retries`, `hc_interval_sec`, `hc_timeout_sec`
+- runtime state: `current_version`, `max_ignored_version`, `status`, `last_checked`, `last_deployed`, `last_error`
+- relations: `services`, `deploy_logs`, `poll_events`
+
+### `Service`
+- ownership: `watcher_id`
+- mode: `service_type` (`nssm` or `static`)
+- NSSM fields: `windows_service_name`, `binary_name`, `env_file`
+- health: `health_check_url`
+- static/IIS fields: `iis_app_pool`, `iis_site_name`
+- extras: `public_url`, `env_content`
+
+### `DeployLog`
+- `watcher_id`, `version`, `from_version`, `status`, `error`
+- `duration_ms`, `logs`, `github_deployment_id`
+- `started_at`, `completed_at`
+
+### `HealthEvent`
+- `service_id`, `status`, `http_status`, `error`, `checked_at`
+
+### `PollEvent`
+- `watcher_id`, `checked_at`, `status`, `remote_version`, `error`
+
+---
+
+## API Surface (Current)
+
+### System
+- `GET /api/status`
+- `GET /api/logs`
+- `GET /api/logs/stream`
+- `POST /api/github/inspect`
+
+### Services (flat)
+- `GET /api/services`
+- `GET /api/services/:id`
+- `POST /api/services/:id/start`
+- `POST /api/services/:id/stop`
+- `POST /api/services/:id/restart`
+- `PUT /api/services/:id/env`
+- `GET /api/services/:id/health`
+- `GET /api/services/:id/health/history`
+- `GET /api/services/:id/logs`
+- `GET /api/services/:id/deploys`
+
+### Watchers
+- `GET /api/watchers`
+- `POST /api/watchers`
+- `GET /api/watchers/:id`
+- `PUT /api/watchers/:id`
+- `DELETE /api/watchers/:id`
+- `GET /api/watchers/:id/services`
+- `POST /api/watchers/:id/services`
+- `PUT /api/watchers/:id/services/:sid`
+- `DELETE /api/watchers/:id/services/:sid`
+- `GET /api/watchers/:id/deploys`
+- `GET /api/watchers/:id/deploys/:did`
+- `GET /api/watchers/:id/deploy/stream`
+- `GET /api/watchers/:id/polls`
+- `POST /api/watchers/:id/check`
+- `POST /api/watchers/:id/redeploy`
+- `GET /api/watchers/:id/versions`
+- `POST /api/watchers/:id/rollback`
+- `POST /api/watchers/:id/resume`
+- `DELETE /api/watchers/:id/versions/:version`
+
+### Self-management
+- `GET /api/self/version`
+- `GET /api/self/update-check`
+- `POST /api/self/update`
+- `POST /api/self/uninstall`
+
+---
+
+## Frontend Information
+
+### Routes
+- `/` dashboard summary
+- `/watchers` list/create
+- `/watchers/[id]` watcher detail: tabs for overview/services/deploys/polls/versions
+- `/services` flat service list
+- `/services/[id]` service detail: health/log/env/deploy tabs
+- `/polling` watcher polling operations
+- `/logs` agent log tail
+- `/settings` self version/update/uninstall actions
+
+### API client
+- `web/src/lib/api.ts` contains typed API calls used by all pages.
+
+---
+
+## Configuration
+
+Loaded from `.env` (plus environment overrides).
 
 ```env
 ENVIRONMENT=production
-GITHUB_TOKEN=ghp_xxx
+GITHUB_TOKEN=
 LOG_DIR=D:\apps\watcher\logs
 NSSM_PATH=C:\ProgramData\chocolatey\bin\nssm.exe
 DB_PATH=D:\apps\watcher\watcher.db
 API_PORT=8080
+API_BASE_URL=
+WATCHER_REPO_URL=https://github.com/fanboykun/watcher
 ```
 
-Watchers and services are stored in the **SQLite database**, managed via the dashboard or REST API. There is no `config.json` anymore.
+Notes:
+- `API_BASE_URL` is required for GitHub Deployment API log URLs.
+- Empty `GITHUB_TOKEN` is allowed for public repositories.
 
 ---
 
-## Database Models
+## Directory Map
 
-```
-Watcher
-  ├── id, name, service_name, metadata_url
-  ├── check_interval_sec, download_retries, install_dir
-  ├── hc_enabled, hc_url, hc_retries, hc_interval_sec, hc_timeout_sec
-  ├── current_version, status, last_checked, last_deployed, last_error
-  └── has many Services, DeployLogs
-
-Service
-  ├── id, watcher_id (FK)
-  ├── windows_service_name, binary_name, env_file, health_check_url
-  └── has many HealthEvents
-
-DeployLog
-  ├── id, watcher_id (FK)
-  ├── version, from_version, status, error
-  ├── started_at, finished_at, duration_ms
-
-HealthEvent
-  ├── id, service_id (FK)
-  ├── status (healthy/unhealthy), status_code, response_time_ms, error
-  ├── checked_at
-```
-
----
-
-## Deploy Flow
-
-```
-1. Poll version.json from GitHub (API for private, direct for public)
-2. Compare remote version vs database current_version
-3. If mismatch → start deploy:
-   a. Record DeployLog (status: deploying)
-   b. Download artifact zip (with retry + exponential backoff)
-   c. Extract to releases/<version>/
-   d. Stop all NSSM services
-   e. Swap current/ junction → releases/<version>/
-   f. ensureService() — install via NSSM if first deploy, or update binary path
-   g. Start all NSSM services
-   h. Health check each service (if enabled)
-   i. On failure: rollback to previous version (reverse of above)
-   j. Update DeployLog (status: healthy/failed, duration_ms)
-   k. Update Watcher state in database
-4. Clean up downloaded zip
+```text
+cmd/watcher/main.go
+internal/
+  agent/
+    watcher.go
+    deploy.go
+    github.go
+    self_update.go
+    state.go
+    logger.go
+    ticker.go
+    *_test.go
+  api/
+    router.go
+    handlers.go
+    service_handlers.go
+    system_handlers.go
+    dto.go
+  config/config.go
+  database/
+    database.go
+    models.go
+web/
+  embed.go
+  src/
+    lib/api.ts
+    routes/**
+shell/install-watcher.ps1
+install.bat
+.github/workflows/release.yml
+workflows/release-go-nssm.yml
+workflows/release-bun-iis.yml
+workflows/deploy.yml
 ```
 
 ---
 
-## Code Conventions
+## Build, Test, Release
 
-### Go style
-- **Packages**: `internal/agent/`, `internal/api/`, `internal/config/`, `internal/database/`
-- **Naming**: Standard Go conventions (camelCase unexported, PascalCase exported)
-- **Error handling**: Wrap all errors with `fmt.Errorf("context: %w", err)` using `%w` for unwrapping
-- **Logging**: Use structured key-value pairs: `log.Info("message", "key1", val1, "key2", val2)`
-- **Constructor pattern**: `NewXxx()` functions return struct pointers
+### Local commands
+- `make dev`
+- `make build-web`
+- `make build`
+- `make test`
+- `make test-verbose`
+- `make test-github`
+- `make run`
+- `make package`
 
-### Logger
-- Custom structured JSON logger (not slog/zap/zerolog)
-- Per-component context via `log.WithComponent("name")`
-- Writes to both stdout and file via `io.MultiWriter`
-
-### SPA Embedding
-- `web/embed.go` uses `//go:embed all:build` to bundle the SvelteKit output
-- `router.go` serves SPA via `NoRoute` handler with fallback to `index.html`
-- Static assets served with correct MIME types via custom `contentType()` function
-- During dev, Vite proxies `/api` to the Go backend (see `vite.config.ts`)
-
-### Frontend
-- SvelteKit with `adapter-static` (SPA mode, SSR disabled)
-- Tailwind CSS + shadcn-svelte components
-- Typed API client in `src/lib/api.ts`
-- All routes under `src/routes/` (dashboard, watchers, services, logs)
+### CI
+- Watcher release pipeline: `.github/workflows/release.yml`
+- App repo templates: `workflows/release-go-nssm.yml`, `workflows/release-bun-iis.yml`
 
 ---
 
-## Testing Patterns
+## Critical Contracts and Gotchas
 
-- Tests are in `internal/agent/github_test.go` (same package, white-box)
-- Uses `net/http/httptest` for HTTP mocking (no third-party mock libs)
-- Test helper: `newTestClient()` — creates GitHubClient with test server
-- Test helper: `makeTestZip()` — creates in-memory zip files
-- Table-driven tests for URL parsing functions
-- All tests use `t.TempDir()` for filesystem artifacts
-- Run: `make test` or `make test-github`
-
----
-
-## Build & Release
-
-### Local development
-```bash
-make dev           # Air hot-reload for Go backend
-make build-web     # Build SvelteKit SPA only
-make build         # Build SPA + cross-compile watcher.exe for Windows
-make test          # Run all tests
-make test-verbose  # Run tests with -v
-make test-github   # Run only GitHub client tests
-make package       # Build + zip for distribution
-make clean         # Remove bin/ and web/build/
-make info          # Print Go environment
-```
-
-### CI/CD release (`.github/workflows/release.yml`)
-Triggered on push to `main` (specific paths). Two-job pipeline:
-
-1. **Semantic Version Tag** — analyzes commit messages, determines bump type, pushes tag
-2. **Build & Package Release**:
-   - Sets up Go + Bun
-   - Builds SvelteKit SPA (`bun install + bun run build`)
-   - Cross-compiles Go with embedded SPA (`CGO_ENABLED=0 GOOS=windows`)
-   - Assembles release zip (watcher.exe + shell/ + .env.example + INSTALL.md)
-   - Generates version.json
-   - Creates GitHub Release
-
-### Commit message conventions
-
-| Pattern | Bump |
-|---------|------|
-| `feat:` | minor |
-| `fix:` / `perf:` / `refactor:` | patch |
-| `feat!:` / `BREAKING CHANGE` | major |
-| `chore:` / `docs:` / `ci:` / `style:` / `test:` / `build:` | skip |
-| `minor:` / `patch:` / `major:` | respective |
-| `bump: minor` / `patch` / `major` | respective |
-| `release:` / `[release]` | patch |
-| `release(minor):` / `[release:minor]` | minor |
-| `release(major):` / `[release:major]` | major |
-
-**Fallback**: If only skip-pattern commits but important files changed, defaults to patch.
+1. `service_name` must match metadata key (for `version.json` flow).
+2. For `nssm` services, `binary_name` must match extracted filename exactly.
+3. `max_ignored_version` blocks redeploy of versions `<=` pin after rollback.
+4. Watcher auto-sync depends on DB row `updated_at`; handlers already bump it on service changes.
+5. `mklink /J` is preferred for `current`; copy fallback is slower.
+6. Health check URL precedence: service-level URL overrides watcher-level URL.
+7. API has no authentication layer; treat deployment as internal/trusted only.
+8. `web/build/` must exist before Go build so `go:embed all:build` succeeds.
 
 ---
 
-## Disk Layout on Windows
+## Testing Coverage Notes
 
-```
-D:\apps\watcher\                    ← watcher agent home
-  watcher.exe                       ← single binary (agent + API + dashboard)
-  .env                              ← SECURED (SYSTEM + Admins only)
-  watcher.db                        ← SQLite database
-  shell\install-watcher.ps1
-  logs\
-    watcher.out.log                 ← NSSM stdout redirect
-    watcher.err.log                 ← NSSM stderr redirect
+Current tests are concentrated in `internal/agent`:
+- GitHub client behaviors (`github_test.go`)
+- deploy retention/version listing (`deploy_test.go`)
+- self-update helpers/version compare (`self_update_test.go`)
 
-D:\apps\<service>\                  ← per-service install directory
-  current\                          ← junction → releases/<version>/
-  releases\
-    v1.0.0\                         ← previous version (kept for rollback)
-    v1.1.0\                         ← current version
-  version.txt                       ← "v1.1.0"
-  state.json                        ← legacy deploy status (kept for file-based state)
-  .env.web.1                        ← service instance env file (not managed by watcher)
-  logs\
-    <service>-web-1.out.log
-```
+There is no broad integration test suite for API handlers or end-to-end deploy orchestration yet.
 
----
-
-## Critical Contracts
-
-### Between release.yml (app repo) and watcher database
-
-| `release.yml` env | Watcher field | Rule |
-|---|---|---|
-| `APP_NAME` | `watcher.service_name` | Exact string match — this is the key in version.json |
-| `WEB_BINARY` | `service.binary_name` | Exact filename inside the zip |
-| `WORKER_BINARY` | `service.binary_name` | Exact filename inside the zip |
-
-### version.json format (must match `VersionMetadata` struct)
-```json
-{
-  "services": {
-    "<service_name>": {
-      "version": "v1.2.0",
-      "artifact": "<name>-v1.2.0.zip",
-      "artifact_url": "https://github.com/<owner>/<repo>/releases/download/v1.2.0/<name>-v1.2.0.zip",
-      "published_at": "2024-01-15T10:00:00Z"
-    }
-  }
-}
-```
-
-### Zip artifact format
-Binaries MUST be at the root of the zip (not nested in subdirectories).
-
----
-
-## Security Notes
-
-- `.env` contains a GitHub PAT — file permissions restricted by install script
-- The PAT needs `repo` scope for private repos, or `contents:read` for fine-grained PATs
-- `.env` files are gitignored
-- API has no authentication (assumed internal network use)
-
----
-
-## Common Gotchas
-
-1. **`APP_NAME` must match `service_name`** — if these are out of sync, the watcher silently fails to find the service in version.json
-2. **Binary names must match** — `binary_name` in database must exactly match the filename inside the release zip
-3. **`.env` files must exist before first deploy** — the watcher deploys binaries but does NOT manage `.env` files for watched services
-4. **Windows junctions** — `mklink /J` requires the target directory to exist; the fallback `copyDir` is slower but always works
-5. **Health check URLs** — per-service URL overrides the watcher-level URL; if neither is set and `enabled=true`, health checks are silently skipped
-6. **NSSM service names** — once registered, changing the name in the database won't unregister the old service
-7. **Pure-Go SQLite** — uses `github.com/glebarez/sqlite` (no CGO). Enables cross-compilation with `CGO_ENABLED=0`
-8. **SPA must be built before Go** — `web/build/` must exist for `go:embed`. Use `make build` which handles this automatically

@@ -212,6 +212,10 @@ Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/watchers/1/servic
 
 ## Updating the watcher
 
+### Option 1: Web UI (Recommended)
+Go to **Settings** in the dashboard and click **Check for Updates**. If a new version is available, click **Update Agent**. The watcher will download the new binary, swap itself, and restart the service automatically.
+
+### Option 2: Manual
 1. Download the new release zip
 2. Stop the service: `nssm stop app-watcher`
 3. Replace `watcher.exe` in `D:\apps\watcher\`
@@ -235,6 +239,8 @@ nssm remove  app-watcher confirm    # uninstall
 Get-Content D:\apps\watcher\logs\watcher.out.log -Wait
 
 # Force manual rollback of a watched service
+# Note: This manually changes version.txt, but doesn't set the High-Watermark Pin in the DB.
+# It is recommended to use the Dashboard for rollbacks.
 nssm stop app-watcher
 Set-Content D:\apps\my-service\version.txt "v1.0.0"
 nssm start app-watcher

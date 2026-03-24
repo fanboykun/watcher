@@ -34,10 +34,10 @@ func newTestClient(token string, server *httptest.Server) *GitHubClient {
 
 func TestParseGitHubURL(t *testing.T) {
 	tests := []struct {
-		name        string
-		url         string
-		wantOwner   string
-		wantRepo    string
+		name            string
+		url             string
+		wantOwner       string
+		wantRepo        string
 		wantErrContains string
 	}{
 		{
@@ -158,6 +158,67 @@ func TestParseArtifactURL(t *testing.T) {
 			}
 			if repo != tt.wantRepo {
 				t.Errorf("repo = %q, want %q", repo, tt.wantRepo)
+			}
+			if asset != tt.wantAsset {
+				t.Errorf("asset = %q, want %q", asset, tt.wantAsset)
+			}
+		})
+	}
+}
+
+func TestParseReleaseDownloadURL(t *testing.T) {
+	tests := []struct {
+		name            string
+		url             string
+		wantOwner       string
+		wantRepo        string
+		wantTag         string
+		wantAsset       string
+		wantErrContains string
+	}{
+		{
+			name:      "valid release download URL",
+			url:       "https://github.com/my-org/my-repo/releases/download/v1.2.3/my-repo-v1.2.3.zip",
+			wantOwner: "my-org",
+			wantRepo:  "my-repo",
+			wantTag:   "v1.2.3",
+			wantAsset: "my-repo-v1.2.3.zip",
+		},
+		{
+			name:            "missing tag segment",
+			url:             "https://github.com/my-org/my-repo/releases/download//my-repo-v1.2.3.zip",
+			wantErrContains: "unexpected release download URL format",
+		},
+		{
+			name:            "not a release download URL",
+			url:             "https://github.com/my-org/my-repo/archive/refs/heads/main.zip",
+			wantErrContains: "unexpected release download URL format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			owner, repo, tag, asset, err := parseReleaseDownloadURL(tt.url)
+			if tt.wantErrContains != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErrContains)
+				}
+				if !strings.Contains(err.Error(), tt.wantErrContains) {
+					t.Fatalf("expected error containing %q, got: %v", tt.wantErrContains, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if owner != tt.wantOwner {
+				t.Errorf("owner = %q, want %q", owner, tt.wantOwner)
+			}
+			if repo != tt.wantRepo {
+				t.Errorf("repo = %q, want %q", repo, tt.wantRepo)
+			}
+			if tag != tt.wantTag {
+				t.Errorf("tag = %q, want %q", tag, tt.wantTag)
 			}
 			if asset != tt.wantAsset {
 				t.Errorf("asset = %q, want %q", asset, tt.wantAsset)

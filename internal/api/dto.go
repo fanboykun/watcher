@@ -41,13 +41,13 @@ type UpdateWatcherRequest struct {
 
 // CreateServiceRequest is the body for POST /api/watchers/:id/services
 type CreateServiceRequest struct {
-	ServiceType        string `json:"service_type"`                              // "nssm" (default) or "static"
+	ServiceType        string `json:"service_type"` // "nssm" (default) or "static"
 	WindowsServiceName string `json:"windows_service_name" binding:"required"`
-	BinaryName         string `json:"binary_name"`                               // NSSM only
-	EnvFile            string `json:"env_file"`                                  // NSSM only
+	BinaryName         string `json:"binary_name"` // NSSM only
+	EnvFile            string `json:"env_file"`    // NSSM only
 	HealthCheckURL     string `json:"health_check_url"`
-	IISAppPool         string `json:"iis_app_pool"`                              // Static only
-	IISSiteName        string `json:"iis_site_name"`                             // Static only
+	IISAppPool         string `json:"iis_app_pool"`  // Static only
+	IISSiteName        string `json:"iis_site_name"` // Static only
 	PublicURL          string `json:"public_url"`
 	EnvContent         string `json:"env_content"`
 }
@@ -79,4 +79,32 @@ type MessageResponse struct {
 
 type RollbackRequest struct {
 	Version string `json:"version" binding:"required"`
+}
+
+// ── Agent self config DTOs ───────────────────────────────────
+
+type SelfConfigResponse struct {
+	Environment        string `json:"environment"`
+	LogDir             string `json:"log_dir"`
+	NssmPath           string `json:"nssm_path"`
+	DBPath             string `json:"db_path"`
+	APIPort            string `json:"api_port"`
+	APIBaseURL         string `json:"api_base_url"`
+	WatcherRepoURL     string `json:"watcher_repo_url"`
+	WatcherServiceName string `json:"watcher_service_name"`
+	HasGitHubToken     bool   `json:"has_github_token"`
+	GitHubTokenMasked  string `json:"github_token_masked"`
+	EnvPath            string `json:"env_path"`
+}
+
+type UpdateSelfConfigRequest struct {
+	Environment        *string `json:"environment"`
+	GitHubToken        *string `json:"github_token"`
+	LogDir             *string `json:"log_dir"`
+	NssmPath           *string `json:"nssm_path"`
+	DBPath             *string `json:"db_path"`
+	APIPort            *string `json:"api_port"`
+	APIBaseURL         *string `json:"api_base_url"`
+	WatcherRepoURL     *string `json:"watcher_repo_url"`
+	WatcherServiceName *string `json:"watcher_service_name"`
 }

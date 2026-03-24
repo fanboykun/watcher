@@ -135,6 +135,32 @@ export interface SelfUpdateCheckResponse {
 	published_at: string;
 }
 
+export interface SelfConfigResponse {
+	environment: string;
+	log_dir: string;
+	nssm_path: string;
+	db_path: string;
+	api_port: string;
+	api_base_url: string;
+	watcher_repo_url: string;
+	watcher_service_name: string;
+	has_github_token: boolean;
+	github_token_masked: string;
+	env_path: string;
+}
+
+export interface UpdateSelfConfigRequest {
+	environment?: string;
+	github_token?: string;
+	log_dir?: string;
+	nssm_path?: string;
+	db_path?: string;
+	api_port?: string;
+	api_base_url?: string;
+	watcher_repo_url?: string;
+	watcher_service_name?: string;
+}
+
 // ── API methods ──────────────────────────────────────────────
 
 export const api = {
@@ -182,7 +208,10 @@ export const api = {
 
 	// Agent Self-Management
 	selfVersion: () => request<SelfVersionResponse>('/self/version'),
+	selfConfig: () => request<SelfConfigResponse>('/self/config'),
+	updateSelfConfig: (data: UpdateSelfConfigRequest) => request<{ message: string; notes: string[]; config: SelfConfigResponse }>('/self/config', { method: 'PUT', body: JSON.stringify(data) }),
 	selfUpdateCheck: () => request<SelfUpdateCheckResponse>('/self/update-check'),
 	selfUpdate: () => request<{ message: string }>('/self/update', { method: 'POST' }),
+	selfRestart: () => request<{ message: string; service_name: string }>('/self/restart', { method: 'POST' }),
 	selfUninstall: () => request<{ script: string }>('/self/uninstall', { method: 'POST' })
 };
