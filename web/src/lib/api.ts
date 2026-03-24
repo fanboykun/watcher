@@ -35,7 +35,9 @@ export interface Watcher {
 	hc_interval_sec: number;
 	hc_timeout_sec: number;
 	paused: boolean;
+	max_kept_versions: number;
 	current_version: string;
+	max_ignored_version: string;
 	status: string;
 	last_checked: string | null;
 	last_deployed: string | null;
@@ -74,6 +76,7 @@ export interface DeployLog {
 	status: string;
 	error: string;
 	duration_ms: number;
+	github_deployment_id: number;
 	logs: string | null;
 	started_at: string | null;
 	completed_at: string | null;
@@ -107,6 +110,31 @@ export interface SystemStatus {
 	deploys_24h: number;
 }
 
+export interface ReleaseInfo {
+	version: string;
+	mod_time: string;
+	size_bytes: number;
+	size_human: string;
+	is_current: boolean;
+}
+
+export interface SelfVersionResponse {
+	version: string;
+	go_version: string;
+	os: string;
+	arch: string;
+	executable: string;
+}
+
+export interface SelfUpdateCheckResponse {
+	update_available: boolean;
+	current_version: string;
+	latest_version: string;
+	release_notes: string;
+	download_url: string;
+	published_at: string;
+}
+
 // ── API methods ──────────────────────────────────────────────
 
 export const api = {
@@ -123,6 +151,14 @@ export const api = {
 	triggerCheck: (id: number) => request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
 	redeployWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}/redeploy`, { method: 'POST' }),
 	watcherDeploys: (id: number) => request<DeployLog[]>(`/watchers/${id}/deploys`),
+	watcherDeployLog: (id: number, logId: number) => request<DeployLog>(`/watchers/${id}/deploys/${logId}`),
+	watcherVersions: async (id: number) => {
+		const res = await request<{ versions: ReleaseInfo[] }>(`/watchers/${id}/versions`);
+		return res.versions;
+	},
+	rollbackWatcher: (id: number, version: string) => request<{ message: string }>(`/watchers/${id}/rollback`, { method: 'POST', body: JSON.stringify({ version }) }),
+	resumeWatcherUpdates: (id: number) => request<{ message: string }>(`/watchers/${id}/resume`, { method: 'POST' }),
+	deleteWatcherVersion: (id: number, version: string) => request<{ message: string }>(`/watchers/${id}/versions/${version}`, { method: 'DELETE' }),
 	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') => request<{ data: PollEvent[], total: number, page: number, pageSize: number }>(`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`),
 
 	// Services (flat)
@@ -142,5 +178,11 @@ export const api = {
 	deleteService: (watcherId: number, serviceId: number) => request<{ message: string }>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'DELETE' }),
 
 	// GitHub Integration
-	inspectRepo: (repoUrl: string) => request<InspectRepoResponse>('/github/inspect', { method: 'POST', body: JSON.stringify({ repo_url: repoUrl }) })
+	inspectRepo: (repoUrl: string) => request<InspectRepoResponse>('/github/inspect', { method: 'POST', body: JSON.stringify({ repo_url: repoUrl }) }),
+
+	// Agent Self-Management
+	selfVersion: () => request<SelfVersionResponse>('/self/version'),
+	selfUpdateCheck: () => request<SelfUpdateCheckResponse>('/self/update-check'),
+	selfUpdate: () => request<{ message: string }>('/self/update', { method: 'POST' }),
+	selfUninstall: () => request<{ script: string }>('/self/uninstall', { method: 'POST' })
 };

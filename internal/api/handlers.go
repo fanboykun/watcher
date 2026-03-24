@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fanboykun/watcher/internal/agent"
+	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -30,19 +31,21 @@ type Handler struct {
 	logDir       string
 	version      string
 	githubToken  string
+	appCfg       *config.AppConfig
 	startTime    time.Time
 	checkTrigger chan uint    // send watcher ID for immediate poll
 	syncTrigger  chan struct{} // trigger background agent to sync DB
 }
 
 // NewHandler creates a new Handler with the given dependencies.
-func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken string, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
+func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken string, appCfg *config.AppConfig, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
 	return &Handler{
 		db:           db,
 		nssmPath:     nssmPath,
 		logDir:       logDir,
 		version:      version,
 		githubToken:  githubToken,
+		appCfg:       appCfg,
 		startTime:    time.Now(),
 		checkTrigger: checkTrigger,
 		syncTrigger:  syncTrigger,
@@ -91,6 +94,7 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		HcIntervalSec:    withDefault(req.HcIntervalSec, 3),
 		HcTimeoutSec:     withDefault(req.HcTimeoutSec, 5),
 		Paused:           req.Paused,
+		MaxKeptVersions:  withDefault(req.MaxKeptVersions, 3),
 		Status:           "unknown",
 	}
 
@@ -174,6 +178,9 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	}
 	if req.Paused != nil {
 		updates["paused"] = *req.Paused
+	}
+	if req.MaxKeptVersions != nil {
+		updates["max_kept_versions"] = *req.MaxKeptVersions
 	}
 
 	if len(updates) > 0 {
@@ -628,3 +635,164 @@ func (h *Handler) syncServiceEnvFile(svc *database.Service, installDir string) {
 		fmt.Printf("Error writing env file %s: %v\n", envPath, err)
 	}
 }
+
+// ── Deploy Log Detail ─────────────────────────────────────────
+
+// GetDeployLog returns a single deploy log by ID (URL-able for GitHub Deployment API log_url).
+func (h *Handler) GetDeployLog(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	did, err := strconv.ParseUint(c.Param("did"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid deploy log id"})
+		return
+	}
+
+	var dlog database.DeployLog
+	if err := h.db.Where("id = ? AND watcher_id = ?", did, watcher.ID).First(&dlog).Error; err != nil {
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "deploy log not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, dlog)
+}
+
+// ── Version Management ────────────────────────────────────────
+
+// ListAvailableVersions returns on-disk release versions available for rollback.
+func (h *Handler) ListAvailableVersions(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	versions, err := agent.ListAvailableVersions(watcher.InstallDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"watcher_id":      watcher.ID,
+		"current_version": watcher.CurrentVersion,
+		"versions":        versions,
+	})
+}
+
+// RollbackWatcher rolls back a watcher to a specific version that exists on disk.
+func (h *Handler) RollbackWatcher(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	var req RollbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	// Verify the version exists on disk
+	releaseDir := filepath.Join(watcher.InstallDir, "releases", req.Version)
+	if _, err := os.Stat(releaseDir); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			Error: fmt.Sprintf("version %s not found on disk at %s", req.Version, releaseDir),
+		})
+		return
+	}
+
+	// Build deployer and run rollback
+	wcfg := agent.WatcherConfigFromDB(watcher)
+	logger := agent.NewLogger(wcfg.Name)
+
+	// Record rollback in deploy log
+	now := time.Now().UTC()
+	dlog := database.DeployLog{
+		WatcherID:   watcher.ID,
+		Version:     req.Version,
+		FromVersion: watcher.CurrentVersion,
+		Status:      "rollback",
+		StartedAt:   &now,
+	}
+	h.db.Create(&dlog)
+
+	deployer := agent.NewDeployer(wcfg, h.nssmPath, logger, func(text string) {
+		h.db.Model(&dlog).UpdateColumn("logs", gorm.Expr("COALESCE(logs, '') || ?", text+"\n"))
+	})
+
+	if err := deployer.Rollback(c.Request.Context(), req.Version); err != nil {
+		completed := time.Now().UTC()
+		durationMs := completed.Sub(now).Milliseconds()
+		h.db.Model(&dlog).Updates(map[string]any{
+			"status":       "failed",
+			"error":        err.Error(),
+			"completed_at": &completed,
+			"duration_ms":  durationMs,
+		})
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	// Update watcher state
+	completed := time.Now().UTC()
+	durationMs := completed.Sub(now).Milliseconds()
+	h.db.Model(&dlog).Updates(map[string]any{
+		"status":       "healthy",
+		"completed_at": &completed,
+		"duration_ms":  durationMs,
+	})
+	h.db.Model(watcher).Updates(map[string]any{
+		"current_version":     req.Version,
+		"max_ignored_version": watcher.CurrentVersion,
+		"status":              "healthy",
+		"last_deployed":       &completed,
+		"last_error":          "",
+	})
+
+	h.triggerSync()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     fmt.Sprintf("rolled back to %s", req.Version),
+		"version":     req.Version,
+		"deploy_log":  dlog,
+	})
+}
+
+// ResumeWatcherUpdates clears the max_ignored_version flag so polling updates resume.
+func (h *Handler) ResumeWatcherUpdates(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	h.db.Model(watcher).Update("max_ignored_version", "")
+	h.triggerSync()
+
+	c.JSON(http.StatusOK, gin.H{"message": "auto-deploy resumed"})
+}
+
+// DeleteWatcherVersion removes a specific version directory from disk
+func (h *Handler) DeleteWatcherVersion(c *gin.Context) {
+	id := c.Param("id")
+	version := c.Param("version")
+
+	var watcher database.Watcher
+	if err := h.db.First(&watcher, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "watcher not found"})
+		return
+	}
+
+	if err := agent.DeleteVersion(watcher.InstallDir, version); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("deleted version %s", version),
+		"version": version,
+	})
+}
+

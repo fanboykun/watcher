@@ -2,7 +2,7 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { page } from '$app/state';
-	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock } from '@lucide/svelte';
+	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock, Settings } from '@lucide/svelte';
 	import * as Button from '$lib/components/ui/button';
 	import Separator from '$lib/components/ui/separator/separator.svelte';
 	import { resolve } from '$app/paths';
@@ -16,7 +16,8 @@
 		{ href: '/watchers', label: 'Watchers', icon: Eye },
 		{ href: '/services', label: 'Services', icon: Server },
 		{ href: '/polling', label: 'Polling', icon: Clock },
-		{ href: '/logs', label: 'Logs', icon: Activity }
+		{ href: '/logs', label: 'Logs', icon: Activity },
+		{ href: '/settings', label: 'Settings', icon: Settings }
 	] as const;
 
 	function isActive(href: string) {
@@ -68,7 +69,7 @@
 
 		<Separator />
 		<div class="p-4">
-			<p class="text-[11px] text-muted-foreground">Watcher Agent • Dark Mode</p>
+			<p class="text-[11px] text-muted-foreground">Watcher Agent</p>
 		</div>
 	</aside>
 
@@ -97,7 +98,7 @@
 
 	<!-- Main content -->
 	<main class="flex-1 lg:ml-64">
-		<div class="mx-auto max-w-6xl p-6 lg:p-8">
+		<div class="mx-auto max-w-6xl p-4 lg:p-6">
 			{@render children()}
 		</div>
 	</main>

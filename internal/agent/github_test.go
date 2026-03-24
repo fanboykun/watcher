@@ -572,3 +572,239 @@ func makeTestZip(t *testing.T, files map[string]string) []byte {
 	}
 	return buf.Bytes()
 }
+
+// ============================================================
+// CreateDeployment
+// ============================================================
+
+func TestCreateDeployment_Success(t *testing.T) {
+	const token = "ghp_testtoken"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify method and path
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if !strings.Contains(r.URL.Path, "/repos/my-org/my-repo/deployments") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+
+		// Verify headers
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("missing or wrong Authorization header")
+		}
+		if r.Header.Get("Accept") != "application/vnd.github+json" {
+			t.Errorf("missing Accept header")
+		}
+		if r.Header.Get("X-GitHub-Api-Version") != "2022-11-28" {
+			t.Errorf("missing X-GitHub-Api-Version header")
+		}
+
+		// Verify body
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["ref"] != "v1.0.0" {
+			t.Errorf("expected ref=v1.0.0, got %v", body["ref"])
+		}
+		if body["environment"] != "production" {
+			t.Errorf("expected environment=production, got %v", body["environment"])
+		}
+		if body["auto_merge"] != false {
+			t.Errorf("expected auto_merge=false")
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{"id": 12345})
+	}))
+	defer server.Close()
+
+	client := newTestClient(token, server)
+	id, err := client.CreateDeployment(context.Background(), "my-org", "my-repo", "v1.0.0", "production", "Deploying v1.0.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != 12345 {
+		t.Errorf("expected deployment ID 12345, got %d", id)
+	}
+}
+
+func TestCreateDeployment_Unauthorized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"message": "Bad credentials"}`)
+	}))
+	defer server.Close()
+
+	client := newTestClient("bad_token", server)
+	_, err := client.CreateDeployment(context.Background(), "my-org", "my-repo", "v1.0.0", "production", "test")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("expected 401 in error, got: %v", err)
+	}
+}
+
+func TestCreateDeployment_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"message": "Internal Server Error"}`)
+	}))
+	defer server.Close()
+
+	client := newTestClient("ghp_token", server)
+	_, err := client.CreateDeployment(context.Background(), "org", "repo", "v1.0.0", "prod", "test")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected 500 in error, got: %v", err)
+	}
+}
+
+// ============================================================
+// UpdateDeploymentStatus
+// ============================================================
+
+func TestUpdateDeploymentStatus_Success(t *testing.T) {
+	const token = "ghp_testtoken"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		expectedPath := "/repos/my-org/my-repo/deployments/12345/statuses"
+		if r.URL.Path != expectedPath {
+			t.Errorf("path = %q, want %q", r.URL.Path, expectedPath)
+		}
+
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["state"] != "success" {
+			t.Errorf("expected state=success, got %v", body["state"])
+		}
+		if body["log_url"] != "http://example.com/deploys/1" {
+			t.Errorf("expected log_url, got %v", body["log_url"])
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{"id": 99})
+	}))
+	defer server.Close()
+
+	client := newTestClient(token, server)
+	err := client.UpdateDeploymentStatus(context.Background(), "my-org", "my-repo", 12345, "success", "http://example.com/deploys/1", "Deployed successfully")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUpdateDeploymentStatus_NoLogURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+
+		if _, ok := body["log_url"]; ok {
+			t.Error("log_url should not be present when empty")
+		}
+		if body["state"] != "in_progress" {
+			t.Errorf("expected state=in_progress, got %v", body["state"])
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{"id": 100})
+	}))
+	defer server.Close()
+
+	client := newTestClient("ghp_token", server)
+	err := client.UpdateDeploymentStatus(context.Background(), "org", "repo", 1, "in_progress", "", "Starting deploy")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUpdateDeploymentStatus_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"message": "Not Found"}`)
+	}))
+	defer server.Close()
+
+	client := newTestClient("ghp_token", server)
+	err := client.UpdateDeploymentStatus(context.Background(), "org", "repo", 999, "success", "", "test")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("expected 404 in error, got: %v", err)
+	}
+}
+
+// ============================================================
+// FetchLatestRelease
+// ============================================================
+
+func TestFetchLatestRelease_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/repos/fanboykun/watcher/releases/latest"
+		if r.URL.Path != expectedPath {
+			t.Errorf("path = %q, want %q", r.URL.Path, expectedPath)
+		}
+		if r.Header.Get("Accept") != "application/vnd.github+json" {
+			t.Errorf("missing Accept header")
+		}
+
+		release := githubRelease{
+			TagName:     "v2.0.0",
+			PublishedAt: "2024-06-15T10:00:00Z",
+			Assets: []githubAsset{
+				{ID: 1, Name: "watcher-v2.0.0.zip", BrowserDownloadURL: "https://github.com/fanboykun/watcher/releases/download/v2.0.0/watcher-v2.0.0.zip"},
+				{ID: 2, Name: "checksums.txt", BrowserDownloadURL: "https://github.com/fanboykun/watcher/releases/download/v2.0.0/checksums.txt"},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(release)
+	}))
+	defer server.Close()
+
+	client := newTestClient("ghp_token", server)
+	// Use real GitHub URL format — ParseGitHubURL needs this.
+	// apiBase is already overridden to point at the test server.
+	release, err := client.FetchLatestRelease(context.Background(), "https://github.com/fanboykun/watcher")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if release.TagName != "v2.0.0" {
+		t.Errorf("tag = %q, want %q", release.TagName, "v2.0.0")
+	}
+	if len(release.Assets) != 2 {
+		t.Errorf("expected 2 assets, got %d", len(release.Assets))
+	}
+	if release.Assets[0].Name != "watcher-v2.0.0.zip" {
+		t.Errorf("first asset = %q, want %q", release.Assets[0].Name, "watcher-v2.0.0.zip")
+	}
+}
+
+func TestFetchLatestRelease_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := newTestClient("ghp_token", server)
+	_, err := client.FetchLatestRelease(context.Background(), "https://github.com/fanboykun/watcher")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("expected 404 in error, got: %v", err)
+	}
+}
+
+func TestFetchLatestRelease_InvalidRepoURL(t *testing.T) {
+	client := NewGitHubClient("ghp_token", newTestLogger())
+	_, err := client.FetchLatestRelease(context.Background(), "not-a-url")
+	if err == nil {
+		t.Fatal("expected error for invalid URL, got nil")
+	}
+}
