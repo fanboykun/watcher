@@ -20,6 +20,8 @@ endif
 MODULE      := $(shell $(GO) list -m 2>/dev/null)
 CMD_PATH    := ./cmd/watcher
 BINARY_NAME := watcher.exe
+INSTALLER_CMD_PATH := ./cmd/installer
+INSTALLER_BINARY_NAME := installer.exe
 BIN_DIR     := bin
 TEST_PKG    := ./internal/...
 WEB_DIR     := web
@@ -33,15 +35,17 @@ CGO_ENABLED := 0
 VERSION     := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
 BUILD_TIME  := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS     := -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)
+INSTALLER_LDFLAGS := $(LDFLAGS) -H=windowsgui
 
 # ── Output path ───────────────────────────────────────────────
 OUT := $(BIN_DIR)/$(BINARY_NAME)
+INSTALLER_OUT := $(BIN_DIR)/$(INSTALLER_BINARY_NAME)
 
 # ==============================================================
 # Targets
 # ==============================================================
 
-.PHONY: all build build-go build-web package test test-github test-verbose run dev clean info help
+.PHONY: all build build-go build-installer build-web package test test-github test-verbose run dev clean info help
 
 ## all: run tests then build
 all: test build
@@ -109,13 +113,34 @@ build-go:
 	@echo "    OK: $(OUT) (embedded current $(WEB_DIR)/build)"
 	@echo ""
 
+## build-installer: cross-compile installer.exe launcher for Windows (amd64)
+build-installer:
+	@echo ""
+	@echo ">>> Building $(INSTALLER_OUT)"
+	@echo "    Go      : $(GO)"
+	@echo "    Module  : $(MODULE)"
+	@echo "    Version : $(VERSION)"
+	@echo "    Target  : $(GOOS)/$(GOARCH)"
+	@echo ""
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		$(GO) build \
+		-ldflags="$(INSTALLER_LDFLAGS)" \
+		-o $(INSTALLER_OUT) \
+		$(INSTALLER_CMD_PATH)
+	@echo ""
+	@echo "    OK: $(INSTALLER_OUT)"
+	@echo ""
+
 ## package: build watcher.exe and zip with shell/ scripts + .env.example + INSTALL.md
-package: build
+package: build build-installer
 	@echo ""
 	@echo ">>> Packaging release zip"
 	@mkdir -p $(BIN_DIR)/staging/shell
 	@cp $(OUT)                       $(BIN_DIR)/staging/
+	@cp $(INSTALLER_OUT)             $(BIN_DIR)/staging/
 	@cp install.bat                  $(BIN_DIR)/staging/
+	@cp install-debug.bat            $(BIN_DIR)/staging/
 	@cp shell/install-watcher.ps1    $(BIN_DIR)/staging/shell/
 	@cp .env.example                 $(BIN_DIR)/staging/
 	@cp INSTALL.md                   $(BIN_DIR)/staging/

@@ -1,293 +1,376 @@
-# Plan: Per-Watcher GitHub Deployment Environment
+# Plan: Generic Windows Capability Installer + IIS Expansion
 
 ## Context
 
-Watcher currently sends GitHub Deployment API requests using a single global `ENVIRONMENT` value from agent config (`.env`).
+Watcher currently offers a profile-based installer in `shell/install-watcher.ps1`:
 
-This is insufficient when:
-- one watcher deploys to `staging` while another deploys to `production`
-- different repositories enforce different protected environment rules
-- teams need explicit per-service/per-repo deployment targeting
+- Binary services only
+- Static sites only
+- Both binaries + static sites
+- Full stack
 
-We need to make deployment environment selection watcher-specific while preserving backward compatibility.
+That worked when the product surface was mostly:
+
+- NSSM-managed binary services
+- IIS-hosted static sites
+- optional ARR reverse proxy
+
+But the product is starting to grow in a more modular direction:
+
+- IIS should become more deeply managed by Watcher
+- IIS provisioning should eventually be automated, not documented as a manual step
+- future IIS targets may include not only static files, but also PHP applications
+
+The current installer shape is starting to become limiting because it bundles several Windows capabilities into coarse profiles rather than letting operators choose the exact modules they need.
+
+---
+
+## Why Change This First
+
+Improving the installer first gives us a cleaner foundation for upcoming IIS work.
+
+Right now, the installer logic is tightly coupled to `Profile`:
+
+- `Profile` drives whether NSSM is installed
+- `Profile` drives whether IIS features are enabled
+- `Profile` drives whether URL Rewrite is installed
+- `Profile` drives whether ARR is installed and enabled
+
+That becomes awkward once we add more IIS variants, for example:
+
+- IIS for static sites
+- IIS for PHP sites
+- IIS + URL Rewrite only
+- IIS + FastCGI/PHP without ARR
+- ARR proxy without static hosting
+
+A module-based installer will let us support those combinations cleanly without inventing more and more preset profiles.
 
 ---
 
 ## Goals
 
-1. Add **per-watcher deployment environment** configuration.
-2. Keep existing installs working with no immediate breaking changes.
-3. Make deployment environment resolution deterministic and transparent in logs.
-4. Improve failure diagnostics for GitHub environment-related errors.
-5. Expose configuration in API + dashboard watcher forms.
+1. Replace the profile-based installer model with a capability/module-based model.
+2. Make installer choices clearer by grouping modules by service type and use case.
+3. Prepare the product for richer IIS support, including PHP hosting.
+4. Keep the installer friendly for simple setups by still offering recommended bundles or presets.
+5. Make future Watcher runtime features line up with installed Windows components.
 
 ---
 
 ## Non-Goals
 
-- No multi-environment promotion workflow orchestration.
-- No GitHub environment discovery API integration in this phase.
-- No full deploy policy engine (approvals, hold windows, etc.).
+- Full IIS site/app/app-pool automation in this first installer phase.
+- Full PHP runtime management in the first pass.
+- Linux package/module management.
+- Replacing existing deployment logic for NSSM services in the same phase.
 
 ---
 
 ## Current State Summary
 
-- Global `ENVIRONMENT` is loaded via `internal/config/config.go`.
-- GitHub deployment creation uses `r.global.Environment` in `internal/agent/watcher.go`.
-- Watcher DB model has no dedicated deployment environment field.
-- Watcher create/update DTOs and UI currently have no environment field.
+### Installer
+
+`shell/install-watcher.ps1` currently uses a single `Profile` selection and derives:
+
+- `$installNSSM`
+- `$installIIS`
+- `$installARR`
+
+IIS installation currently includes:
+
+- IIS Windows features
+- URL Rewrite
+
+ARR installation currently includes:
+
+- ARR package
+- ARR proxy enablement
+
+### Runtime
+
+Watcher already distinguishes service types at runtime:
+
+- `nssm`
+- `static`
+
+For static services, deploy currently:
+
+- extracts files
+- swaps `current`
+- optionally recycles an IIS app pool
+
+But it does not create or manage the IIS site itself yet.
+
+### Product Direction
+
+We want IIS support to grow beyond the current "static site with manual IIS registration" model and eventually support PHP-oriented deployments too.
 
 ---
 
 ## Target State
 
-Deployment environment resolved per watcher using precedence:
+The installer should become capability-driven.
 
-1. `watcher.deployment_environment` (if non-empty)
-2. global `ENVIRONMENT` from `.env`
+Instead of asking users to choose only one coarse installation profile, it should show grouped checkboxes for Windows modules and helpers, for example:
 
-Behavioral rules:
-- If GitHub Deployment integration is enabled and resolved environment is empty -> skip deployment status integration and log explicit warning.
-- All deploy logs include resolved environment value during deployment API calls.
-- GitHub API errors include actionable hints tied to environment and ref issues.
+### Core
 
----
+- Watcher service
+- Dashboard/API port configuration
+- Watcher install directory
+- Logs/database directories
 
-## Data Model Changes
+### For Binary Services
 
-### `internal/database/models.go`
+- NSSM
 
-Add column to `Watcher`:
-- `DeploymentEnvironment string `gorm:"not null;default:''" json:"deployment_environment"``
+### For IIS Static Hosting
 
-Backward compatibility:
-- Default empty string.
-- Existing rows continue to work via global fallback.
+- IIS Web Server
+- IIS Management Scripts/Console
+- URL Rewrite
 
-Migration:
-- GORM `AutoMigrate` will add the column automatically.
+### For IIS PHP Hosting
 
----
+- IIS Web Server
+- IIS Management Scripts/Console
+- CGI / FastCGI
+- URL Rewrite
+- optional PHP runtime/bootstrap support
 
-## API Contract Changes
+### For Reverse Proxying
 
-### DTO updates (`internal/api/dto.go`)
+- ARR
+- ARR proxy enablement
 
-- `CreateWatcherRequest` add:
-  - `DeploymentEnvironment string `json:"deployment_environment"``
-- `UpdateWatcherRequest` add:
-  - `DeploymentEnvironment *string `json:"deployment_environment"``
+### Optional Utilities
 
-### Handler updates (`internal/api/handlers.go`)
+- Chocolatey bootstrap
+- validation/preflight checks
 
-- `CreateWatcher` writes `deployment_environment`.
-- `UpdateWatcher` supports partial update for `deployment_environment`.
-- `ListWatchers/GetWatcher` already return model JSON, so new field should flow automatically.
+The UI can still offer presets such as:
 
-Validation (lightweight for phase 1):
-- trim spaces before saving.
-- allow empty (fallback behavior).
+- Binary services
+- IIS static hosting
+- IIS PHP hosting
+- Full stack
 
----
-
-## Agent Runtime Changes
-
-### `internal/agent/watcher.go`
-
-Add helper:
-- `resolveDeploymentEnvironment(watcherEnv, globalEnv string) string`
-
-Usage:
-- On deployment, compute resolved environment once.
-- Pass resolved environment into `CreateDeployment`.
-
-Behavior:
-- If resolved env is empty and GH deployment integration otherwise enabled:
-  - append deploy log warning
-  - disable GH deployment status updates for that deployment
-
-Observability:
-- append deploy logs:
-  - `github_deployment: environment=<resolved>`
-  - if empty: reason and remediation hint
+But those presets should simply pre-check modules instead of controlling the entire installation flow.
 
 ---
 
-## Frontend Changes
+## Recommended Module Model
 
-### API types (`web/src/lib/api.ts`)
+Introduce an explicit installer capability model instead of overloading `Profile`.
 
-- `Watcher` interface add `deployment_environment`.
-- Create/update payload paths accept the field.
+Example conceptual flags:
 
-### Watcher creation/edit UI
+- `InstallChocolatey`
+- `InstallNSSM`
+- `InstallIISCore`
+- `InstallIISMgmtTools`
+- `InstallURLRewrite`
+- `InstallARR`
+- `EnableARRProxy`
+- `InstallFastCGI`
+- `PreparePHPHosting`
 
-Files likely impacted:
-- `web/src/routes/watchers/+page.svelte`
-- `web/src/routes/watchers/[id]/+page.svelte`
-
-Changes:
-- Add input field:
-  - label: `Deployment Environment (GitHub)`
-  - placeholder: `production`
-  - helper text: `Optional. Falls back to global ENVIRONMENT if empty.`
-- Include value in create/update requests.
-
-### Optional visibility
-
-- Show resolved or configured environment in watcher detail overview card.
+These do not all need to ship at once, but the structure should support them cleanly.
 
 ---
 
-## Error Handling & Diagnostics
+## Service-Type Grouping Proposal
 
-Enhance logs and surfaced errors to clearly identify environment issues:
+This matches your idea and I think it is the right direction.
 
-- On `CreateDeployment` failure (404/422), include:
-  - owner/repo
-  - ref
-  - environment
-- Add hint text:
-  - create environment in GitHub repo settings
-  - ensure token has deployments permission
-  - verify ref/tag exists
+The installer should present modules grouped by what they are used for:
 
-Deploy log examples:
-- `github_deployment: using environment=staging`
-- `github_deployment: disabled because deployment environment is empty (watcher + global ENVIRONMENT both empty)`
+### Group 1: Binary Services
+
+- NSSM
+- optional related validation
+
+### Group 2: IIS Static Sites
+
+- IIS web server features
+- IIS management scripting tools
+- URL Rewrite
+
+### Group 3: IIS PHP Sites
+
+- IIS web server features
+- IIS management scripting tools
+- CGI/FastCGI
+- URL Rewrite
+- optional PHP runtime setup
+
+### Group 4: Reverse Proxy / Gateway
+
+- ARR
+- ARR proxy enablement
+
+This is much more scalable than today’s profile dropdown because it matches the way operators think about workloads.
 
 ---
 
-## Backward Compatibility Strategy
+## Proposed Execution Order
 
-- Existing watchers with no `deployment_environment` will continue using global `ENVIRONMENT`.
-- No forced migration/backfill required.
-- Existing API clients remain valid because new field is additive and optional.
+### Phase 1: Refactor installer data model
 
----
+Replace profile-derived booleans with explicit capability flags.
 
-## Task Breakdown
+Tasks:
 
-### Phase 1: Backend model + API
-
-1. Add `deployment_environment` to `Watcher` model.
-2. Extend watcher DTOs.
-3. Wire create/update handler logic.
-4. Verify JSON responses include field.
+1. Introduce a config object with named module booleans.
+2. Keep temporary backward compatibility by mapping old profiles into module selections internally.
+3. Split installation logic into reusable capability installers:
+   - `Install-ChocolateyIfNeeded`
+   - `Install-NSSMIfNeeded`
+   - `Install-IISCoreIfNeeded`
+   - `Install-URLRewriteIfNeeded`
+   - `Install-ARRIfNeeded`
+   - `Enable-ARRProxyIfNeeded`
+   - future `Install-FastCGIIfNeeded`
+4. Keep preflight and summary output aligned with selected modules.
 
 Deliverable:
-- backend supports storing and returning per-watcher environment.
+- installer logic is modular even if UI still partially resembles the current one
 
-### Phase 2: Agent deployment behavior
+### Phase 2: Replace dropdown with grouped module checkboxes
 
-1. Implement environment resolution helper.
-2. Replace direct use of global `ENVIRONMENT`.
-3. Add logs for resolved environment.
-4. Add safe-disable logic when unresolved empty.
+Redesign the installer wizard UI.
 
-Deliverable:
-- per-watcher environment controls GH deployment API environment.
+Tasks:
 
-### Phase 3: Frontend watcher forms
-
-1. Add field in Add Watcher flow.
-2. Add field in Edit Watcher flow.
-3. Include in API payloads.
-4. Display in watcher detail summary.
+1. Replace `Installation Profile` dropdown with grouped checkboxes.
+2. Add short help text under each group describing what it enables.
+3. Add optional preset buttons that populate the checkboxes.
+4. Show dependencies automatically:
+   - selecting ARR implies IIS core
+   - selecting PHP hosting implies IIS core + FastCGI
+   - selecting URL Rewrite may imply IIS core
+5. Keep the wizard understandable for simple installs.
 
 Deliverable:
-- users can manage environment per watcher from dashboard.
+- installer UI reflects real Windows capability choices
 
-### Phase 4: Tests
+### Phase 3: Add IIS capability tiers for future workloads
 
-1. Unit test environment resolution helper.
-2. Extend handler tests (or add minimal tests) for create/update environment field mapping.
-3. Smoke check compile + existing targeted tests.
+Prepare the installer for richer IIS hosting.
+
+Tasks:
+
+1. Separate IIS base features from IIS add-ons.
+2. Define the minimal feature set for:
+   - static hosting
+   - PHP hosting
+   - reverse proxy only
+3. Add validation checks to confirm required Windows modules are active.
+4. Update install summary to show exactly what got enabled.
 
 Deliverable:
-- confidence on regression and behavior.
+- installer can support multiple IIS workload types without new profile explosion
 
-### Phase 5: Documentation
+### Phase 4: Runtime alignment for IIS-managed deployments
 
-1. Update README and AGENTS docs for per-watcher environment precedence.
-2. Add migration/usage notes and examples.
+Once installer groundwork is in place, improve Watcher runtime support.
+
+Tasks:
+
+1. Expand service/runtime metadata for IIS-backed workloads.
+2. Add IIS provisioning support for static site deployments.
+3. Add status checks for:
+   - app pool existence
+   - site existence
+   - binding/path drift
+4. Keep provisioning idempotent and safe.
 
 Deliverable:
-- docs align with behavior.
+- Watcher begins managing IIS resources, not only deployed files
+
+### Phase 5: PHP deployment support design
+
+After installer and basic IIS management are stable, add PHP-specific support.
+
+Tasks:
+
+1. Decide runtime model:
+   - system PHP already installed
+   - Watcher-assisted PHP bootstrap
+   - bundled PHP runtime
+2. Define service type semantics for PHP workloads.
+3. Decide whether PHP sites are modeled as:
+   - new service type, or
+   - IIS sub-mode under current static/IIS family
+4. Define needed artifacts/config support:
+   - `web.config`
+   - FastCGI mapping
+   - environment/config file management
+   - writable directories
+5. Add safety/validation around app pool and PHP runtime compatibility.
+
+Deliverable:
+- clear implementation path for IIS PHP deployments
 
 ---
 
-## Suggested Implementation Order (Execution Priority)
+## Design Principles
 
-1. Model + DTO + handlers.
-2. Agent resolution logic + logging.
-3. Frontend forms.
-4. Tests.
-5. Docs.
+### 1. Presets should assist, not constrain
 
-Rationale:
-- Keeps backend contract stable before UI wiring.
-- Ensures runtime behavior exists before exposing controls.
+Preset buttons are useful, but they should only pre-select modules. Users should still be able to adjust checkboxes afterward.
+
+### 2. Installer choices should map to real Windows capabilities
+
+We should avoid vague labels where possible. If a checkbox installs or enables a Windows component, the UI should say so.
+
+### 3. Dependencies should be automatic and visible
+
+If a user selects ARR, the installer should make it obvious that IIS core is also required.
+
+### 4. Runtime should not assume modules that installer never offered
+
+As Watcher grows IIS/PHP support, the installer and runtime should stay aligned so operators are not surprised.
+
+### 5. Keep the simple path simple
+
+A user deploying only Go binaries should still be able to install Watcher quickly without learning IIS terminology.
+
+---
+
+## Open Decisions
+
+1. Do we keep the old profile dropdown temporarily during transition, or replace it immediately with checkboxes?
+2. Should PHP support mean:
+   - install IIS prerequisites only, or
+   - also install PHP runtime automatically?
+3. Should URL Rewrite be considered part of all IIS workloads, or only static/proxy/PHP presets that need it?
+4. Do we want ARR as a standalone capability even when no static/PHP site is being hosted by Watcher?
+5. Should the installer write selected capabilities into `.env` or another machine-local metadata file for diagnostics?
 
 ---
 
 ## Acceptance Criteria
 
-1. New watchers can be created with `deployment_environment`.
-2. Existing watchers can be updated with `deployment_environment`.
-3. For watcher with env set, GH deployment uses watcher env.
-4. For watcher env empty and global env set, GH deployment uses global env.
-5. If both empty, GH deployment integration is skipped with explicit log reason.
-6. UI supports editing this value in watcher create/edit screens.
-7. No regression to deploy flow, rollback flow, or non-GH deployment behavior.
+1. Installer no longer relies solely on the current profile enum to decide what Windows components to install.
+2. Users can see Windows modules grouped by service type usage.
+3. Installer can represent at least these combinations cleanly:
+   - NSSM only
+   - IIS static only
+   - IIS static + ARR
+   - IIS PHP prerequisites
+4. Installer summary clearly shows what was selected and what was actually installed/enabled.
+5. The resulting structure makes upcoming IIS site automation easier to add.
 
 ---
 
-## Manual Verification Checklist
+## Suggested Immediate Next Step
 
-1. Set global `ENVIRONMENT=production`.
-2. Watcher A set `deployment_environment=staging`.
-3. Watcher B leave empty.
-4. Trigger deployments for both.
-5. Verify in GitHub Deployments:
-   - A uses `staging`
-   - B uses `production`
-6. Clear global env and watcher env; trigger deploy:
-   - deployment should proceed
-   - GH deployment status integration should be skipped with clear log message
+Start with Phase 1 and Phase 2 together in a minimal form:
 
----
+1. keep existing install behavior intact underneath
+2. refactor the script to use explicit capability flags
+3. replace the profile dropdown with grouped checkboxes plus preset buttons
 
-## Risks and Mitigations
-
-### Risk: Misconfigured environment names
-- Mitigation: explicit log hints and UI helper text.
-
-### Risk: Hidden fallback confusion
-- Mitigation: always log resolved environment and source (watcher/global).
-
-### Risk: API/UI drift
-- Mitigation: keep field names identical across model/DTO/UI (`deployment_environment`).
-
-### Risk: Token permission failures mistaken for env issues
-- Mitigation: preserve and improve 401/403/404/422 hinting in GitHub client errors.
-
----
-
-## Rollout Notes
-
-- Safe to ship as additive change.
-- No downtime migration required.
-- Recommend release note entry:
-  - "Per-watcher GitHub deployment environment with global fallback"
-
----
-
-## Optional Follow-Up Enhancements (Not in this phase)
-
-1. Environment picker with known values from repo metadata.
-2. Per-watcher toggle: enable/disable GitHub deployment status reporting.
-3. Validation endpoint: test GitHub deployment API credentials + environment before save.
-4. Audit log entry when deployment environment changes.
-
+That gives us a much better foundation before we add IIS site creation and later PHP deployment support.
