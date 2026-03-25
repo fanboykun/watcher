@@ -7,7 +7,9 @@ The release zip contains:
 ```
 watcher-vX.Y.Z.zip
   watcher.exe               the watcher agent binary (API + dashboard embedded)
-  install.bat               wrapper script to launch GUI wizard
+  installer.exe             experimental launcher (optional)
+  install.bat               recommended launcher
+  install-debug.bat         debug launcher for visible PowerShell output
   shell/
     install-watcher.ps1     bootstrap script (installs dependencies, registers service)
   .env.example              example config — copy to .env and edit
@@ -32,17 +34,30 @@ The installation is driven by a clean, interactive Windows GUI that automaticall
 1. Extract the release zip to your preferred directory (e.g., `C:\apps\watcher\`)
 2. Double-click **`install.bat`**
 
+Compatibility options:
+
+- `install-debug.bat` launches the installer in debug mode with visible PowerShell output
+- `installer.exe` is optional/experimental and not the primary path for now
+
 > **Note:** If you prefer running it from an existing Administrator PowerShell prompt, you can use:
 > `Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1`
 
-The GUI wizard will ask you to select an **Installation Profile**:
+The GUI wizard now starts with grouped **Windows capabilities** plus quick preset buttons.
 
-1. **Binary services only**: Installs Chocolatey + NSSM
-2. **Static sites only**: Enables IIS + URL Rewrite
-3. **Both**: Installs NSSM + IIS + URL Rewrite
-4. **Full stack**: Installs everything above plus Application Request Routing (ARR) for reverse proxying
+Core capability groups:
 
-Depending on your profile selection, the wizard will:
+1. **Binary services**: Installs Chocolatey + NSSM
+2. **IIS hosting**: Enables IIS + management tools + URL Rewrite
+3. **Reverse proxy**: Installs ARR and enables IIS proxy support
+
+Quick presets:
+
+1. **Binary Services**
+2. **IIS Static**
+3. **Hybrid**
+4. **Full Stack**
+
+Depending on the selected capabilities, the wizard will:
 
 1. Install **Chocolatey** and **NSSM**
 2. Enable **IIS** Windows features, download and install **URL Rewrite** / **ARR**
