@@ -803,6 +803,32 @@ func TestUpdateDeploymentStatus_NoLogURL(t *testing.T) {
 	}
 }
 
+func TestUpdateDeploymentStatus_TruncatesLongDescription(t *testing.T) {
+	longDescription := strings.Repeat("deploy failed because configuration is invalid; ", 5)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+
+		if got := body["description"]; len([]rune(got)) > githubDeploymentStatusDescriptionLimit {
+			t.Fatalf("description length = %d, want <= %d", len([]rune(got)), githubDeploymentStatusDescriptionLimit)
+		}
+		if got := body["description"]; !strings.HasSuffix(got, "...") {
+			t.Fatalf("description = %q, want truncated suffix", got)
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{"id": 101})
+	}))
+	defer server.Close()
+
+	client := newTestClient("ghp_token", server)
+	err := client.UpdateDeploymentStatus(context.Background(), "org", "repo", 1, "failure", "", longDescription)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestUpdateDeploymentStatus_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
