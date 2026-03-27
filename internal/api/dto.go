@@ -53,7 +53,8 @@ type CreateServiceRequest struct {
 	ServiceType        string              `json:"service_type"` // "nssm" (default) or "static"
 	WindowsServiceName string              `json:"windows_service_name" binding:"required"`
 	BinaryName         string              `json:"binary_name"` // NSSM only
-	EnvFile            string              `json:"env_file"`    // NSSM only
+	StartArguments     string              `json:"start_arguments"`
+	EnvFile            string              `json:"env_file"` // NSSM only
 	HealthCheckURL     string              `json:"health_check_url"`
 	IISAppPool         string              `json:"iis_app_pool"`  // Static only
 	IISSiteName        string              `json:"iis_site_name"` // Static only
@@ -67,6 +68,7 @@ type UpdateServiceRequest struct {
 	ServiceType        *string              `json:"service_type"`
 	WindowsServiceName *string              `json:"windows_service_name"`
 	BinaryName         *string              `json:"binary_name"`
+	StartArguments     *string              `json:"start_arguments"`
 	EnvFile            *string              `json:"env_file"`
 	HealthCheckURL     *string              `json:"health_check_url"`
 	IISAppPool         *string              `json:"iis_app_pool"`

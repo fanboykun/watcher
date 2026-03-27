@@ -56,6 +56,7 @@ type ServiceConfig struct {
 	ServiceType        string // "nssm" or "static"
 	WindowsServiceName string
 	BinaryName         string
+	StartArguments     string
 	EnvFile            string
 	HealthCheckURL     string
 	IISAppPool         string
@@ -93,6 +94,7 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 			ServiceType:        svcType,
 			WindowsServiceName: s.WindowsServiceName,
 			BinaryName:         s.BinaryName,
+			StartArguments:     s.StartArguments,
 			EnvFile:            s.EnvFile,
 			HealthCheckURL:     s.HealthCheckURL,
 			IISAppPool:         s.IISAppPool,

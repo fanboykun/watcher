@@ -69,6 +69,7 @@ let confirmAction: (() => Promise<void> | void) | null = null;
 	let svcType = $state<'nssm' | 'static'>('nssm');
 	let svcName = $state('');
 	let svcBinary = $state('');
+	let svcStartArguments = $state('');
 	let svcEnvFile = $state('');
 	let svcEnvContent = $state('');
 	let svcConfigFiles = $state<ServiceConfigFile[]>([]);
@@ -235,6 +236,7 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 				service_type: svcType,
 				windows_service_name: svcName,
 				binary_name: svcBinary,
+				start_arguments: svcStartArguments,
 				env_file: svcEnvFile,
 				env_content: svcEnvContent,
 				config_files: svcConfigFiles.filter((file) => file.file_path.trim() !== ''),
@@ -247,6 +249,7 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 			svcType = 'nssm';
 			svcName =
 				svcBinary =
+				svcStartArguments =
 				svcEnvFile =
 				svcEnvContent =
 				svcHealthURL =
@@ -1149,6 +1152,10 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 				<div class="space-y-2">
 					<Label for="svcBinary">Binary Name</Label>
 					<Input id="svcBinary" placeholder="my-app.exe" bind:value={svcBinary} required />
+				</div>
+				<div class="space-y-2">
+					<Label for="svcStartArguments">Start Arguments (optional)</Label>
+					<Input id="svcStartArguments" placeholder="serve --port 8080" bind:value={svcStartArguments} />
 				</div>
 				<div class="space-y-2">
 					<Label for="svcEnvFile">Env File (optional)</Label>

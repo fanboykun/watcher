@@ -63,6 +63,7 @@ export interface Service {
 	service_type: 'nssm' | 'static';
 	windows_service_name: string;
 	binary_name: string;
+	start_arguments: string;
 	env_file: string;
 	health_check_url: string;
 	iis_app_pool: string;

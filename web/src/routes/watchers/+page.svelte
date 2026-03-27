@@ -86,6 +86,7 @@
 				service_type: 'nssm',
 				windows_service_name: formServiceName,
 				binary_name: formServiceName ? `${formServiceName}.exe` : 'app.exe',
+				start_arguments: '',
 				env_file: '.env',
 				env_content: '',
 				config_files: [],
@@ -146,6 +147,7 @@
 			service_type: 'nssm',
 			windows_service_name: `${formServiceName}-extra`,
 			binary_name: formServiceName ? `${formServiceName}-extra.exe` : 'app.exe',
+			start_arguments: '',
 			env_file: '.env',
 			env_content: '',
 			config_files: [],
@@ -497,6 +499,10 @@
 								<div class="space-y-1">
 									<Label class="text-xs">Executable Name</Label>
 									<Input class="h-8 text-xs" bind:value={svc.binary_name} placeholder="myapp.exe" />
+								</div>
+								<div class="space-y-1">
+									<Label class="text-xs">Start Arguments</Label>
+									<Input class="h-8 text-xs" bind:value={svc.start_arguments} placeholder="serve --port 8080" />
 								</div>
 								<div class="space-y-1">
 									<Label class="text-xs">Env file relative path</Label>
