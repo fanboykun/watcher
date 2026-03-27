@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+var knownAssetSuffixTokens = map[string]struct{}{
+	"windows": {}, "linux": {}, "darwin": {}, "macos": {},
+	"amd64": {}, "x64": {}, "386": {}, "x86": {}, "arm64": {}, "arm": {},
+}
+
 const defaultAPIBase = "https://api.github.com"
 
 type VersionMetadata struct {
@@ -395,6 +400,63 @@ func parseReleaseDownloadURL(rawURL string) (owner, repo, tag, assetName string,
 	return parts[0], parts[1], parts[4], parts[5], nil
 }
 
+func deriveServiceNameFromAsset(assetName string) string {
+	name := strings.TrimSpace(assetName)
+
+	for _, ext := range []string{".tar.gz", ".tar.xz", ".tar.bz2", ".tgz", ".zip", ".exe", ".msi"} {
+		if strings.HasSuffix(strings.ToLower(name), ext) {
+			name = name[:len(name)-len(ext)]
+			break
+		}
+	}
+
+	parts := strings.Split(name, "-")
+	for len(parts) > 1 {
+		last := parts[len(parts)-1]
+		if isVersionLikeToken(last) || isKnownAssetSuffixToken(last) {
+			parts = parts[:len(parts)-1]
+			continue
+		}
+		break
+	}
+
+	derived := strings.Join(parts, "-")
+	if strings.TrimSpace(derived) == "" {
+		return name
+	}
+	return derived
+}
+
+func isKnownAssetSuffixToken(token string) bool {
+	_, ok := knownAssetSuffixTokens[strings.ToLower(strings.TrimSpace(token))]
+	return ok
+}
+
+func isVersionLikeToken(token string) bool {
+	s := strings.TrimSpace(strings.ToLower(token))
+	if s == "" {
+		return false
+	}
+	if strings.HasPrefix(s, "v") {
+		s = s[1:]
+	}
+	if s == "" {
+		return false
+	}
+
+	hasDigit := false
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r == '.', r == '_':
+		default:
+			return false
+		}
+	}
+	return hasDigit
+}
+
 // InspectRepoResponse represents the payload returned for the UI to preview releases.
 type InspectRepoResponse struct {
 	LatestVersion string   `json:"latest_version"`
@@ -595,20 +657,7 @@ func (g *GitHubClient) FetchMetadataFromRepo(ctx context.Context, repoURL string
 	}
 
 	for _, asset := range release.Assets {
-		// Map asset name to a "service". We strip common extensions for matching.
-		name := asset.Name
-		name = strings.TrimSuffix(name, ".zip")
-		name = strings.TrimSuffix(name, ".exe")
-
-		// Also try to strip version suffixes like -v1.2.3 or -1.2.3
-		// We look for a hyphen followed by 'v' and a digit, or just a hyphen and a digit.
-		serviceName := name
-		if idx := strings.LastIndex(name, "-"); idx != -1 {
-			suffix := name[idx+1:]
-			if len(suffix) > 0 && (suffix[0] == 'v' || (suffix[0] >= '0' && suffix[0] <= '9')) {
-				serviceName = name[:idx]
-			}
-		}
+		serviceName := deriveServiceNameFromAsset(asset.Name)
 
 		meta.Services[serviceName] = ServiceMeta{
 			Version:     release.TagName,

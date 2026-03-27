@@ -466,12 +466,45 @@ function Configure-WatcherService {
     Write-OK "NSSM service configured"
 
     Write-Info ("Starting service: {0}" -f $Config.ServiceName)
-    Invoke-ExternalCommand -FilePath $Config.NssmPath -Arguments @("start", $Config.ServiceName) -Description "nssm start"
-    Start-Sleep -Seconds 4
+    $startOutput = ""
+    try {
+        $startOutput = & $Config.NssmPath start $Config.ServiceName 2>&1 | Out-String
+    } catch {
+        $startOutput = ($_ | Out-String)
+    }
 
-    $service = Get-Service $Config.ServiceName -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace($startOutput)) {
+        foreach ($line in ($startOutput -split "`r?`n")) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) {
+                Write-Info ("  {0}" -f $line.TrimEnd())
+            }
+        }
+    }
+
+    $startOutputUpper = $startOutput.ToUpperInvariant()
+    if (
+        $LASTEXITCODE -ne 0 -and
+        $startOutputUpper -notmatch "SERVICE_START_PENDING" -and
+        $startOutputUpper -notmatch "SERVICE_RUNNING"
+    ) {
+        Fail-Install ("nssm start failed for service {0}" -f $Config.ServiceName)
+    }
+
+    $service = $null
+    for ($i = 0; $i -lt 15; $i++) {
+        Start-Sleep -Seconds 2
+        $service = Get-Service $Config.ServiceName -ErrorAction SilentlyContinue
+        if ($service -and $service.Status -eq "Running") {
+            break
+        }
+        if ($service) {
+            Write-Info ("Waiting for service to start; current status: {0}" -f $service.Status)
+        }
+    }
+
     if (-not $service -or $service.Status -ne "Running") {
-        Fail-Install ("Service {0} did not start. Check logs in {1}" -f $Config.ServiceName, $Config.LogDir)
+        $finalStatus = if ($service) { $service.Status } else { "missing" }
+        Fail-Install ("Service {0} did not reach Running state (last status: {1}). Check logs in {2}" -f $Config.ServiceName, $finalStatus, $Config.LogDir)
     }
 
     Write-OK "Watcher service is running"

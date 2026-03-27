@@ -888,3 +888,65 @@ func TestFetchLatestRelease_InvalidRepoURL(t *testing.T) {
 		t.Fatal("expected error for invalid URL, got nil")
 	}
 }
+
+func TestDeriveServiceNameFromAsset(t *testing.T) {
+	tests := []struct {
+		asset string
+		want  string
+	}{
+		{asset: "fktool-v0.1.1-windows-amd64.zip", want: "fktool"},
+		{asset: "fktool-v0.1.1-windows-amd64", want: "fktool"},
+		{asset: "fktool-windows-amd64-v0.1.1.zip", want: "fktool"},
+		{asset: "my-api-service-v1.2.3-linux-arm64.tar.gz", want: "my-api-service"},
+		{asset: "watcher.exe", want: "watcher"},
+		{asset: "checksums.txt", want: "checksums.txt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.asset, func(t *testing.T) {
+			if got := deriveServiceNameFromAsset(tt.asset); got != tt.want {
+				t.Fatalf("deriveServiceNameFromAsset(%q) = %q, want %q", tt.asset, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFetchMetadataFromRepo_DerivesServiceNamesFromAssets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/fanboykun/fktool/releases/latest" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		release := githubRelease{
+			TagName:     "v0.1.1",
+			PublishedAt: "2026-03-27T09:00:00Z",
+			Assets: []githubAsset{
+				{
+					ID:                 1,
+					Name:               "fktool-v0.1.1-windows-amd64.zip",
+					BrowserDownloadURL: "https://github.com/fanboykun/fktool/releases/download/v0.1.1/fktool-v0.1.1-windows-amd64.zip",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(release)
+	}))
+	defer server.Close()
+
+	client := newTestClient("", server)
+	meta, err := client.FetchMetadataFromRepo(context.Background(), "https://github.com/fanboykun/fktool")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	svc, ok := meta.Services["fktool"]
+	if !ok {
+		t.Fatalf("expected service key fktool, got keys: %v", keys(meta.Services))
+	}
+	if svc.Version != "v0.1.1" {
+		t.Fatalf("version = %q, want %q", svc.Version, "v0.1.1")
+	}
+	if svc.Artifact != "fktool-v0.1.1-windows-amd64.zip" {
+		t.Fatalf("artifact = %q", svc.Artifact)
+	}
+}
