@@ -433,6 +433,7 @@ func (h *Handler) CreateService(c *gin.Context) {
 		ServiceType:        defaultServiceType(req.ServiceType),
 		WindowsServiceName: req.WindowsServiceName,
 		BinaryName:         req.BinaryName,
+		StartArguments:     req.StartArguments,
 		EnvFile:            req.EnvFile,
 		HealthCheckURL:     req.HealthCheckURL,
 		IISAppPool:         req.IISAppPool,
@@ -497,6 +498,9 @@ func (h *Handler) UpdateService(c *gin.Context) {
 	}
 	if req.BinaryName != nil {
 		updates["binary_name"] = *req.BinaryName
+	}
+	if req.StartArguments != nil {
+		updates["start_arguments"] = *req.StartArguments
 	}
 	if req.EnvFile != nil {
 		updates["env_file"] = *req.EnvFile

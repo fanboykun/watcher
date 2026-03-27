@@ -18,6 +18,7 @@ var knownAssetSuffixTokens = map[string]struct{}{
 }
 
 const defaultAPIBase = "https://api.github.com"
+const githubDeploymentStatusDescriptionLimit = 140
 
 type VersionMetadata struct {
 	Services map[string]ServiceMeta `json:"services"`
@@ -535,7 +536,7 @@ func (g *GitHubClient) UpdateDeploymentStatus(ctx context.Context, owner, repo s
 
 	body := map[string]string{
 		"state":       state,
-		"description": description,
+		"description": limitGitHubDeploymentDescription(description, githubDeploymentStatusDescriptionLimit),
 	}
 	if logURL != "" {
 		body["log_url"] = logURL
@@ -565,6 +566,22 @@ func (g *GitHubClient) UpdateDeploymentStatus(ctx context.Context, owner, repo s
 
 	g.log.Debug("deployment status updated", "deployment_id", deploymentID, "state", state)
 	return nil
+}
+
+func limitGitHubDeploymentDescription(description string, maxRunes int) string {
+	description = strings.TrimSpace(description)
+	if maxRunes <= 0 {
+		return ""
+	}
+
+	runes := []rune(description)
+	if len(runes) <= maxRunes {
+		return description
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
 }
 
 func githubDeployHint(status int) string {

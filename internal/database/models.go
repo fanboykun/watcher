@@ -53,7 +53,8 @@ type Service struct {
 	ServiceType        string              `gorm:"not null;default:'nssm'" json:"service_type"` // "nssm" or "static"
 	WindowsServiceName string              `gorm:"not null" json:"windows_service_name"`
 	BinaryName         string              `gorm:"not null;default:''" json:"binary_name"` // NSSM only
-	EnvFile            string              `gorm:"not null;default:''" json:"env_file"`    // NSSM only
+	StartArguments     string              `gorm:"not null;default:''" json:"start_arguments"`
+	EnvFile            string              `gorm:"not null;default:''" json:"env_file"` // NSSM only
 	HealthCheckURL     string              `gorm:"not null;default:''" json:"health_check_url"`
 	IISAppPool         string              `gorm:"not null;default:''" json:"iis_app_pool"`  // Static only
 	IISSiteName        string              `gorm:"not null;default:''" json:"iis_site_name"` // Static only

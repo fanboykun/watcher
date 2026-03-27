@@ -292,6 +292,7 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 
 		settings := [][]string{
 			{"AppDirectory", d.wcfg.InstallDir},
+			{"AppParameters", svc.StartArguments},
 			{"Start", "SERVICE_AUTO_START"},
 			{"AppStdout", filepath.Join(logDir, svc.WindowsServiceName+".out.log")},
 			{"AppStderr", filepath.Join(logDir, svc.WindowsServiceName+".err.log")},
@@ -313,11 +314,18 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 
 		d.l("service installed", "name", svc.WindowsServiceName, "binary", binPath)
 	} else {
-		// Service exists -- just update the binary path
-		d.l("updating service binary", "name", svc.WindowsServiceName, "binary", binPath)
-		out, err := exec.Command(d.nssmPath, "set", svc.WindowsServiceName, "Application", binPath).CombinedOutput()
-		if err != nil {
-			d.lWarn("failed to update binary path", "name", svc.WindowsServiceName, "error", err, "output", string(out))
+		// Service exists -- update its executable settings in place.
+		d.l("updating service settings", "name", svc.WindowsServiceName, "binary", binPath)
+		settings := [][]string{
+			{"Application", binPath},
+			{"AppDirectory", d.wcfg.InstallDir},
+			{"AppParameters", svc.StartArguments},
+		}
+		for _, kv := range settings {
+			out, err := exec.Command(d.nssmPath, "set", svc.WindowsServiceName, kv[0], kv[1]).CombinedOutput()
+			if err != nil {
+				d.lWarn("failed to update service setting", "name", svc.WindowsServiceName, "key", kv[0], "error", err, "output", string(out))
+			}
 		}
 	}
 
