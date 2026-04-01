@@ -11,6 +11,7 @@
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Eye, Plus, Trash2, Zap, Clock, AlertCircle, ArrowRight, Check } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
+	import { goto } from '$app/navigation';
 
 	let watchers = $state<Watcher[]>([]);
 	let error = $state('');
@@ -115,9 +116,16 @@
 				await api.createService(w.id, s);
 			}
 
+			try {
+				await api.triggerCheck(w.id);
+			} catch {
+				// Let the detail page load even if the immediate trigger fails.
+			}
+
 			showCreate = false;
 			resetForm();
 			await load();
+			await goto(resolve(`/watchers/${w.id}?tab=deploys`));
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to create watcher';
 		} finally {
@@ -337,8 +345,17 @@
 
 <!-- Create Watcher Dialog Multi-step -->
 <Dialog.Root bind:open={showCreate}>
-	<Dialog.Content class="sm:max-w-[600px] max-h-[85vh] overflow-y-auto">
-		<Dialog.Header>
+	<Dialog.Content class="max-h-[90vh] w-[min(96vw,42rem)] overflow-hidden p-0 sm:max-w-2xl">
+		<form
+			class="flex max-h-[calc(90vh-5.5rem)] flex-col"
+			onsubmit={(e) => {
+				e.preventDefault();
+				if (createStep === 1) inspectRepo();
+				else if (createStep === 2) jumpToNext();
+				else createWatcherAndServices();
+			}}
+		>
+				<Dialog.Header class="shrink-0 border-b border-border/70 px-6 pt-6 pb-4">
 			<Dialog.Title>Add Watcher</Dialog.Title>
 			<Dialog.Description>
 				{#if createStep === 1}
@@ -351,220 +368,219 @@
 			</Dialog.Description>
 		</Dialog.Header>
 		
-		{#if error}
-			<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
-				{error}
-			</div>
-		{/if}
-
-		<form
-			class="space-y-4"
-			onsubmit={(e) => {
-				e.preventDefault();
-				if (createStep === 1) inspectRepo();
-				else if (createStep === 2) jumpToNext();
-				else createWatcherAndServices();
-			}}
-		>
-			{#if createStep === 1}
-				<div class="space-y-3 py-4">
-					<Label for="metadataURL">GitHub Repository URL</Label>
-					<div class="flex gap-2">
-						<Input
-							id="metadataURL"
-							placeholder="https://github.com/org/repo"
-							bind:value={formMetadataURL}
-							required
-						/>
-						<Button.Root type="submit" disabled={inspecting}>
-							{inspecting ? 'Inspecting...' : 'Next'} <ArrowRight class="ml-2 h-4 w-4" />
-						</Button.Root>
+			<div class="flex-1 overflow-y-auto px-6 py-5">
+				{#if error}
+					<div class="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+						{error}
 					</div>
-					<div class="space-y-2 rounded-md border border-border bg-muted/20 p-3">
-						<label class="inline-flex items-center gap-2 text-sm">
-							<input type="checkbox" bind:checked={useCustomGitHubToken} class="rounded border-border" />
-							Use custom GitHub token for this watcher
-						</label>
-						<Input
-							id="watcherGithubTokenStep1"
-							type="password"
-							placeholder="ghp_xxx"
-							bind:value={formGitHubToken}
-							disabled={!useCustomGitHubToken}
-						/>
-						<p class="text-xs text-muted-foreground">
-							Useful for private repos or when global <code>GITHUB_TOKEN</code> cannot access this repo.
-						</p>
-						<p class="text-xs text-muted-foreground">
-							Fine-grained PAT minimum: <code>Contents: Read</code>. If deployment status reporting is used, also add <code>Deployments: Read and write</code>.
-						</p>
-						<div class="rounded border border-border bg-background/60 p-2 text-xs text-muted-foreground space-y-1">
-							<p class="font-medium text-foreground/90">Org private repo checklist</p>
-							<p>1. Token has access to the target org repo(s).</p>
-							<p>2. SSO/SAML authorization for this token is approved.</p>
-							<p>3. Token owner has repo/team access in the org.</p>
-							<p>4. Org policy allows PAT type being used (fine-grained/classic).</p>
-							<p>5. Repo has at least one published release (not only draft/prerelease).</p>
+				{/if}
+
+				{#if createStep === 1}
+					<div class="space-y-4">
+						<div class="space-y-3">
+							<Label for="metadataURL">GitHub Repository URL</Label>
+							<Input
+								id="metadataURL"
+								placeholder="https://github.com/org/repo"
+								bind:value={formMetadataURL}
+								required
+							/>
 						</div>
-					</div>
-					<p class="text-xs text-muted-foreground">
-						Supported: Public & Private Repositories (if token configured).
-						We will fetch the latest release and find the corresponding assets.
-					</p>
-				</div>
-			{:else if createStep === 2}
-				<div class="bg-muted/30 rounded border p-3 flex justify-between items-center text-sm">
-					<div>
-						<span class="font-medium">Detected:</span> {inspectResult?.latest_version || 'Unknown tag'}
-					</div>
-					<div class="text-muted-foreground">
-						{inspectResult?.assets?.length || 0} assets attached
-					</div>
-				</div>
-
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div class="space-y-2">
-						<Label for="name">Watcher Display Name</Label>
-						<Input id="name" placeholder="my-app" bind:value={formName} required />
-					</div>
-					<div class="space-y-2">
-						<Label for="serviceName">App/Service Name ID</Label>
-						<Input id="serviceName" placeholder="my-app" bind:value={formServiceName} required />
-					</div>
-				</div>
-
-				<div class="space-y-2">
-					<Label for="installDir">Base Install Directory (auto extracts zip here)</Label>
-					<Input id="installDir" placeholder="C:\apps\my-app" bind:value={formInstallDir} required />
-				</div>
-
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div class="space-y-2">
-						<Label for="interval">Check Interval (sec)</Label>
-						<Input id="interval" type="number" min="10" bind:value={formInterval} />
-					</div>
-					<div class="space-y-2">
-						<Label for="hcURL">Global Health Check URL (optional)</Label>
-						<Input id="hcURL" placeholder="http://localhost:3000/health" bind:value={formHcURL} />
-					</div>
-				</div>
-
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div class="space-y-2">
-						<Label for="deploymentEnvironment">Deployment Environment (GitHub)</Label>
-						<Input id="deploymentEnvironment" placeholder="production" bind:value={formDeploymentEnvironment} />
-						<p class="text-xs text-muted-foreground">Optional. Falls back to global `ENVIRONMENT` if empty.</p>
-					</div>
-					<div class="space-y-2 text-xs text-muted-foreground">
-						<p>GitHub token mode:</p>
-						<p class="font-medium">{useCustomGitHubToken && formGitHubToken.trim() ? 'Custom watcher token configured' : 'Using global GITHUB_TOKEN'}</p>
-					</div>
-				</div>
-
-				<div class="flex items-center gap-2">
-					<input
-						type="checkbox"
-						id="hcEnabled"
-						bind:checked={formHcEnabled}
-						class="rounded border-border"
-					/>
-					<Label for="hcEnabled">Enable Health Checks across services</Label>
-				</div>
-
-				<Dialog.Footer class="mt-4">
-					<Button.Root variant="outline" type="button" onclick={() => createStep = 1}>Back</Button.Root>
-					<Button.Root type="submit">Continue <ArrowRight class="ml-2 h-4 w-4" /></Button.Root>
-				</Dialog.Footer>
-			{:else if createStep === 3}
-				<div class="space-y-4">
-					{#each formServices as svc, i (i)}
-						<div class="border rounded-md p-3 space-y-3 relative bg-card">
-							<Button.Root variant="ghost" size="icon" class="absolute top-2 right-2 h-6 w-6 text-red-400" type="button" onclick={() => removeServiceDraft(i)}>
-								<Trash2 class="h-3 w-3" />
-							</Button.Root>
-							<div class="font-medium text-sm">Service #{i+1}</div>
-							
-							<div class="grid gap-3 sm:grid-cols-2">
-								<div class="space-y-1">
-									<Label class="text-xs">Type</Label>
-									<Select bind:value={svc.service_type} class="h-8 text-xs">
-										<option value="nssm">NSSM Native Windows</option>
-										<option value="static">Static IIS App</option>
-									</Select>
-								</div>
-								<div class="space-y-1">
-									<Label class="text-xs">Window Service Name</Label>
-									<Input class="h-8 text-xs" bind:value={svc.windows_service_name} placeholder="myapp-web" />
-								</div>
-								<div class="space-y-1">
-									<Label class="text-xs">Executable Name</Label>
-									<Input class="h-8 text-xs" bind:value={svc.binary_name} placeholder="myapp.exe" />
-								</div>
-								<div class="space-y-1">
-									<Label class="text-xs">Start Arguments</Label>
-									<Input class="h-8 text-xs" bind:value={svc.start_arguments} placeholder="serve --port 8080" />
-								</div>
-								<div class="space-y-1">
-									<Label class="text-xs">Env file relative path</Label>
-									<Input class="h-8 text-xs" bind:value={svc.env_file} placeholder=".env.prod" />
-								</div>
-								<div class="space-y-1 sm:col-span-2">
-									<Label class="text-xs">Env content (optional)</Label>
-									<Textarea
-										class="min-h-[120px] font-mono text-xs text-blue-300"
-										bind:value={svc.env_content}
-										placeholder="KEY=VALUE&#10;API_PORT=3000"
-									/>
-									<p class="text-[11px] text-muted-foreground">
-										If provided, watcher writes this to <code>{svc.env_file || '.env'}</code> in install dir.
-									</p>
-								</div>
-								<div class="space-y-2 sm:col-span-2">
-									<div class="flex items-center justify-between">
-										<Label class="text-xs">Additional managed config files</Label>
-										<Button.Root variant="outline" size="sm" type="button" class="h-7 px-2 text-xs" onclick={() => addConfigFileDraft(i)}>
-											<Plus class="mr-1 h-3 w-3" /> Add file
-										</Button.Root>
-									</div>
-									{#if (svc.config_files || []).length > 0}
-										<div class="space-y-3 rounded-md border border-border/70 bg-background/50 p-3">
-											{#each svc.config_files || [] as file, fileIndex (fileIndex)}
-												<div class="space-y-2 rounded-md border border-border/60 bg-card/60 p-3">
-													<div class="flex items-center justify-between">
-														<Label class="text-xs">Config file #{fileIndex + 1}</Label>
-														<Button.Root
-															variant="ghost"
-															size="icon"
-															type="button"
-															class="h-7 w-7 text-red-400 hover:text-red-300"
-															onclick={() => removeConfigFileDraft(i, fileIndex)}
-														>
-															<Trash2 class="h-3 w-3" />
-														</Button.Root>
-													</div>
-													<Input class="h-8 text-xs" bind:value={file.file_path} placeholder="config.json or config/appsettings.json" />
-													<Textarea
-														class="min-h-[120px] font-mono text-xs text-blue-300"
-														bind:value={file.content}
-														placeholder={'{\n  "port": 3000\n}'}
-													/>
-												</div>
-											{/each}
-										</div>
-									{:else}
-										<p class="text-[11px] text-muted-foreground">Use this for files like <code>config.json</code>, <code>appsettings.json</code>, or other runtime config.</p>
-									{/if}
-								</div>
+						<div class="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+							<label class="inline-flex items-center gap-2 text-sm">
+								<input type="checkbox" bind:checked={useCustomGitHubToken} class="rounded border-border" />
+								Use custom GitHub token for this watcher
+							</label>
+							<Input
+								id="watcherGithubTokenStep1"
+								type="password"
+								placeholder="ghp_xxx"
+								bind:value={formGitHubToken}
+								disabled={!useCustomGitHubToken}
+							/>
+							<p class="text-xs text-muted-foreground">
+								Useful for private repos or when global <code>GITHUB_TOKEN</code> cannot access this repo.
+							</p>
+							<p class="text-xs text-muted-foreground">
+								Fine-grained PAT minimum: <code>Contents: Read</code>. If deployment status reporting is used, also add <code>Deployments: Read and write</code>.
+							</p>
+							<div class="space-y-1 rounded border border-border bg-background/60 p-2 text-xs text-muted-foreground">
+								<p class="font-medium text-foreground/90">Org private repo checklist</p>
+								<p>1. Token has access to the target org repo(s).</p>
+								<p>2. SSO/SAML authorization for this token is approved.</p>
+								<p>3. Token owner has repo/team access in the org.</p>
+								<p>4. Org policy allows PAT type being used (fine-grained/classic).</p>
+								<p>5. Repo has at least one published release (not only draft/prerelease).</p>
 							</div>
 						</div>
-					{/each}
-				</div>
+						<p class="text-xs text-muted-foreground">
+							Supported: Public & Private Repositories (if token configured).
+							We will fetch the latest release and find the corresponding assets.
+						</p>
+					</div>
+				{:else if createStep === 2}
+					<div class="space-y-4">
+						<div class="flex items-center justify-between rounded border bg-muted/30 p-3 text-sm">
+							<div>
+								<span class="font-medium">Detected:</span> {inspectResult?.latest_version || 'Unknown tag'}
+							</div>
+							<div class="text-muted-foreground">
+								{inspectResult?.assets?.length || 0} assets attached
+							</div>
+						</div>
 
-				<Button.Root variant="outline" size="sm" type="button" onclick={addServiceDraft} class="w-full border-dashed mt-2">
-					<Plus class="mr-2 h-3 w-3" /> Add Service Definition
-				</Button.Root>
+						<div class="grid gap-4 sm:grid-cols-2">
+							<div class="space-y-2">
+								<Label for="name">Watcher Display Name</Label>
+								<Input id="name" placeholder="my-app" bind:value={formName} required />
+							</div>
+							<div class="space-y-2">
+								<Label for="serviceName">App/Service Name ID</Label>
+								<Input id="serviceName" placeholder="my-app" bind:value={formServiceName} required />
+							</div>
+						</div>
 
-				<Dialog.Footer class="mt-4 pt-4 border-t">
+						<div class="space-y-2">
+							<Label for="installDir">Base Install Directory (auto extracts zip here)</Label>
+							<Input id="installDir" placeholder="C:\apps\my-app" bind:value={formInstallDir} required />
+						</div>
+
+						<div class="grid gap-4 sm:grid-cols-2">
+							<div class="space-y-2">
+								<Label for="interval">Check Interval (sec)</Label>
+								<Input id="interval" type="number" min="10" bind:value={formInterval} />
+							</div>
+							<div class="space-y-2">
+								<Label for="hcURL">Global Health Check URL (optional)</Label>
+								<Input id="hcURL" placeholder="http://localhost:3000/health" bind:value={formHcURL} />
+							</div>
+						</div>
+
+						<div class="grid gap-4 sm:grid-cols-2">
+							<div class="space-y-2">
+								<Label for="deploymentEnvironment">Deployment Environment (GitHub)</Label>
+								<Input id="deploymentEnvironment" placeholder="production" bind:value={formDeploymentEnvironment} />
+								<p class="text-xs text-muted-foreground">Optional. Falls back to global `ENVIRONMENT` if empty.</p>
+							</div>
+							<div class="space-y-2 text-xs text-muted-foreground">
+								<p>GitHub token mode:</p>
+								<p class="font-medium">{useCustomGitHubToken && formGitHubToken.trim() ? 'Custom watcher token configured' : 'Using global GITHUB_TOKEN'}</p>
+							</div>
+						</div>
+
+						<div class="flex items-center gap-2">
+							<input
+								type="checkbox"
+								id="hcEnabled"
+								bind:checked={formHcEnabled}
+								class="rounded border-border"
+							/>
+							<Label for="hcEnabled">Enable Health Checks across services</Label>
+						</div>
+					</div>
+				{:else if createStep === 3}
+					<div class="space-y-4">
+						{#each formServices as svc, i (i)}
+							<div class="relative space-y-3 rounded-md border bg-card p-3">
+								<Button.Root variant="ghost" size="icon" class="absolute top-2 right-2 h-6 w-6 text-red-400" type="button" onclick={() => removeServiceDraft(i)}>
+									<Trash2 class="h-3 w-3" />
+								</Button.Root>
+								<div class="text-sm font-medium">Service #{i+1}</div>
+
+								<div class="grid gap-3 sm:grid-cols-2">
+									<div class="space-y-1">
+										<Label class="text-xs">Type</Label>
+										<Select bind:value={svc.service_type} class="h-8 text-xs">
+											<option value="nssm">NSSM Native Windows</option>
+											<option value="static">Static IIS App</option>
+										</Select>
+									</div>
+									<div class="space-y-1">
+										<Label class="text-xs">Window Service Name</Label>
+										<Input class="h-8 text-xs" bind:value={svc.windows_service_name} placeholder="myapp-web" />
+									</div>
+									<div class="space-y-1">
+										<Label class="text-xs">Executable Name</Label>
+										<Input class="h-8 text-xs" bind:value={svc.binary_name} placeholder="myapp.exe" />
+									</div>
+									<div class="space-y-1">
+										<Label class="text-xs">Start Arguments</Label>
+										<Input class="h-8 text-xs" bind:value={svc.start_arguments} placeholder="serve --port 8080" />
+									</div>
+									<div class="space-y-1">
+										<Label class="text-xs">Env file relative path</Label>
+										<Input class="h-8 text-xs" bind:value={svc.env_file} placeholder=".env.prod" />
+									</div>
+									<div class="space-y-1 sm:col-span-2">
+										<Label class="text-xs">Env content (optional)</Label>
+										<Textarea
+											class="min-h-[120px] font-mono text-xs text-blue-300"
+											bind:value={svc.env_content}
+											placeholder="KEY=VALUE&#10;API_PORT=3000"
+										/>
+										<p class="text-[11px] text-muted-foreground">
+											If provided, watcher writes this to <code>{svc.env_file || '.env'}</code> in install dir.
+										</p>
+									</div>
+									<div class="space-y-2 sm:col-span-2">
+										<div class="flex items-center justify-between">
+											<Label class="text-xs">Additional managed config files</Label>
+											<Button.Root variant="outline" size="sm" type="button" class="h-7 px-2 text-xs" onclick={() => addConfigFileDraft(i)}>
+												<Plus class="mr-1 h-3 w-3" /> Add file
+											</Button.Root>
+										</div>
+										{#if (svc.config_files || []).length > 0}
+											<div class="space-y-3 rounded-md border border-border/70 bg-background/50 p-3">
+												{#each svc.config_files || [] as file, fileIndex (fileIndex)}
+													<div class="space-y-2 rounded-md border border-border/60 bg-card/60 p-3">
+														<div class="flex items-center justify-between">
+															<Label class="text-xs">Config file #{fileIndex + 1}</Label>
+															<Button.Root
+																variant="ghost"
+																size="icon"
+																type="button"
+																class="h-7 w-7 text-red-400 hover:text-red-300"
+																onclick={() => removeConfigFileDraft(i, fileIndex)}
+															>
+																<Trash2 class="h-3 w-3" />
+															</Button.Root>
+														</div>
+														<Input class="h-8 text-xs" bind:value={file.file_path} placeholder="config.json or config/appsettings.json" />
+														<Textarea
+															class="min-h-[120px] font-mono text-xs text-blue-300"
+															bind:value={file.content}
+															placeholder={'{\n  "port": 3000\n}'}
+														/>
+													</div>
+												{/each}
+											</div>
+										{:else}
+											<p class="text-[11px] text-muted-foreground">Use this for files like <code>config.json</code>, <code>appsettings.json</code>, or other runtime config.</p>
+										{/if}
+									</div>
+								</div>
+							</div>
+						{/each}
+
+						<Button.Root variant="outline" size="sm" type="button" onclick={addServiceDraft} class="mt-2 w-full border-dashed">
+							<Plus class="mr-2 h-3 w-3" /> Add Service Definition
+						</Button.Root>
+					</div>
+				{/if}
+			</div>
+
+			<Dialog.Footer class="shrink-0 border-t border-border/70 px-6 pt-4 pb-4">
+				{#if createStep === 1}
+					<Button.Root variant="outline" type="button" onclick={() => { showCreate = false; resetForm(); }}>
+						Cancel
+					</Button.Root>
+					<Button.Root type="submit" disabled={inspecting}>
+						{inspecting ? 'Inspecting...' : 'Next'} <ArrowRight class="ml-2 h-4 w-4" />
+					</Button.Root>
+				{:else if createStep === 2}
+					<Button.Root variant="outline" type="button" onclick={() => createStep = 1}>Back</Button.Root>
+					<Button.Root type="submit">Continue <ArrowRight class="ml-2 h-4 w-4" /></Button.Root>
+				{:else}
 					<Button.Root variant="outline" type="button" onclick={() => createStep = 2}>Back</Button.Root>
 					<Button.Root type="submit" disabled={creating}>
 						{#if creating}
@@ -573,8 +589,8 @@
 							<Check class="mr-2 h-4 w-4" /> Save Watcher & Services
 						{/if}
 					</Button.Root>
-				</Dialog.Footer>
-			{/if}
+				{/if}
+			</Dialog.Footer>
 		</form>
 	</Dialog.Content>
 </Dialog.Root>

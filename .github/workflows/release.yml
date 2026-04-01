@@ -32,6 +32,10 @@ on:
         required: false
         default: ""
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -188,8 +192,12 @@ jobs:
           NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
           echo "New tag: $NEW_TAG ($BUMP bump)"
 
-          git tag "$NEW_TAG"
-          git push origin "$NEW_TAG"
+          if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
+            echo "Tag $NEW_TAG already exists. Skipping tag creation."
+          else
+            git tag "$NEW_TAG"
+            git push origin "$NEW_TAG"
+          fi
 
           CHANGELOG_ESCAPED="${CHANGELOG//$'\n'/'%0A'}"
           echo "should_release=true"          >> $GITHUB_OUTPUT

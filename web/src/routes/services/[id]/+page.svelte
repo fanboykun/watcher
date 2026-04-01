@@ -5,10 +5,12 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Tabs from '$lib/components/ui/tabs';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Select } from '$lib/components/ui/select';
+	import { Label } from '$lib/components/ui/label';
 	import {
 		ArrowLeft,
 		Play,
@@ -22,7 +24,9 @@
 		FileText,
 		ExternalLink,
 		TerminalSquare,
-		Save
+		Save,
+		Pencil,
+		Plus
 	} from '@lucide/svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -44,6 +48,19 @@
 	let envContent = $state('');
 	let configFiles = $state<ServiceConfigFile[]>([]);
 	let savingEnv = $state(false);
+	let showEditService = $state(false);
+	let updatingService = $state(false);
+	let editSvcType = $state<'nssm' | 'static'>('nssm');
+	let editSvcName = $state('');
+	let editSvcBinary = $state('');
+	let editSvcStartArguments = $state('');
+	let editSvcEnvFile = $state('');
+	let editSvcEnvContent = $state('');
+	let editSvcHealthURL = $state('');
+	let editSvcIISAppPool = $state('');
+	let editSvcIISSiteName = $state('');
+	let editSvcPublicURL = $state('');
+	let editSvcConfigFiles = $state<ServiceConfigFile[]>([]);
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
@@ -51,11 +68,7 @@
 
 	onMount(async () => {
 		try {
-			const detail = await api.getService(id);
-			service = detail.service;
-			watcher = detail.watcher;
-			envContent = service.env_content || '';
-			configFiles = [...(service.config_files || []).map((file) => ({ ...file }))];
+			await refreshServiceDetail();
 			healthHistory = await api.healthHistory(id, 50);
 			await loadDeploys();
 		} catch (e) {
@@ -81,18 +94,20 @@
 		}
 	}
 
+	async function refreshServiceDetail() {
+		const detail = await api.getService(id);
+		service = detail.service;
+		watcher = detail.watcher;
+		envContent = detail.service.env_content || '';
+		configFiles = [...(detail.service.config_files || []).map((file) => ({ ...file }))];
+	}
+
 	async function runAction(fn: () => Promise<{ message: string }>) {
 		try {
 			const res = await fn();
 			actionMsg = res.message;
 			setTimeout(() => (actionMsg = ''), 4000);
-			// Refresh state if needed
-			if (service) {
-				const detail = await api.getService(id);
-				service = detail.service;
-				envContent = service.env_content || '';
-				configFiles = [...(service.config_files || []).map((file) => ({ ...file }))];
-			}
+			if (service) await refreshServiceDetail();
 		} catch (e) {
 			actionMsg = e instanceof Error ? e.message : 'Action failed';
 			setTimeout(() => (actionMsg = ''), 5000);
@@ -124,6 +139,59 @@
 
 	function removeConfigFile(index: number) {
 		configFiles = configFiles.filter((_, i) => i !== index);
+	}
+
+	function openEditServiceDialog() {
+		if (!service) return;
+		editSvcType = service.service_type;
+		editSvcName = service.windows_service_name || '';
+		editSvcBinary = service.binary_name || '';
+		editSvcStartArguments = service.start_arguments || '';
+		editSvcEnvFile = service.env_file || '';
+		editSvcEnvContent = service.env_content || '';
+		editSvcHealthURL = service.health_check_url || '';
+		editSvcIISAppPool = service.iis_app_pool || '';
+		editSvcIISSiteName = service.iis_site_name || '';
+		editSvcPublicURL = service.public_url || '';
+		editSvcConfigFiles = [...(service.config_files || []).map((file) => ({ ...file }))];
+		showEditService = true;
+	}
+
+	function addEditSvcConfigFile() {
+		editSvcConfigFiles = [...editSvcConfigFiles, { file_path: '', content: '' }];
+	}
+
+	function removeEditSvcConfigFile(index: number) {
+		editSvcConfigFiles = editSvcConfigFiles.filter((_, i) => i !== index);
+	}
+
+	async function saveServiceEdit() {
+		if (!service || !watcher) return;
+		updatingService = true;
+		try {
+			service = await api.updateService(watcher.id, service.id, {
+				service_type: editSvcType,
+				windows_service_name: editSvcName,
+				binary_name: editSvcBinary,
+				start_arguments: editSvcStartArguments,
+				env_file: editSvcEnvFile,
+				env_content: editSvcEnvContent,
+				config_files: editSvcConfigFiles.filter((file) => file.file_path.trim() !== ''),
+				health_check_url: editSvcHealthURL,
+				iis_app_pool: editSvcIISAppPool,
+				iis_site_name: editSvcIISSiteName,
+				public_url: editSvcPublicURL
+			});
+			showEditService = false;
+			await refreshServiceDetail();
+			actionMsg = 'Service updated';
+			setTimeout(() => (actionMsg = ''), 4000);
+		} catch (e) {
+			actionMsg = e instanceof Error ? e.message : 'Failed to update service';
+			setTimeout(() => (actionMsg = ''), 5000);
+		} finally {
+			updatingService = false;
+		}
 	}
 
 	async function checkHealth() {
@@ -206,6 +274,9 @@
 		</div>
 		{#if service}
 			<div class="flex items-center gap-2">
+				<Button.Root variant="outline" size="sm" onclick={openEditServiceDialog}>
+					<Pencil class="mr-1.5 h-4 w-4" /> Edit
+				</Button.Root>
 				<Button.Root
 					variant="outline"
 					size="sm"
@@ -646,3 +717,143 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 		</Tabs.Root>
 	{/if}
 </div>
+
+<Dialog.Root bind:open={showEditService}>
+	<Dialog.Content class="max-h-[90vh] w-[min(96vw,56rem)] overflow-hidden p-0 sm:max-w-3xl">
+		<form
+			class="flex max-h-[calc(90vh-5.5rem)] flex-col"
+			onsubmit={(e) => {
+				e.preventDefault();
+				saveServiceEdit();
+			}}
+		>
+		<Dialog.Header class="shrink-0 border-b border-border/70 px-6 pt-6 pb-4">
+			<Dialog.Title>Edit Service</Dialog.Title>
+			<Dialog.Description>Update how this watcher manages this service</Dialog.Description>
+		</Dialog.Header>
+			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+				<div class="grid gap-4 md:grid-cols-2">
+					<div class="space-y-2">
+						<Label for="editSvcType">Service Type</Label>
+						<Select id="editSvcType" bind:value={editSvcType}>
+							<option value="nssm">Binary (NSSM)</option>
+							<option value="static">Static Site (IIS)</option>
+						</Select>
+					</div>
+					<div class="space-y-2">
+						<Label for="editSvcName">{editSvcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label>
+						<Input
+							id="editSvcName"
+							placeholder={editSvcType === 'static' ? 'my-frontend' : 'my-app-web-1'}
+							bind:value={editSvcName}
+							required
+						/>
+					</div>
+
+					{#if editSvcType === 'nssm'}
+						<div class="space-y-2">
+							<Label for="editSvcBinary">Binary Name</Label>
+							<Input id="editSvcBinary" placeholder="my-app.exe" bind:value={editSvcBinary} required />
+						</div>
+						<div class="space-y-2">
+							<Label for="editSvcStartArguments">Start Arguments (optional)</Label>
+							<Input id="editSvcStartArguments" placeholder="serve --port 8080" bind:value={editSvcStartArguments} />
+						</div>
+						<div class="space-y-2 md:col-span-2">
+							<Label for="editSvcEnvFile">Env File (optional)</Label>
+							<Input id="editSvcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={editSvcEnvFile} />
+						</div>
+						<div class="space-y-2 md:col-span-2">
+							<Label for="editSvcEnvContent">Env Content (optional)</Label>
+							<Textarea
+								id="editSvcEnvContent"
+								class="min-h-[180px] font-mono text-xs text-blue-300"
+								bind:value={editSvcEnvContent}
+								placeholder="KEY=VALUE&#10;API_URL=https://example.com"
+							/>
+							<p class="text-xs text-muted-foreground">
+								If set, watcher writes this content into <code>{editSvcEnvFile || '.env'}</code> during service sync/deploy.
+							</p>
+						</div>
+					{:else}
+						<div class="space-y-2">
+							<Label for="editSvcIISAppPool">IIS App Pool Name</Label>
+							<Input id="editSvcIISAppPool" placeholder="my-frontend" bind:value={editSvcIISAppPool} />
+						</div>
+						<div class="space-y-2">
+							<Label for="editSvcIISSiteName">IIS Site Name</Label>
+							<Input id="editSvcIISSiteName" placeholder="my-frontend" bind:value={editSvcIISSiteName} />
+						</div>
+					{/if}
+
+					<div class="space-y-2">
+						<Label for="editSvcHealthURL">Health Check URL (optional)</Label>
+						<Input
+							id="editSvcHealthURL"
+							placeholder="http://localhost:3000/health"
+							bind:value={editSvcHealthURL}
+						/>
+					</div>
+					<div class="space-y-2">
+						<Label for="editSvcPublicURL">Public URL (optional)</Label>
+						<Input
+							id="editSvcPublicURL"
+							placeholder="https://my-app.example.com"
+							bind:value={editSvcPublicURL}
+						/>
+					</div>
+				</div>
+
+				<div class="space-y-3">
+					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+						<div>
+							<Label>Additional managed config files</Label>
+							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service.</p>
+						</div>
+						<Button.Root variant="outline" size="sm" type="button" class="h-8 shrink-0" onclick={addEditSvcConfigFile}>
+							<Plus class="mr-1.5 h-3 w-3" /> Add file
+						</Button.Root>
+					</div>
+					{#if editSvcConfigFiles.length > 0}
+						<div class="space-y-3 rounded-md border border-border/70 bg-background/50 p-3">
+							{#each editSvcConfigFiles as file, fileIndex (fileIndex)}
+								<div class="space-y-2 rounded-md border border-border/60 bg-card/60 p-3">
+									<div class="flex items-center justify-between">
+										<Label>Config file #{fileIndex + 1}</Label>
+										<Button.Root
+											variant="ghost"
+											size="icon"
+											type="button"
+											class="h-7 w-7 text-red-400 hover:text-red-300"
+											onclick={() => removeEditSvcConfigFile(fileIndex)}
+										>
+											<XCircle class="h-4 w-4" />
+										</Button.Root>
+									</div>
+									<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
+									<Textarea
+										class="min-h-[140px] font-mono text-xs text-blue-300"
+										bind:value={file.content}
+										placeholder={'{\n  "featureFlag": true\n}'}
+									/>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<p class="text-xs text-muted-foreground">
+							Use this for runtime files like <code>config.json</code>, <code>appsettings.json</code>, or other generated config.
+						</p>
+					{/if}
+				</div>
+			</div>
+			<Dialog.Footer class="shrink-0 border-t border-border/70 px-6 pt-4 pb-4">
+				<Button.Root variant="outline" type="button" onclick={() => (showEditService = false)}>
+					Cancel
+				</Button.Root>
+				<Button.Root type="submit" disabled={updatingService}>
+					{updatingService ? 'Saving...' : 'Save Service'}
+				</Button.Root>
+			</Dialog.Footer>
+		</form>
+	</Dialog.Content>
+</Dialog.Root>

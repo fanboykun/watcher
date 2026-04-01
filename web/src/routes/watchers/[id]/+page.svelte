@@ -151,17 +151,27 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 	onMount(() => {
 		const init = async () => {
 			try {
-				[watcher, deploys, versions] = await Promise.all([
-					api.getWatcher(id), 
+				watcher = await api.getWatcher(id);
+				syncEditForm();
+
+				void Promise.allSettled([
 					api.watcherDeploys(id, deployPage, deployPageSize).then((res) => {
 						deploys = res.data;
 						deployTotal = res.total;
-						return res.data;
 					}),
-					api.watcherVersions(id).catch(() => []) // Catch if missing dir error
-				]);
-				await loadPolls();
-				syncEditForm();
+					api.watcherVersions(id).then((v) => {
+						versions = v;
+					}),
+					loadPolls()
+				]).then((results) => {
+					if (results[0]?.status === 'rejected') {
+						deploys = [];
+						deployTotal = 0;
+					}
+					if (results[1]?.status === 'rejected') {
+						versions = [];
+					}
+				});
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to load watcher';
 			}
@@ -1193,131 +1203,139 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 <!-- Add Service Dialog -->
 <Dialog.Root bind:open={showAddService}>
-	<Dialog.Content class="sm:max-w-[450px]">
-		<Dialog.Header>
-			<Dialog.Title>Add Service</Dialog.Title>
-			<Dialog.Description>Register a service for this watcher to manage</Dialog.Description>
-		</Dialog.Header>
+	<Dialog.Content class="max-h-[90vh] w-[min(96vw,56rem)] overflow-hidden p-0 sm:max-w-3xl">
 		<form
-			class="space-y-4"
+			class="flex max-h-[calc(90vh-5.5rem)] flex-col"
 			onsubmit={(e) => {
 				e.preventDefault();
 				addService();
 			}}
 		>
-			<div class="space-y-2">
-				<Label for="svcType">Service Type</Label>
-				<Select
-					id="svcType"
-					bind:value={svcType}
-				>
-					<option value="nssm">Binary (NSSM)</option>
-					<option value="static">Static Site (IIS)</option>
-				</Select>
-			</div>
-			<div class="space-y-2">
-				<Label for="svcName"
-					>{svcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label
-				>
-				<Input
-					id="svcName"
-					placeholder={svcType === 'static' ? 'my-frontend' : 'my-app-web-1'}
-					bind:value={svcName}
-					required
-				/>
-			</div>
-
-			{#if svcType === 'nssm'}
-				<div class="space-y-2">
-					<Label for="svcBinary">Binary Name</Label>
-					<Input id="svcBinary" placeholder="my-app.exe" bind:value={svcBinary} required />
-				</div>
-				<div class="space-y-2">
-					<Label for="svcStartArguments">Start Arguments (optional)</Label>
-					<Input id="svcStartArguments" placeholder="serve --port 8080" bind:value={svcStartArguments} />
-				</div>
-				<div class="space-y-2">
-					<Label for="svcEnvFile">Env File (optional)</Label>
-					<Input id="svcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={svcEnvFile} />
-				</div>
-				<div class="space-y-2">
-					<Label for="svcEnvContent">Env Content (optional)</Label>
-					<Textarea
-						id="svcEnvContent"
-						class="min-h-[140px] font-mono text-xs text-blue-300"
-						bind:value={svcEnvContent}
-						placeholder="KEY=VALUE&#10;API_URL=https://example.com"
-					/>
-					<p class="text-xs text-muted-foreground">
-						If set, watcher writes this content into <code>{svcEnvFile || '.env'}</code> during service sync/deploy.
-					</p>
-				</div>
-			{:else}
-				<div class="space-y-2">
-					<Label for="svcIISAppPool">IIS App Pool Name</Label>
-					<Input id="svcIISAppPool" placeholder="my-frontend" bind:value={svcIISAppPool} />
-				</div>
-				<div class="space-y-2">
-					<Label for="svcIISSiteName">IIS Site Name</Label>
-					<Input id="svcIISSiteName" placeholder="my-frontend" bind:value={svcIISSiteName} />
-				</div>
-			{/if}
-
-			<div class="space-y-2">
-				<Label for="svcHealthURL">Health Check URL (optional)</Label>
-				<Input
-					id="svcHealthURL"
-					placeholder="http://localhost:3000/health"
-					bind:value={svcHealthURL}
-				/>
-			</div>
-			<div class="space-y-2">
-				<Label for="svcPublicURL">Public URL (optional)</Label>
-				<Input
-					id="svcPublicURL"
-					placeholder="https://my-app.example.com"
-					bind:value={svcPublicURL}
-				/>
-			</div>
-			<div class="space-y-2">
-				<div class="flex items-center justify-between">
-					<Label>Additional managed config files</Label>
-					<Button.Root variant="outline" size="sm" type="button" class="h-8" onclick={addSvcConfigFile}>
-						<Plus class="mr-1.5 h-3 w-3" /> Add file
-					</Button.Root>
-				</div>
-				{#if svcConfigFiles.length > 0}
-					<div class="space-y-3 rounded-md border border-border/70 bg-background/50 p-3">
-						{#each svcConfigFiles as file, fileIndex (fileIndex)}
-							<div class="space-y-2 rounded-md border border-border/60 bg-card/60 p-3">
-								<div class="flex items-center justify-between">
-									<Label>Config file #{fileIndex + 1}</Label>
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										type="button"
-										class="h-7 w-7 text-red-400 hover:text-red-300"
-										onclick={() => removeSvcConfigFile(fileIndex)}
-									>
-										<Trash2 class="h-3 w-3" />
-									</Button.Root>
-								</div>
-								<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
-								<Textarea
-									class="min-h-[120px] font-mono text-xs text-blue-300"
-									bind:value={file.content}
-									placeholder={'{\n  "featureFlag": true\n}'}
-								/>
-							</div>
-						{/each}
+			<Dialog.Header class="shrink-0 border-b border-border/70 px-6 pt-6 pb-4">
+				<Dialog.Title>Add Service</Dialog.Title>
+				<Dialog.Description>Register a service for this watcher to manage</Dialog.Description>
+			</Dialog.Header>
+			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+				<div class="grid gap-4 md:grid-cols-2">
+					<div class="space-y-2">
+						<Label for="svcType">Service Type</Label>
+						<Select
+							id="svcType"
+							bind:value={svcType}
+						>
+							<option value="nssm">Binary (NSSM)</option>
+							<option value="static">Static Site (IIS)</option>
+						</Select>
 					</div>
-				{:else}
-					<p class="text-xs text-muted-foreground">
-						Use this for runtime files like <code>config.json</code>, <code>appsettings.json</code>, or other generated config.
-					</p>
-				{/if}
+					<div class="space-y-2">
+						<Label for="svcName"
+							>{svcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label
+						>
+						<Input
+							id="svcName"
+							placeholder={svcType === 'static' ? 'my-frontend' : 'my-app-web-1'}
+							bind:value={svcName}
+							required
+						/>
+					</div>
+
+					{#if svcType === 'nssm'}
+						<div class="space-y-2">
+							<Label for="svcBinary">Binary Name</Label>
+							<Input id="svcBinary" placeholder="my-app.exe" bind:value={svcBinary} required />
+						</div>
+						<div class="space-y-2">
+							<Label for="svcStartArguments">Start Arguments (optional)</Label>
+							<Input id="svcStartArguments" placeholder="serve --port 8080" bind:value={svcStartArguments} />
+						</div>
+						<div class="space-y-2 md:col-span-2">
+							<Label for="svcEnvFile">Env File (optional)</Label>
+							<Input id="svcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={svcEnvFile} />
+						</div>
+						<div class="space-y-2 md:col-span-2">
+							<Label for="svcEnvContent">Env Content (optional)</Label>
+							<Textarea
+								id="svcEnvContent"
+								class="min-h-[180px] font-mono text-xs text-blue-300"
+								bind:value={svcEnvContent}
+								placeholder="KEY=VALUE&#10;API_URL=https://example.com"
+							/>
+							<p class="text-xs text-muted-foreground">
+								If set, watcher writes this content into <code>{svcEnvFile || '.env'}</code> during service sync/deploy.
+							</p>
+						</div>
+					{:else}
+						<div class="space-y-2">
+							<Label for="svcIISAppPool">IIS App Pool Name</Label>
+							<Input id="svcIISAppPool" placeholder="my-frontend" bind:value={svcIISAppPool} />
+						</div>
+						<div class="space-y-2">
+							<Label for="svcIISSiteName">IIS Site Name</Label>
+							<Input id="svcIISSiteName" placeholder="my-frontend" bind:value={svcIISSiteName} />
+						</div>
+					{/if}
+
+					<div class="space-y-2">
+						<Label for="svcHealthURL">Health Check URL (optional)</Label>
+						<Input
+							id="svcHealthURL"
+							placeholder="http://localhost:3000/health"
+							bind:value={svcHealthURL}
+						/>
+					</div>
+					<div class="space-y-2">
+						<Label for="svcPublicURL">Public URL (optional)</Label>
+						<Input
+							id="svcPublicURL"
+							placeholder="https://my-app.example.com"
+							bind:value={svcPublicURL}
+						/>
+					</div>
+				</div>
+
+				<div class="space-y-3">
+					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+						<div>
+							<Label>Additional managed config files</Label>
+							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service.</p>
+						</div>
+						<Button.Root variant="outline" size="sm" type="button" class="h-8 shrink-0" onclick={addSvcConfigFile}>
+							<Plus class="mr-1.5 h-3 w-3" /> Add file
+						</Button.Root>
+					</div>
+					{#if svcConfigFiles.length > 0}
+						<div class="space-y-3 rounded-md border border-border/70 bg-background/50 p-3">
+							{#each svcConfigFiles as file, fileIndex (fileIndex)}
+								<div class="space-y-2 rounded-md border border-border/60 bg-card/60 p-3">
+									<div class="flex items-center justify-between">
+										<Label>Config file #{fileIndex + 1}</Label>
+										<Button.Root
+											variant="ghost"
+											size="icon"
+											type="button"
+											class="h-7 w-7 text-red-400 hover:text-red-300"
+											onclick={() => removeSvcConfigFile(fileIndex)}
+										>
+											<Trash2 class="h-3 w-3" />
+										</Button.Root>
+									</div>
+									<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
+									<Textarea
+										class="min-h-[140px] font-mono text-xs text-blue-300"
+										bind:value={file.content}
+										placeholder={'{\n  "featureFlag": true\n}'}
+									/>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<p class="text-xs text-muted-foreground">
+							Use this for runtime files like <code>config.json</code>, <code>appsettings.json</code>, or other generated config.
+						</p>
+					{/if}
+				</div>
 			</div>
-			<Dialog.Footer>
+			<Dialog.Footer class="shrink-0 border-t border-border/70 px-6 py-4">
 				<Button.Root variant="outline" type="button" onclick={() => (showAddService = false)}
 					>Cancel</Button.Root
 				>
@@ -1331,131 +1349,139 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 <!-- Edit Service Dialog -->
 <Dialog.Root bind:open={showEditService}>
-	<Dialog.Content class="sm:max-w-[450px]">
-		<Dialog.Header>
-			<Dialog.Title>Edit Service</Dialog.Title>
-			<Dialog.Description>Update how this watcher manages the selected service</Dialog.Description>
-		</Dialog.Header>
+	<Dialog.Content class="max-h-[90vh] w-[min(96vw,56rem)] overflow-hidden p-0 sm:max-w-3xl">
 		<form
-			class="space-y-4"
+			class="flex max-h-[calc(90vh-5.5rem)] flex-col"
 			onsubmit={(e) => {
 				e.preventDefault();
 				saveServiceEdit();
 			}}
 		>
-			<div class="space-y-2">
-				<Label for="editSvcType">Service Type</Label>
-				<Select
-					id="editSvcType"
-					bind:value={editSvcType}
-				>
-					<option value="nssm">Binary (NSSM)</option>
-					<option value="static">Static Site (IIS)</option>
-				</Select>
-			</div>
-			<div class="space-y-2">
-				<Label for="editSvcName"
-					>{editSvcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label
-				>
-				<Input
-					id="editSvcName"
-					placeholder={editSvcType === 'static' ? 'my-frontend' : 'my-app-web-1'}
-					bind:value={editSvcName}
-					required
-				/>
-			</div>
-
-			{#if editSvcType === 'nssm'}
-				<div class="space-y-2">
-					<Label for="editSvcBinary">Binary Name</Label>
-					<Input id="editSvcBinary" placeholder="my-app.exe" bind:value={editSvcBinary} required />
-				</div>
-				<div class="space-y-2">
-					<Label for="editSvcStartArguments">Start Arguments (optional)</Label>
-					<Input id="editSvcStartArguments" placeholder="serve --port 8080" bind:value={editSvcStartArguments} />
-				</div>
-				<div class="space-y-2">
-					<Label for="editSvcEnvFile">Env File (optional)</Label>
-					<Input id="editSvcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={editSvcEnvFile} />
-				</div>
-				<div class="space-y-2">
-					<Label for="editSvcEnvContent">Env Content (optional)</Label>
-					<Textarea
-						id="editSvcEnvContent"
-						class="min-h-[140px] font-mono text-xs text-blue-300"
-						bind:value={editSvcEnvContent}
-						placeholder="KEY=VALUE&#10;API_URL=https://example.com"
-					/>
-					<p class="text-xs text-muted-foreground">
-						If set, watcher writes this content into <code>{editSvcEnvFile || '.env'}</code> during service sync/deploy.
-					</p>
-				</div>
-			{:else}
-				<div class="space-y-2">
-					<Label for="editSvcIISAppPool">IIS App Pool Name</Label>
-					<Input id="editSvcIISAppPool" placeholder="my-frontend" bind:value={editSvcIISAppPool} />
-				</div>
-				<div class="space-y-2">
-					<Label for="editSvcIISSiteName">IIS Site Name</Label>
-					<Input id="editSvcIISSiteName" placeholder="my-frontend" bind:value={editSvcIISSiteName} />
-				</div>
-			{/if}
-
-			<div class="space-y-2">
-				<Label for="editSvcHealthURL">Health Check URL (optional)</Label>
-				<Input
-					id="editSvcHealthURL"
-					placeholder="http://localhost:3000/health"
-					bind:value={editSvcHealthURL}
-				/>
-			</div>
-			<div class="space-y-2">
-				<Label for="editSvcPublicURL">Public URL (optional)</Label>
-				<Input
-					id="editSvcPublicURL"
-					placeholder="https://my-app.example.com"
-					bind:value={editSvcPublicURL}
-				/>
-			</div>
-			<div class="space-y-2">
-				<div class="flex items-center justify-between">
-					<Label>Additional managed config files</Label>
-					<Button.Root variant="outline" size="sm" type="button" class="h-8" onclick={addEditSvcConfigFile}>
-						<Plus class="mr-1.5 h-3 w-3" /> Add file
-					</Button.Root>
-				</div>
-				{#if editSvcConfigFiles.length > 0}
-					<div class="space-y-3 rounded-md border border-border/70 bg-background/50 p-3">
-						{#each editSvcConfigFiles as file, fileIndex (fileIndex)}
-							<div class="space-y-2 rounded-md border border-border/60 bg-card/60 p-3">
-								<div class="flex items-center justify-between">
-									<Label>Config file #{fileIndex + 1}</Label>
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										type="button"
-										class="h-7 w-7 text-red-400 hover:text-red-300"
-										onclick={() => removeEditSvcConfigFile(fileIndex)}
-									>
-										<Trash2 class="h-3 w-3" />
-									</Button.Root>
-								</div>
-								<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
-								<Textarea
-									class="min-h-[120px] font-mono text-xs text-blue-300"
-									bind:value={file.content}
-									placeholder={'{\n  "featureFlag": true\n}'}
-								/>
-							</div>
-						{/each}
+			<Dialog.Header class="shrink-0 border-b border-border/70 px-6 pt-6 pb-4">
+				<Dialog.Title>Edit Service</Dialog.Title>
+				<Dialog.Description>Update how this watcher manages the selected service</Dialog.Description>
+			</Dialog.Header>
+			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+				<div class="grid gap-4 md:grid-cols-2">
+					<div class="space-y-2">
+						<Label for="editSvcType">Service Type</Label>
+						<Select
+							id="editSvcType"
+							bind:value={editSvcType}
+						>
+							<option value="nssm">Binary (NSSM)</option>
+							<option value="static">Static Site (IIS)</option>
+						</Select>
 					</div>
-				{:else}
-					<p class="text-xs text-muted-foreground">
-						Use this for runtime files like <code>config.json</code>, <code>appsettings.json</code>, or other generated config.
-					</p>
-				{/if}
+					<div class="space-y-2">
+						<Label for="editSvcName"
+							>{editSvcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label
+						>
+						<Input
+							id="editSvcName"
+							placeholder={editSvcType === 'static' ? 'my-frontend' : 'my-app-web-1'}
+							bind:value={editSvcName}
+							required
+						/>
+					</div>
+
+					{#if editSvcType === 'nssm'}
+						<div class="space-y-2">
+							<Label for="editSvcBinary">Binary Name</Label>
+							<Input id="editSvcBinary" placeholder="my-app.exe" bind:value={editSvcBinary} required />
+						</div>
+						<div class="space-y-2">
+							<Label for="editSvcStartArguments">Start Arguments (optional)</Label>
+							<Input id="editSvcStartArguments" placeholder="serve --port 8080" bind:value={editSvcStartArguments} />
+						</div>
+						<div class="space-y-2 md:col-span-2">
+							<Label for="editSvcEnvFile">Env File (optional)</Label>
+							<Input id="editSvcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={editSvcEnvFile} />
+						</div>
+						<div class="space-y-2 md:col-span-2">
+							<Label for="editSvcEnvContent">Env Content (optional)</Label>
+							<Textarea
+								id="editSvcEnvContent"
+								class="min-h-[180px] font-mono text-xs text-blue-300"
+								bind:value={editSvcEnvContent}
+								placeholder="KEY=VALUE&#10;API_URL=https://example.com"
+							/>
+							<p class="text-xs text-muted-foreground">
+								If set, watcher writes this content into <code>{editSvcEnvFile || '.env'}</code> during service sync/deploy.
+							</p>
+						</div>
+					{:else}
+						<div class="space-y-2">
+							<Label for="editSvcIISAppPool">IIS App Pool Name</Label>
+							<Input id="editSvcIISAppPool" placeholder="my-frontend" bind:value={editSvcIISAppPool} />
+						</div>
+						<div class="space-y-2">
+							<Label for="editSvcIISSiteName">IIS Site Name</Label>
+							<Input id="editSvcIISSiteName" placeholder="my-frontend" bind:value={editSvcIISSiteName} />
+						</div>
+					{/if}
+
+					<div class="space-y-2">
+						<Label for="editSvcHealthURL">Health Check URL (optional)</Label>
+						<Input
+							id="editSvcHealthURL"
+							placeholder="http://localhost:3000/health"
+							bind:value={editSvcHealthURL}
+						/>
+					</div>
+					<div class="space-y-2">
+						<Label for="editSvcPublicURL">Public URL (optional)</Label>
+						<Input
+							id="editSvcPublicURL"
+							placeholder="https://my-app.example.com"
+							bind:value={editSvcPublicURL}
+						/>
+					</div>
+				</div>
+
+				<div class="space-y-3">
+					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+						<div>
+							<Label>Additional managed config files</Label>
+							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service.</p>
+						</div>
+						<Button.Root variant="outline" size="sm" type="button" class="h-8 shrink-0" onclick={addEditSvcConfigFile}>
+							<Plus class="mr-1.5 h-3 w-3" /> Add file
+						</Button.Root>
+					</div>
+					{#if editSvcConfigFiles.length > 0}
+						<div class="space-y-3 rounded-md border border-border/70 bg-background/50 p-3">
+							{#each editSvcConfigFiles as file, fileIndex (fileIndex)}
+								<div class="space-y-2 rounded-md border border-border/60 bg-card/60 p-3">
+									<div class="flex items-center justify-between">
+										<Label>Config file #{fileIndex + 1}</Label>
+										<Button.Root
+											variant="ghost"
+											size="icon"
+											type="button"
+											class="h-7 w-7 text-red-400 hover:text-red-300"
+											onclick={() => removeEditSvcConfigFile(fileIndex)}
+										>
+											<Trash2 class="h-3 w-3" />
+										</Button.Root>
+									</div>
+									<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
+									<Textarea
+										class="min-h-[140px] font-mono text-xs text-blue-300"
+										bind:value={file.content}
+										placeholder={'{\n  "featureFlag": true\n}'}
+									/>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<p class="text-xs text-muted-foreground">
+							Use this for runtime files like <code>config.json</code>, <code>appsettings.json</code>, or other generated config.
+						</p>
+					{/if}
+				</div>
 			</div>
-			<Dialog.Footer>
+			<Dialog.Footer class="shrink-0 border-t border-border/70 px-6 pt-4 pb-4">
 				<Button.Root variant="outline" type="button" onclick={() => (showEditService = false)}
 					>Cancel</Button.Root
 				>
