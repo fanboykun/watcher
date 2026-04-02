@@ -45,6 +45,20 @@ func TestIsNewer(t *testing.T) {
 		{"v1.10.0", "v1.9.0", true},
 		{"v1.9.0", "v1.10.0", false},
 		{"v2.0.0", "v1.99.99", true},
+
+		// Prefixed release labels
+		{"alpha-api/v0.2.0", "alpha-api/v0.1.0", true},
+		{"alpha-api/v0.1.0", "alpha-api/v0.2.0", false},
+		{"beta-api/v1.0.0", "v0.9.9", true},
+
+		// Artifact-like labels
+		{"alpha-api-v0.2.0-windows-amd64.zip", "alpha-api-v0.1.9-windows-amd64.zip", true},
+		{"beta-api_v1.0.0_linux_arm64.tar.gz", "beta-api/v0.9.0", true},
+		{"alpha-api-v0.1.0.zip", "alpha-api/v0.1.0", false},
+
+		// Invalid labels
+		{"alpha-api-release", "v0.1.0", false},
+		{"v0.2.0", "alpha-api-release", true},
 	}
 
 	for _, tt := range tests {
@@ -53,6 +67,33 @@ func TestIsNewer(t *testing.T) {
 			got := isNewer(tt.latest, tt.current)
 			if got != tt.expected {
 				t.Errorf("isNewer(%q, %q) = %v, want %v", tt.latest, tt.current, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractComparableVersion(t *testing.T) {
+	tests := []struct {
+		raw     string
+		want    [3]int
+		wantOK  bool
+	}{
+		{raw: "v1.2.3", want: [3]int{1, 2, 3}, wantOK: true},
+		{raw: "alpha-api/v1.2.3", want: [3]int{1, 2, 3}, wantOK: true},
+		{raw: "alpha-api-v1.2.3-windows-amd64.zip", want: [3]int{1, 2, 3}, wantOK: true},
+		{raw: "beta-api_v10.20.30_linux_arm64.tar.gz", want: [3]int{10, 20, 30}, wantOK: true},
+		{raw: "release", want: [3]int{}, wantOK: false},
+		{raw: "", want: [3]int{}, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			got, ok := extractComparableVersion(tt.raw)
+			if ok != tt.wantOK {
+				t.Fatalf("extractComparableVersion(%q) ok = %v, want %v", tt.raw, ok, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Fatalf("extractComparableVersion(%q) = %v, want %v", tt.raw, got, tt.want)
 			}
 		})
 	}

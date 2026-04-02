@@ -8,9 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 )
+
+var semverPattern = regexp.MustCompile(`(?i)(?:^|[^0-9a-z])v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:[^0-9]|$)`)
 
 // SelfUpdateInfo contains version comparison info for self-update checks.
 type SelfUpdateInfo struct {
@@ -203,32 +207,57 @@ func extractFileFromZip(zipPath, fileName, destPath string) error {
 }
 
 // isNewer returns true if latestVersion is semantically newer than currentVersion.
-// Both should be in the format "vX.Y.Z" or "X.Y.Z".
+// It accepts plain versions, prefixed tags, and artifact-like labels as long as a
+// semantic version can be extracted from the string.
 func isNewer(latest, current string) bool {
-	latest = strings.TrimPrefix(latest, "v")
-	current = strings.TrimPrefix(current, "v")
+	latestVersion, latestOK := extractComparableVersion(latest)
+	currentVersion, currentOK := extractComparableVersion(current)
 
-	if current == "dev" || current == "" {
-		return latest != ""
+	if current == "dev" || current == "" || !currentOK {
+		return latestOK
+	}
+	if !latestOK {
+		return false
 	}
 
-	latestParts := strings.Split(latest, ".")
-	currentParts := strings.Split(current, ".")
+	return compareComparableVersions(latestVersion, currentVersion) > 0
+}
 
+func extractComparableVersion(raw string) ([3]int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return [3]int{}, false
+	}
+
+	matches := semverPattern.FindStringSubmatch(raw)
+	if len(matches) != 4 {
+		if strings.HasPrefix(strings.ToLower(raw), "v") {
+			matches = semverPattern.FindStringSubmatch(" " + raw)
+		}
+		if len(matches) != 4 {
+			return [3]int{}, false
+		}
+	}
+
+	var version [3]int
 	for i := 0; i < 3; i++ {
-		var l, c int
-		if i < len(latestParts) {
-			fmt.Sscanf(latestParts[i], "%d", &l)
+		n, err := strconv.Atoi(matches[i+1])
+		if err != nil {
+			return [3]int{}, false
 		}
-		if i < len(currentParts) {
-			fmt.Sscanf(currentParts[i], "%d", &c)
+		version[i] = n
+	}
+	return version, true
+}
+
+func compareComparableVersions(latest, current [3]int) int {
+	for i := 0; i < 3; i++ {
+		if latest[i] > current[i] {
+			return 1
 		}
-		if l > c {
-			return true
-		}
-		if l < c {
-			return false
+		if latest[i] < current[i] {
+			return -1
 		}
 	}
-	return false
+	return 0
 }
