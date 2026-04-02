@@ -29,6 +29,14 @@ func defaultServiceType(t string) string {
 	return t
 }
 
+func defaultReleaseRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "latest"
+	}
+	return ref
+}
+
 // Handler holds dependencies for all API endpoints.
 type Handler struct {
 	db           *gorm.DB
@@ -145,6 +153,7 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		Name:                  req.Name,
 		ServiceName:           req.ServiceName,
 		MetadataURL:           req.MetadataURL,
+		ReleaseRef:            defaultReleaseRef(req.ReleaseRef),
 		DeploymentEnvironment: strings.TrimSpace(req.DeploymentEnvironment),
 		GitHubToken:           strings.TrimSpace(req.GitHubToken),
 		CheckIntervalSec:      withDefault(req.CheckIntervalSec, 60),
@@ -214,6 +223,9 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	}
 	if req.MetadataURL != nil {
 		updates["metadata_url"] = *req.MetadataURL
+	}
+	if req.ReleaseRef != nil {
+		updates["release_ref"] = defaultReleaseRef(*req.ReleaseRef)
 	}
 	if req.DeploymentEnvironment != nil {
 		updates["deployment_environment"] = strings.TrimSpace(*req.DeploymentEnvironment)

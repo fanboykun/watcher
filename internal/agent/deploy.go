@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,8 +54,28 @@ func (d *Deployer) lWarn(msg string, args ...any) {
 	}
 }
 
+func releaseStorageName(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return "unknown"
+	}
+	return url.PathEscape(version)
+}
+
+func restoreReleaseVersion(storage string) string {
+	storage = strings.TrimSpace(storage)
+	if storage == "" {
+		return storage
+	}
+	restored, err := url.PathUnescape(storage)
+	if err != nil {
+		return storage
+	}
+	return restored
+}
+
 func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion string) error {
-	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", version)
+	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(version))
 	currentDir := filepath.Join(d.wcfg.InstallDir, "current")
 
 	d.l("deploying", "version", version, "release_dir", releaseDir)
@@ -126,7 +147,7 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 }
 
 func (d *Deployer) Rollback(ctx context.Context, version string) error {
-	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", version)
+	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(version))
 	currentDir := filepath.Join(d.wcfg.InstallDir, "current")
 
 	d.lWarn("rolling back", "to_version", version)
@@ -638,7 +659,7 @@ func ListAvailableVersions(installDir string) ([]ReleaseInfo, error) {
 		}
 		fullPath := filepath.Join(releasesDir, e.Name())
 		ri := ReleaseInfo{
-			Version:   e.Name(),
+			Version:   restoreReleaseVersion(e.Name()),
 			Path:      fullPath,
 			ModTime:   info.ModTime(),
 			SizeBytes: dirSize(fullPath),

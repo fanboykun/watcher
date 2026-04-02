@@ -64,6 +64,7 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 
 	columns := []columnSpec{
 		{model: &Watcher{}, column: "deployment_environment", field: "DeploymentEnvironment"},
+		{model: &Watcher{}, column: "release_ref", field: "ReleaseRef"},
 		{model: &Watcher{}, column: "github_token", field: "GitHubToken"},
 		{model: &DeployLog{}, column: "triggered_by", field: "TriggeredBy"},
 		{model: &Service{}, column: "env_content", field: "EnvContent"},
@@ -82,6 +83,35 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 		if err := db.Migrator().CreateTable(&ServiceConfigFile{}); err != nil {
 			return fmt.Errorf("create table service_config_files: %w", err)
 		}
+	}
+
+	if err := ensureWatcherServiceNameIsNonUnique(db); err != nil {
+		return fmt.Errorf("ensure non-unique service_name index: %w", err)
+	}
+
+	return nil
+}
+
+func ensureWatcherServiceNameIsNonUnique(db *gorm.DB) error {
+	const indexName = "idx_watchers_service_name"
+
+	isUnique, err := indexIsUnique(db, "watchers", indexName)
+	if err != nil {
+		return err
+	}
+	if isUnique {
+		if err := db.Migrator().DropIndex(&Watcher{}, indexName); err != nil {
+			return fmt.Errorf("drop unique index %s: %w", indexName, err)
+		}
+	}
+	if !db.Migrator().HasIndex(&Watcher{}, indexName) {
+		if err := db.Migrator().CreateIndex(&Watcher{}, "ServiceName"); err != nil {
+			return fmt.Errorf("create index %s: %w", indexName, err)
+		}
+	}
+
+	if err := db.Exec("UPDATE watchers SET release_ref = 'latest' WHERE release_ref IS NULL OR TRIM(release_ref) = ''").Error; err != nil {
+		return fmt.Errorf("backfill release_ref: %w", err)
 	}
 
 	return nil
@@ -130,6 +160,30 @@ func tableHasColumn(db *gorm.DB, table, col string) (bool, error) {
 		}
 		if name == col {
 			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func indexIsUnique(db *gorm.DB, table, indexName string) (bool, error) {
+	rows, err := db.Raw("PRAGMA index_list(" + table + ")").Rows()
+	if err != nil {
+		return false, fmt.Errorf("pragma index_list(%s): %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var seq int
+		var name string
+		var unique int
+		var origin string
+		var partial int
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			return false, fmt.Errorf("scan index_list(%s): %w", table, err)
+		}
+		if name == indexName {
+			return unique == 1, nil
 		}
 	}
 

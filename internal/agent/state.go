@@ -263,3 +263,11 @@ func (s *StateManager) ConsecutiveFailuresForVersion(version string) int {
 		Count(&count)
 	return int(count)
 }
+
+func (s *StateManager) HasPendingManualDeploy() bool {
+	var count int64
+	s.db.Model(&database.DeployLog{}).
+		Where("watcher_id = ? AND completed_at IS NULL AND triggered_by = ?", s.watcherID, "manual").
+		Count(&count)
+	return count > 0
+}

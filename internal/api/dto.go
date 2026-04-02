@@ -7,6 +7,7 @@ type CreateWatcherRequest struct {
 	Name                  string                 `json:"name" binding:"required"`
 	ServiceName           string                 `json:"service_name" binding:"required"`
 	MetadataURL           string                 `json:"metadata_url" binding:"required"`
+	ReleaseRef            string                 `json:"release_ref"`
 	DeploymentEnvironment string                 `json:"deployment_environment"`
 	GitHubToken           string                 `json:"github_token"`
 	CheckIntervalSec      int                    `json:"check_interval_sec"`
@@ -27,6 +28,7 @@ type UpdateWatcherRequest struct {
 	Name                  *string `json:"name"`
 	ServiceName           *string `json:"service_name"`
 	MetadataURL           *string `json:"metadata_url"`
+	ReleaseRef            *string `json:"release_ref"`
 	DeploymentEnvironment *string `json:"deployment_environment"`
 	GitHubToken           *string `json:"github_token"`
 	CheckIntervalSec      *int    `json:"check_interval_sec"`

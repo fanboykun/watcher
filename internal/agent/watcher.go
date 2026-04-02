@@ -33,6 +33,7 @@ type WatcherConfig struct {
 	Name                  string
 	ServiceName           string
 	MetadataURL           string
+	ReleaseRef            string
 	DeploymentEnvironment string
 	GitHubToken           string
 	CheckIntervalSec      int
@@ -66,10 +67,15 @@ type ServiceConfig struct {
 // WatcherConfigFromDB converts a database.Watcher into the in-memory WatcherConfig
 // used by the deploy pipeline.
 func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
+	releaseRef := strings.TrimSpace(w.ReleaseRef)
+	if releaseRef == "" {
+		releaseRef = "latest"
+	}
 	cfg := &WatcherConfig{
 		Name:                  w.Name,
 		ServiceName:           w.ServiceName,
 		MetadataURL:           w.MetadataURL,
+		ReleaseRef:            releaseRef,
 		DeploymentEnvironment: strings.TrimSpace(w.DeploymentEnvironment),
 		GitHubToken:           strings.TrimSpace(w.GitHubToken),
 		CheckIntervalSec:      w.CheckIntervalSec,
@@ -131,7 +137,7 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 	_ = r.state.SetChecked()
 
 	gh := NewGitHubClient(r.resolveGitHubToken(), r.log)
-	meta, err := gh.FetchMetadata(ctx, r.wcfg.MetadataURL)
+	meta, err := gh.FetchServiceMetadataForRelease(ctx, r.wcfg.MetadataURL, r.wcfg.ReleaseRef, r.wcfg.ServiceName)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			r.state.RecordPollEvent("error", "", err.Error())
@@ -174,10 +180,11 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 	r.log.Info("version mismatch, deploying", "from", localVersion, "to", targetVersion)
 
 	// Prevent infinite deploy retries — cap at 3 consecutive failures for the same version.
-	// A manual redeploy from the dashboard resets this by clearing current_version.
+	// A manual redeploy from the dashboard bypasses this once by pre-creating an open manual deploy log.
 	const maxDeployRetries = 3
 	failures := r.state.ConsecutiveFailuresForVersion(targetVersion)
-	if failures >= maxDeployRetries {
+	manualRedeploy := r.state.HasPendingManualDeploy()
+	if failures >= maxDeployRetries && !manualRedeploy {
 		msg := fmt.Sprintf("deploy suspended for %s after %d consecutive failures — use dashboard to redeploy", targetVersion, failures)
 		r.log.Warn(msg)
 		r.state.RecordPollEvent("deploy_suspended", targetVersion, msg)
@@ -259,7 +266,13 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 		return err
 	}
 
-	zipPath := filepath.Join(r.wcfg.InstallDir, targetVersion+".zip")
+	downloadsDir := filepath.Join(r.wcfg.InstallDir, "downloads")
+	if err := os.MkdirAll(downloadsDir, 0755); err != nil {
+		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
+		return fmt.Errorf("create downloads dir: %w", err)
+	}
+
+	zipPath := filepath.Join(downloadsDir, releaseStorageName(targetVersion)+".zip")
 	if err := gh.DownloadArtifact(ctx, svcMeta.ArtifactURL, zipPath, r.wcfg.DownloadRetries); err != nil {
 		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
 		return fmt.Errorf("download artifact: %w", err)

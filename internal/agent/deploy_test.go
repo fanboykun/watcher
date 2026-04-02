@@ -171,3 +171,45 @@ func TestListAvailableVersions_NoReleasesDir(t *testing.T) {
 		t.Errorf("expected nil result for missing releases dir, got %v", result)
 	}
 }
+
+func TestReleaseStorageName_RoundTrip(t *testing.T) {
+	version := "alpha-api/v0.1.0"
+	storage := releaseStorageName(version)
+	if storage == version {
+		t.Fatalf("expected storage name to escape path separators, got %q", storage)
+	}
+	if restored := restoreReleaseVersion(storage); restored != version {
+		t.Fatalf("restored version = %q, want %q", restored, version)
+	}
+}
+
+func TestListAvailableVersions_DecodesStoredVersionNames(t *testing.T) {
+	dir := t.TempDir()
+	relDir := filepath.Join(dir, "releases")
+	if err := os.MkdirAll(relDir, 0755); err != nil {
+		t.Fatalf("mkdir releases: %v", err)
+	}
+
+	rawVersion := "alpha-api/v0.1.0"
+	storedDir := filepath.Join(relDir, releaseStorageName(rawVersion))
+	if err := os.MkdirAll(storedDir, 0755); err != nil {
+		t.Fatalf("mkdir version dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(storedDir, "app.exe"), []byte("binary"), 0644); err != nil {
+		t.Fatalf("write app file: %v", err)
+	}
+
+	result, err := ListAvailableVersions(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 version, got %d", len(result))
+	}
+	if result[0].Version != rawVersion {
+		t.Fatalf("listed version = %q, want %q", result[0].Version, rawVersion)
+	}
+	if result[0].Path != storedDir {
+		t.Fatalf("listed path = %q, want %q", result[0].Path, storedDir)
+	}
+}

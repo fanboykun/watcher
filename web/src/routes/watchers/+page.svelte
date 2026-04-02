@@ -32,6 +32,7 @@
 	let formServiceName = $state('');
 	let formMetadataURL = $state('');
 	let formInstallDir = $state('');
+	let formReleaseRef = $state('latest');
 	let formInterval = $state(60);
 	let formHcEnabled = $state(false);
 	let formHcURL = $state('');
@@ -104,6 +105,7 @@
 				name: formName,
 				service_name: formServiceName,
 				metadata_url: formMetadataURL,
+				release_ref: formReleaseRef.trim() || 'latest',
 				deployment_environment: formDeploymentEnvironment,
 				github_token: useCustomGitHubToken ? formGitHubToken.trim() : '',
 				install_dir: formInstallDir,
@@ -139,6 +141,7 @@
 		formServiceName = '';
 		formMetadataURL = '';
 		formInstallDir = '';
+		formReleaseRef = 'latest';
 		formInterval = 60;
 		formHcEnabled = false;
 		formHcURL = '';
@@ -462,6 +465,13 @@
 								<Input id="deploymentEnvironment" placeholder="production" bind:value={formDeploymentEnvironment} />
 								<p class="text-xs text-muted-foreground">Optional. Falls back to global `ENVIRONMENT` if empty.</p>
 							</div>
+							<div class="space-y-2">
+								<Label for="releaseRef">Release Ref</Label>
+								<Input id="releaseRef" placeholder="latest or v1.2.3" bind:value={formReleaseRef} />
+								<p class="text-xs text-muted-foreground">Use <code>latest</code> for normal tracking, or pin this watcher to a specific release tag.</p>
+							</div>
+						</div>
+						<div class="grid gap-4 sm:grid-cols-2">
 							<div class="space-y-2 text-xs text-muted-foreground">
 								<p>GitHub token mode:</p>
 								<p class="font-medium">{useCustomGitHubToken && formGitHubToken.trim() ? 'Custom watcher token configured' : 'Using global GITHUB_TOKEN'}</p>

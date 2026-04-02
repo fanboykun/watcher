@@ -96,6 +96,7 @@ let confirmAction: (() => Promise<void> | void) | null = null;
 	let editInterval = $state(60);
 	let editMetadataURL = $state('');
 	let editInstallDir = $state('');
+	let editReleaseRef = $state('latest');
 	let editHcEnabled = $state(false);
 	let editHcURL = $state('');
 	let editMaxKeptVersions = $state(3);
@@ -224,6 +225,7 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 		editInterval = watcher.check_interval_sec;
 		editMetadataURL = watcher.metadata_url;
 		editInstallDir = watcher.install_dir;
+		editReleaseRef = watcher.release_ref || 'latest';
 		editHcEnabled = watcher.hc_enabled;
 		editHcURL = watcher.hc_url;
 		editMaxKeptVersions = watcher.max_kept_versions;
@@ -238,6 +240,7 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 			watcher = await api.updateWatcher(id, {
 				check_interval_sec: editInterval,
 				metadata_url: editMetadataURL,
+				release_ref: editReleaseRef.trim() || 'latest',
 				deployment_environment: editDeploymentEnvironment,
 				github_token: editUseGlobalToken ? '' : (editGitHubToken.trim() !== '' ? editGitHubToken : undefined),
 				install_dir: editInstallDir,
@@ -671,6 +674,11 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 						<div class="space-y-2">
 							<Label for="editMetadataURL">Metadata URL</Label>
 							<Input id="editMetadataURL" bind:value={editMetadataURL} />
+						</div>
+						<div class="space-y-2">
+							<Label for="editReleaseRef">Release Ref</Label>
+							<Input id="editReleaseRef" bind:value={editReleaseRef} placeholder="latest or v1.2.3" />
+							<p class="text-xs text-muted-foreground">Use <code>latest</code> to follow new releases, or pin this watcher to a specific release tag.</p>
 						</div>
 						<div class="grid gap-4 sm:grid-cols-3">
 							<div class="space-y-2">

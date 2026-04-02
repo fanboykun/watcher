@@ -80,32 +80,66 @@ func NewGitHubClient(token string, log *Logger) *GitHubClient {
 //
 // This function handles routing to the correct method automatically.
 func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionMetadata, error) {
-	g.log.Debug("fetching metadata", "url", url)
+	return g.FetchMetadataForRelease(ctx, url, "latest")
+}
+
+func (g *GitHubClient) FetchServiceMetadataForRelease(ctx context.Context, rawURL, releaseRef, serviceName string) (*VersionMetadata, error) {
+	releaseRef = normalizeReleaseRef(releaseRef)
+	serviceName = strings.TrimSpace(serviceName)
+	g.log.Debug("fetching service metadata", "url", rawURL, "release_ref", releaseRef, "service_name", serviceName)
+
+	if strings.HasSuffix(rawURL, "version.json") {
+		return g.FetchMetadataForRelease(ctx, rawURL, releaseRef)
+	}
+
+	return g.FetchMetadataFromRepoForServiceRelease(ctx, rawURL, releaseRef, serviceName)
+}
+
+func (g *GitHubClient) FetchMetadataForRelease(ctx context.Context, rawURL, releaseRef string) (*VersionMetadata, error) {
+	releaseRef = normalizeReleaseRef(releaseRef)
+	g.log.Debug("fetching metadata", "url", rawURL, "release_ref", releaseRef)
+
+	if !strings.HasSuffix(rawURL, "version.json") {
+		return g.FetchMetadataFromRepoForRelease(ctx, rawURL, releaseRef)
+	}
+
+	if releaseRef != "latest" {
+		owner, repo, err := ParseGitHubURL(rawURL)
+		if err != nil {
+			return nil, fmt.Errorf("parse metadata URL: %w", err)
+		}
+		data, err := g.fetchNamedAssetFromRelease(ctx, owner, repo, releaseRef, "version.json")
+		if err != nil {
+			return nil, fmt.Errorf("fetch version.json for release %q: %w", releaseRef, err)
+		}
+		var meta VersionMetadata
+		if err := json.Unmarshal(data, &meta); err != nil {
+			return nil, fmt.Errorf("decode version.json: %w", err)
+		}
+		return &meta, nil
+	}
+
+	return g.fetchLatestMetadata(ctx, rawURL)
+}
+
+func (g *GitHubClient) fetchLatestMetadata(ctx context.Context, rawURL string) (*VersionMetadata, error) {
+	g.log.Debug("fetching metadata", "url", rawURL)
 
 	var data []byte
 	var err error
 
-	if g.token != "" && !strings.HasSuffix(url, "version.json") {
-		// Native repo polling: use GitHub API to find latest release and build metadata
-		return g.FetchMetadataFromRepo(ctx, url)
-	}
-
 	if g.token != "" {
 		// Private repo with version.json: use GitHub API to resolve and download the asset
-		owner, repo, err := ParseGitHubURL(url)
+		owner, repo, err := ParseGitHubURL(rawURL)
 		if err != nil {
 			return nil, fmt.Errorf("parse metadata URL: %w", err)
 		}
-		data, err = g.fetchAssetViaAPI(ctx, owner, repo, "version.json")
+		data, err = g.fetchNamedAssetFromRelease(ctx, owner, repo, "latest", "version.json")
 		if err != nil {
 			return nil, fmt.Errorf("fetch version.json via API: %w", err)
 		}
 	} else {
-		// Public repo: fetch directly (can be either version.json or repo URL)
-		if !strings.HasSuffix(url, "version.json") {
-			return g.FetchMetadataFromRepo(ctx, url)
-		}
-		data, err = g.fetchDirect(ctx, url)
+		data, err = g.fetchDirect(ctx, rawURL)
 		if err != nil {
 			return nil, fmt.Errorf("fetch metadata directly: %w", err)
 		}
@@ -119,79 +153,48 @@ func (g *GitHubClient) FetchMetadata(ctx context.Context, url string) (*VersionM
 	return &meta, nil
 }
 
+// FetchMetadataFromRepo builds metadata from a repository's latest release.
+func (g *GitHubClient) FetchMetadataFromRepo(ctx context.Context, repoURL string) (*VersionMetadata, error) {
+	return g.FetchMetadataFromRepoForRelease(ctx, repoURL, "latest")
+}
+
+func (g *GitHubClient) FetchMetadataFromRepoForRelease(ctx context.Context, repoURL, releaseRef string) (*VersionMetadata, error) {
+	owner, repo, err := ParseGitHubURL(repoURL)
+	if err != nil {
+		return nil, err
+	}
+
+	release, err := g.fetchRelease(ctx, owner, repo, releaseRef)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildMetadataFromRelease(release), nil
+}
+
+func (g *GitHubClient) FetchMetadataFromRepoForServiceRelease(ctx context.Context, repoURL, releaseRef, serviceName string) (*VersionMetadata, error) {
+	owner, repo, err := ParseGitHubURL(repoURL)
+	if err != nil {
+		return nil, err
+	}
+
+	releaseRef = normalizeReleaseRef(releaseRef)
+	serviceName = strings.TrimSpace(serviceName)
+	if releaseRef != "latest" || serviceName == "" {
+		return g.FetchMetadataFromRepoForRelease(ctx, repoURL, releaseRef)
+	}
+
+	release, err := g.fetchLatestReleaseForService(ctx, owner, repo, serviceName)
+	if err != nil {
+		return nil, err
+	}
+	return buildMetadataFromRelease(release), nil
+}
+
 // fetchAssetViaAPI uses the GitHub releases API to find and download a named asset.
 // This is the correct method for private repo release assets.
 func (g *GitHubClient) fetchAssetViaAPI(ctx context.Context, owner, repo, assetName string) ([]byte, error) {
-	// Step 1: get latest release metadata to find the asset ID
-	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", g.apiBase, owner, repo)
-	g.log.Debug("fetching latest release via API", "url", apiURL)
-
-	req, err := g.newRequest(ctx, http.MethodGet, apiURL)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	resp, err := g.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch latest release: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("HTTP %d -- check github_token has repo scope", resp.StatusCode)
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("HTTP 404 -- no releases found for %s/%s", owner, repo)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("releases API returned HTTP %d", resp.StatusCode)
-	}
-
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, fmt.Errorf("decode release JSON: %w", err)
-	}
-
-	// Step 2: find the asset by name
-	var asset *githubAsset
-	for i := range release.Assets {
-		if release.Assets[i].Name == assetName {
-			asset = &release.Assets[i]
-			break
-		}
-	}
-	if asset == nil {
-		names := make([]string, len(release.Assets))
-		for i, a := range release.Assets {
-			names[i] = a.Name
-		}
-		return nil, fmt.Errorf("asset %q not found in latest release (available: %v)", assetName, names)
-	}
-
-	// Step 3: download the asset via its API URL
-	g.log.Debug("downloading asset via API", "asset", assetName, "url", asset.URL)
-
-	req2, err := g.newRequest(ctx, http.MethodGet, asset.URL)
-	if err != nil {
-		return nil, err
-	}
-	// Required header to get the raw binary instead of JSON metadata
-	req2.Header.Set("Accept", "application/octet-stream")
-	req2.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	resp2, err := g.client.Do(req2)
-	if err != nil {
-		return nil, fmt.Errorf("download asset: %w", err)
-	}
-	defer resp2.Body.Close()
-
-	if resp2.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("asset download returned HTTP %d", resp2.StatusCode)
-	}
-
-	return io.ReadAll(resp2.Body)
+	return g.fetchNamedAssetFromRelease(ctx, owner, repo, "latest", assetName)
 }
 
 // fetchDirect downloads a URL directly (public repos only)
@@ -231,11 +234,11 @@ func (g *GitHubClient) DownloadArtifact(ctx context.Context, artifactURL, destPa
 		var err error
 		if g.token != "" {
 			// Private repo: artifact_url is a browser download URL, resolve via API
-			owner, repo, assetName, err2 := parseArtifactURL(artifactURL)
+			owner, repo, tag, assetName, err2 := parseReleaseDownloadURL(artifactURL)
 			if err2 != nil {
 				return fmt.Errorf("parse artifact URL: %w", err2)
 			}
-			err = g.downloadAssetViaAPI(ctx, owner, repo, assetName, destPath)
+			err = g.downloadAssetViaAPI(ctx, owner, repo, tag, assetName, destPath)
 		} else {
 			err = g.downloadDirect(ctx, artifactURL, destPath)
 		}
@@ -263,8 +266,8 @@ func (g *GitHubClient) DownloadArtifact(ctx context.Context, artifactURL, destPa
 }
 
 // downloadAssetViaAPI finds the artifact by name in the matching release and downloads it
-func (g *GitHubClient) downloadAssetViaAPI(ctx context.Context, owner, repo, assetName, destPath string) error {
-	data, err := g.fetchAssetViaAPI(ctx, owner, repo, assetName)
+func (g *GitHubClient) downloadAssetViaAPI(ctx context.Context, owner, repo, releaseRef, assetName, destPath string) error {
+	data, err := g.fetchNamedAssetFromRelease(ctx, owner, repo, releaseRef, assetName)
 	if err != nil {
 		return err
 	}
@@ -386,19 +389,47 @@ func parseArtifactURL(rawURL string) (owner, repo, assetName string, err error) 
 // from a GitHub release download URL.
 // Supports: https://github.com/{owner}/{repo}/releases/download/{tag}/{filename}
 func parseReleaseDownloadURL(rawURL string) (owner, repo, tag, assetName string, err error) {
-	trimmed := strings.TrimPrefix(rawURL, "https://github.com/")
-	if trimmed == rawURL {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("invalid URL: %w", err)
+	}
+	if strings.ToLower(strings.TrimSpace(u.Scheme)) != "https" {
 		return "", "", "", "", fmt.Errorf("unexpected URL format: %s", rawURL)
 	}
-	// owner/repo/releases/download/vX.Y.Z/filename.zip
-	parts := strings.SplitN(trimmed, "/", 6)
-	if len(parts) < 6 || parts[5] == "" {
+	host := strings.ToLower(strings.TrimSpace(u.Host))
+	if host != "github.com" && host != "www.github.com" {
+		return "", "", "", "", fmt.Errorf("unexpected URL format: %s", rawURL)
+	}
+
+	parts := strings.Split(strings.Trim(u.EscapedPath(), "/"), "/")
+	if len(parts) < 6 {
 		return "", "", "", "", fmt.Errorf("cannot extract asset name from URL: %s", rawURL)
 	}
-	if parts[2] != "releases" || parts[3] != "download" || parts[4] == "" {
+	if parts[2] != "releases" || parts[3] != "download" {
 		return "", "", "", "", fmt.Errorf("unexpected release download URL format: %s", rawURL)
 	}
-	return parts[0], parts[1], parts[4], parts[5], nil
+
+	owner = parts[0]
+	repo = parts[1]
+
+	tagEscaped := strings.Join(parts[4:len(parts)-1], "/")
+	if tagEscaped == "" {
+		return "", "", "", "", fmt.Errorf("unexpected release download URL format: %s", rawURL)
+	}
+	tag, err = url.PathUnescape(tagEscaped)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("decode release tag: %w", err)
+	}
+
+	assetName, err = url.PathUnescape(parts[len(parts)-1])
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("decode asset name: %w", err)
+	}
+	if assetName == "" {
+		return "", "", "", "", fmt.Errorf("cannot extract asset name from URL: %s", rawURL)
+	}
+
+	return owner, repo, tag, assetName, nil
 }
 
 func deriveServiceNameFromAsset(assetName string) string {
@@ -426,6 +457,36 @@ func deriveServiceNameFromAsset(assetName string) string {
 		return name
 	}
 	return derived
+}
+
+func shouldIgnoreAssetForServiceDiscovery(assetName string) bool {
+	name := strings.ToLower(strings.TrimSpace(assetName))
+	return name == "version.json" || strings.HasSuffix(name, ".version.json")
+}
+
+func buildMetadataFromRelease(release *githubRelease) *VersionMetadata {
+	meta := &VersionMetadata{
+		Services: make(map[string]ServiceMeta),
+	}
+
+	for _, asset := range release.Assets {
+		if shouldIgnoreAssetForServiceDiscovery(asset.Name) {
+			continue
+		}
+		serviceName := deriveServiceNameFromAsset(asset.Name)
+		if strings.TrimSpace(serviceName) == "" {
+			continue
+		}
+
+		meta.Services[serviceName] = ServiceMeta{
+			Version:     release.TagName,
+			Artifact:    asset.Name,
+			ArtifactURL: asset.BrowserDownloadURL,
+			PublishedAt: release.PublishedAt,
+		}
+	}
+
+	return meta
 }
 
 func isKnownAssetSuffixToken(token string) bool {
@@ -606,8 +667,55 @@ func (g *GitHubClient) FetchLatestRelease(ctx context.Context, repoURL string) (
 	if err != nil {
 		return nil, err
 	}
+	return g.fetchRelease(ctx, owner, repo, "latest")
+}
 
-	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", g.apiBase, owner, repo)
+func normalizeReleaseRef(releaseRef string) string {
+	releaseRef = strings.TrimSpace(releaseRef)
+	if releaseRef == "" {
+		return "latest"
+	}
+	return releaseRef
+}
+
+func (g *GitHubClient) fetchLatestReleaseForService(ctx context.Context, owner, repo, serviceName string) (*githubRelease, error) {
+	latest, err := g.fetchRelease(ctx, owner, repo, "latest")
+	if err != nil {
+		return nil, err
+	}
+	latestMeta := buildMetadataFromRelease(latest)
+	if _, ok := latestMeta.Services[serviceName]; ok {
+		return latest, nil
+	}
+
+	releases, err := g.fetchReleases(ctx, owner, repo, 30)
+	if err != nil {
+		return nil, err
+	}
+	for i := range releases {
+		meta := buildMetadataFromRelease(&releases[i])
+		if _, ok := meta.Services[serviceName]; ok {
+			return &releases[i], nil
+		}
+	}
+
+	available := make([]string, 0, len(latestMeta.Services))
+	for name := range latestMeta.Services {
+		available = append(available, name)
+	}
+	return nil, fmt.Errorf("service %q not found in repo releases for %s/%s (latest available: %v)", serviceName, owner, repo, available)
+}
+
+func (g *GitHubClient) fetchRelease(ctx context.Context, owner, repo, releaseRef string) (*githubRelease, error) {
+	releaseRef = normalizeReleaseRef(releaseRef)
+
+	var apiURL string
+	if releaseRef == "latest" {
+		apiURL = fmt.Sprintf("%s/repos/%s/%s/releases/latest", g.apiBase, owner, repo)
+	} else {
+		apiURL = fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", g.apiBase, owner, repo, url.PathEscape(releaseRef))
+	}
+
 	req, err := g.newRequest(ctx, http.MethodGet, apiURL)
 	if err != nil {
 		return nil, err
@@ -617,15 +725,21 @@ func (g *GitHubClient) FetchLatestRelease(ctx context.Context, repoURL string) (
 
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch latest release: %w", err)
+		return nil, fmt.Errorf("fetch release %q: %w", releaseRef, err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("releases API returned HTTP 404 for %s/%s (repo not found, private without token access, or no published releases)", owner, repo)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("HTTP %d -- check github_token has repo scope", resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		if releaseRef == "latest" {
+			return nil, fmt.Errorf("HTTP 404 -- no releases found for %s/%s", owner, repo)
 		}
-		return nil, fmt.Errorf("releases API returned HTTP %d for %s/%s", resp.StatusCode, owner, repo)
+		return nil, fmt.Errorf("HTTP 404 -- release tag %q not found for %s/%s", releaseRef, owner, repo)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("releases API returned HTTP %d", resp.StatusCode)
 	}
 
 	var release githubRelease
@@ -636,14 +750,12 @@ func (g *GitHubClient) FetchLatestRelease(ctx context.Context, repoURL string) (
 	return &release, nil
 }
 
-// FetchMetadataFromRepo builds a VersionMetadata object directly from GitHub release data.
-func (g *GitHubClient) FetchMetadataFromRepo(ctx context.Context, repoURL string) (*VersionMetadata, error) {
-	owner, repo, err := ParseGitHubURL(repoURL)
-	if err != nil {
-		return nil, err
+func (g *GitHubClient) fetchReleases(ctx context.Context, owner, repo string, perPage int) ([]githubRelease, error) {
+	if perPage <= 0 {
+		perPage = 30
 	}
 
-	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", g.apiBase, owner, repo)
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases?per_page=%d", g.apiBase, owner, repo, perPage)
 	req, err := g.newRequest(ctx, http.MethodGet, apiURL)
 	if err != nil {
 		return nil, err
@@ -653,36 +765,67 @@ func (g *GitHubClient) FetchMetadataFromRepo(ctx context.Context, repoURL string
 
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch latest release: %w", err)
+		return nil, fmt.Errorf("list releases: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("HTTP %d -- check github_token has repo scope", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list releases returned HTTP %d", resp.StatusCode)
+	}
+
+	var releases []githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, fmt.Errorf("decode releases JSON: %w", err)
+	}
+	return releases, nil
+}
+
+func (g *GitHubClient) fetchNamedAssetFromRelease(ctx context.Context, owner, repo, releaseRef, assetName string) ([]byte, error) {
+	release, err := g.fetchRelease(ctx, owner, repo, releaseRef)
+	if err != nil {
+		return nil, err
+	}
+
+	var asset *githubAsset
+	for i := range release.Assets {
+		if release.Assets[i].Name == assetName {
+			asset = &release.Assets[i]
+			break
+		}
+	}
+	if asset == nil {
+		names := make([]string, len(release.Assets))
+		for i, a := range release.Assets {
+			names[i] = a.Name
+		}
+		return nil, fmt.Errorf("asset %q not found in release %q (available: %v)", assetName, release.TagName, names)
+	}
+
+	if g.token == "" {
+		return g.fetchDirect(ctx, asset.BrowserDownloadURL)
+	}
+
+	g.log.Debug("downloading asset via API", "asset", assetName, "url", asset.URL, "release_ref", releaseRef)
+
+	req, err := g.newRequest(ctx, http.MethodGet, asset.URL)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/octet-stream")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download asset: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("releases API returned HTTP 404 for %s/%s (repo not found, private without token access, or no published releases)", owner, repo)
-		}
-		return nil, fmt.Errorf("releases API returned HTTP %d for %s/%s", resp.StatusCode, owner, repo)
+		return nil, fmt.Errorf("asset download returned HTTP %d", resp.StatusCode)
 	}
 
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, fmt.Errorf("decode release JSON: %w", err)
-	}
-
-	meta := &VersionMetadata{
-		Services: make(map[string]ServiceMeta),
-	}
-
-	for _, asset := range release.Assets {
-		serviceName := deriveServiceNameFromAsset(asset.Name)
-
-		meta.Services[serviceName] = ServiceMeta{
-			Version:     release.TagName,
-			Artifact:    asset.Name,
-			ArtifactURL: asset.BrowserDownloadURL,
-			PublishedAt: release.PublishedAt,
-		}
-	}
-
-	return meta, nil
+	return io.ReadAll(resp.Body)
 }

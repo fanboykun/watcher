@@ -8,8 +8,9 @@ import (
 type Watcher struct {
 	ID                    uint   `gorm:"primaryKey" json:"id"`
 	Name                  string `gorm:"not null" json:"name"`
-	ServiceName           string `gorm:"not null;uniqueIndex" json:"service_name"`
+	ServiceName           string `gorm:"not null;index" json:"service_name"`
 	MetadataURL           string `gorm:"not null" json:"metadata_url"`
+	ReleaseRef            string `gorm:"not null;default:'latest'" json:"release_ref"`
 	DeploymentEnvironment string `gorm:"not null;default:''" json:"deployment_environment"`
 	GitHubToken           string `gorm:"column:github_token;not null;default:''" json:"-"`
 	CheckIntervalSec      int    `gorm:"not null;default:300" json:"check_interval_sec"`

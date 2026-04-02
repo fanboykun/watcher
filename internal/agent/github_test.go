@@ -28,6 +28,14 @@ func newTestClient(token string, server *httptest.Server) *GitHubClient {
 	return c
 }
 
+func serviceMetaKeys(m map[string]ServiceMeta) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // ============================================================
 // ParseGitHubURL
 // ============================================================
@@ -202,6 +210,22 @@ func TestParseReleaseDownloadURL(t *testing.T) {
 			wantRepo:  "my-repo",
 			wantTag:   "v1.2.3",
 			wantAsset: "my-repo-v1.2.3.zip",
+		},
+		{
+			name:      "release tag with slash",
+			url:       "https://github.com/my-org/my-repo/releases/download/alpha-api/v1.2.3/alpha-api-v1.2.3.zip",
+			wantOwner: "my-org",
+			wantRepo:  "my-repo",
+			wantTag:   "alpha-api/v1.2.3",
+			wantAsset: "alpha-api-v1.2.3.zip",
+		},
+		{
+			name:      "release tag with encoded slash",
+			url:       "https://github.com/my-org/my-repo/releases/download/alpha-api%2Fv1.2.3/alpha-api-v1.2.3.zip",
+			wantOwner: "my-org",
+			wantRepo:  "my-repo",
+			wantTag:   "alpha-api/v1.2.3",
+			wantAsset: "alpha-api-v1.2.3.zip",
 		},
 		{
 			name:            "missing tag segment",
@@ -484,6 +508,94 @@ func TestFetchMetadata_PrivateRepo_AssetNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "app-v1.0.0.zip") {
 		t.Errorf("expected available assets listed in error, got: %v", err)
+	}
+}
+
+func TestFetchServiceMetadataForRelease_RepoLatestFindsMatchingServiceRelease(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/fanboykun/multi-release/releases/latest":
+			release := githubRelease{
+				TagName:     "alpha-api/v0.2.0",
+				PublishedAt: "2026-04-02T10:00:00Z",
+				Assets: []githubAsset{
+					{
+						Name:               "alpha-api-v0.2.0-windows-amd64.zip",
+						BrowserDownloadURL: "https://github.com/fanboykun/multi-release/releases/download/alpha-api%2Fv0.2.0/alpha-api-v0.2.0-windows-amd64.zip",
+					},
+					{
+						Name:               "alpha-api.version.json",
+						BrowserDownloadURL: "https://github.com/fanboykun/multi-release/releases/download/alpha-api%2Fv0.2.0/alpha-api.version.json",
+					},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(release)
+		case "/repos/fanboykun/multi-release/releases":
+			releases := []githubRelease{
+				{
+					TagName:     "alpha-api/v0.2.0",
+					PublishedAt: "2026-04-02T10:00:00Z",
+					Assets: []githubAsset{
+						{
+							Name:               "alpha-api-v0.2.0-windows-amd64.zip",
+							BrowserDownloadURL: "https://github.com/fanboykun/multi-release/releases/download/alpha-api%2Fv0.2.0/alpha-api-v0.2.0-windows-amd64.zip",
+						},
+						{
+							Name:               "alpha-api.version.json",
+							BrowserDownloadURL: "https://github.com/fanboykun/multi-release/releases/download/alpha-api%2Fv0.2.0/alpha-api.version.json",
+						},
+					},
+				},
+				{
+					TagName:     "beta-api/v0.1.0",
+					PublishedAt: "2026-04-01T12:00:00Z",
+					Assets: []githubAsset{
+						{
+							Name:               "beta-api-v0.1.0-windows-amd64.zip",
+							BrowserDownloadURL: "https://github.com/fanboykun/multi-release/releases/download/beta-api%2Fv0.1.0/beta-api-v0.1.0-windows-amd64.zip",
+						},
+						{
+							Name:               "beta-api.version.json",
+							BrowserDownloadURL: "https://github.com/fanboykun/multi-release/releases/download/beta-api%2Fv0.1.0/beta-api.version.json",
+						},
+					},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(releases)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient("", server)
+	meta, err := client.FetchServiceMetadataForRelease(
+		context.Background(),
+		"https://github.com/fanboykun/multi-release",
+		"latest",
+		"beta-api",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(meta.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(meta.Services))
+	}
+	svc, ok := meta.Services["beta-api"]
+	if !ok {
+		t.Fatalf("expected beta-api metadata, got keys: %v", serviceMetaKeys(meta.Services))
+	}
+	if svc.Version != "beta-api/v0.1.0" {
+		t.Fatalf("version = %q, want %q", svc.Version, "beta-api/v0.1.0")
+	}
+	if strings.Contains(svc.Artifact, "version.json") {
+		t.Fatalf("expected deployable artifact, got metadata asset %q", svc.Artifact)
+	}
+	if _, exists := meta.Services["beta-api.version.json"]; exists {
+		t.Fatalf("metadata assets should not appear as services")
 	}
 }
 
