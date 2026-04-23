@@ -1,7 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { api, type Watcher, type DeployLog, type Service, type ServiceConfigFile } from '$lib/api';
+	import {
+		api,
+		iisAppKindLabel,
+		isIISService,
+		serviceTypeLabel,
+		type DeployLog,
+		type IISAppKind,
+		type Service,
+		type ServiceConfigFile,
+		type Watcher
+	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Tabs from '$lib/components/ui/tabs';
@@ -49,26 +59,26 @@
 	let pollStatus = $state('all');
 	let pollTotal = $state(0);
 	let error = $state('');
-let triggerMsg = $state('');
-let showAddService = $state(false);
-let showEditService = $state(false);
-let showRollbackDialog = $state(false);
-let showConfirmDialog = $state(false);
-let addingService = $state(false);
-let updatingService = $state(false);
-let confirming = $state(false);
-let editing = $state(false);
-let saving = $state(false);
-let rollbackTargetVersion = $state('');
-let rollbackReportGitHub = $state(true);
-let confirmTitle = $state('');
-let confirmDescription = $state('');
-let confirmActionLabel = $state('Confirm');
-let confirmActionClass = $state('');
-let confirmAction: (() => Promise<void> | void) | null = null;
+	let triggerMsg = $state('');
+	let showAddService = $state(false);
+	let showEditService = $state(false);
+	let showRollbackDialog = $state(false);
+	let showConfirmDialog = $state(false);
+	let addingService = $state(false);
+	let updatingService = $state(false);
+	let confirming = $state(false);
+	let editing = $state(false);
+	let saving = $state(false);
+	let rollbackTargetVersion = $state('');
+	let rollbackReportGitHub = $state(true);
+	let confirmTitle = $state('');
+	let confirmDescription = $state('');
+	let confirmActionLabel = $state('Confirm');
+	let confirmActionClass = $state('');
+	let confirmAction: (() => Promise<void> | void) | null = null;
 
 	// Add service form
-	let svcType = $state<'nssm' | 'static'>('nssm');
+	let svcType = $state<'nssm' | 'iis'>('nssm');
 	let svcName = $state('');
 	let svcBinary = $state('');
 	let svcStartArguments = $state('');
@@ -76,11 +86,13 @@ let confirmAction: (() => Promise<void> | void) | null = null;
 	let svcEnvContent = $state('');
 	let svcConfigFiles = $state<ServiceConfigFile[]>([]);
 	let svcHealthURL = $state('');
+	let svcIISAppKind = $state<IISAppKind>('static');
 	let svcIISAppPool = $state('');
 	let svcIISSiteName = $state('');
+	let svcIISManagedRuntime = $state('');
 	let svcPublicURL = $state('');
 	let editSvcId = $state<number | null>(null);
-	let editSvcType = $state<'nssm' | 'static'>('nssm');
+	let editSvcType = $state<'nssm' | 'iis'>('nssm');
 	let editSvcName = $state('');
 	let editSvcBinary = $state('');
 	let editSvcStartArguments = $state('');
@@ -88,8 +100,10 @@ let confirmAction: (() => Promise<void> | void) | null = null;
 	let editSvcEnvContent = $state('');
 	let editSvcConfigFiles = $state<ServiceConfigFile[]>([]);
 	let editSvcHealthURL = $state('');
+	let editSvcIISAppKind = $state<IISAppKind>('static');
 	let editSvcIISAppPool = $state('');
 	let editSvcIISSiteName = $state('');
+	let editSvcIISManagedRuntime = $state('');
 	let editSvcPublicURL = $state('');
 
 	// Edit form
@@ -106,8 +120,14 @@ let confirmAction: (() => Promise<void> | void) | null = null;
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'overview');
 
-let watcherEventSource: EventSource | null = null;
-let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+	let watcherEventSource: EventSource | null = null;
+	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
+		{ value: 'static', label: 'Static Site', hint: 'Frontend build or static files served directly by IIS.' },
+		{ value: 'php', label: 'PHP', hint: 'PHP app on IIS with FastCGI and PHP already installed.' },
+		{ value: 'aspnet_classic', label: 'ASP.NET Classic', hint: 'Classic ASP.NET app using the managed CLR app pool.' }
+	];
 
 	const id = Number(page.params.id);
 
@@ -268,8 +288,10 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 				env_content: svcEnvContent,
 				config_files: svcConfigFiles.filter((file) => file.file_path.trim() !== ''),
 				health_check_url: svcHealthURL,
+				iis_app_kind: svcIISAppKind,
 				iis_app_pool: svcIISAppPool,
 				iis_site_name: svcIISSiteName,
+				iis_managed_runtime: svcIISManagedRuntime,
 				public_url: svcPublicURL
 			});
 			showAddService = false;
@@ -282,8 +304,10 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 				svcHealthURL =
 				svcIISAppPool =
 				svcIISSiteName =
+				svcIISManagedRuntime =
 				svcPublicURL =
 					'';
+			svcIISAppKind = 'static';
 			svcConfigFiles = [];
 			watcher = await api.getWatcher(id);
 		} catch (e) {
@@ -318,7 +342,7 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function openEditServiceDialog(svc: Service) {
 		editSvcId = svc.id;
-		editSvcType = svc.service_type;
+		editSvcType = isIISService(svc.service_type) ? 'iis' : 'nssm';
 		editSvcName = svc.windows_service_name;
 		editSvcBinary = svc.binary_name || '';
 		editSvcStartArguments = svc.start_arguments || '';
@@ -331,8 +355,10 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 			content: file.content
 		}));
 		editSvcHealthURL = svc.health_check_url || '';
+		editSvcIISAppKind = svc.iis_app_kind || 'static';
 		editSvcIISAppPool = svc.iis_app_pool || '';
 		editSvcIISSiteName = svc.iis_site_name || '';
+		editSvcIISManagedRuntime = svc.iis_managed_runtime || '';
 		editSvcPublicURL = svc.public_url || '';
 		showEditService = true;
 	}
@@ -358,8 +384,10 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 				env_content: editSvcEnvContent,
 				config_files: editSvcConfigFiles.filter((file) => file.file_path.trim() !== ''),
 				health_check_url: editSvcHealthURL,
+				iis_app_kind: editSvcIISAppKind,
 				iis_app_pool: editSvcIISAppPool,
 				iis_site_name: editSvcIISSiteName,
+				iis_managed_runtime: editSvcIISManagedRuntime,
 				public_url: editSvcPublicURL
 			});
 			showEditService = false;
@@ -868,16 +896,19 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 										</Table.Cell>
 										<Table.Cell>
 											<span
-												class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {svc.service_type ===
-												'static'
+												class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {isIISService(svc.service_type)
 													? 'border-blue-500/30 bg-blue-500/10 text-blue-400'
 													: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'}"
 											>
-												{svc.service_type === 'static' ? 'Static (IIS)' : 'Binary (NSSM)'}
+												{serviceTypeLabel(svc.service_type)}
 											</span>
 										</Table.Cell>
 										<Table.Cell class="font-mono text-xs text-muted-foreground">
-											{svc.service_type === 'static' ? svc.iis_app_pool || '—' : svc.binary_name}
+											{#if isIISService(svc.service_type)}
+												{iisAppKindLabel(svc.iis_app_kind || 'static')}
+											{:else}
+												{svc.binary_name}
+											{/if}
 										</Table.Cell>
 										<Table.Cell class="font-mono text-xs text-muted-foreground"
 											>{svc.health_check_url || '—'}</Table.Cell
@@ -1226,22 +1257,22 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
 				<div class="grid gap-4 md:grid-cols-2">
 					<div class="space-y-2">
-						<Label for="svcType">Service Type</Label>
+						<Label for="svcType">Hosting Mode</Label>
 						<Select
 							id="svcType"
 							bind:value={svcType}
 						>
 							<option value="nssm">Binary (NSSM)</option>
-							<option value="static">Static Site (IIS)</option>
+							<option value="iis">IIS Site</option>
 						</Select>
 					</div>
 					<div class="space-y-2">
 						<Label for="svcName"
-							>{svcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label
+							>{svcType === 'iis' ? 'Service Identifier' : 'Windows Service Name'}</Label
 						>
 						<Input
 							id="svcName"
-							placeholder={svcType === 'static' ? 'my-frontend' : 'my-app-web-1'}
+							placeholder={svcType === 'iis' ? 'marketing-site' : 'my-app-web-1'}
 							bind:value={svcName}
 							required
 						/>
@@ -1273,6 +1304,17 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 							</p>
 						</div>
 					{:else}
+						<div class="space-y-2 md:col-span-2">
+							<Label for="svcIISAppKind">IIS App Kind</Label>
+							<Select id="svcIISAppKind" bind:value={svcIISAppKind}>
+								{#each iisAppKinds as kind (kind.value)}
+									<option value={kind.value}>{kind.label}</option>
+								{/each}
+							</Select>
+							<p class="text-xs text-muted-foreground">
+								{iisAppKinds.find((kind) => kind.value === svcIISAppKind)?.hint}
+							</p>
+						</div>
 						<div class="space-y-2">
 							<Label for="svcIISAppPool">IIS App Pool Name</Label>
 							<Input id="svcIISAppPool" placeholder="my-frontend" bind:value={svcIISAppPool} />
@@ -1280,6 +1322,10 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 						<div class="space-y-2">
 							<Label for="svcIISSiteName">IIS Site Name</Label>
 							<Input id="svcIISSiteName" placeholder="my-frontend" bind:value={svcIISSiteName} />
+						</div>
+						<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
+							<span class="font-medium text-foreground/90">Bootstrap profile:</span>
+							{' '}{iisAppKindLabel(svcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
 						</div>
 					{/if}
 
@@ -1292,12 +1338,17 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 						/>
 					</div>
 					<div class="space-y-2">
-						<Label for="svcPublicURL">Public URL (optional)</Label>
+						<Label for="svcPublicURL">Public URL</Label>
 						<Input
 							id="svcPublicURL"
 							placeholder="https://my-app.example.com"
 							bind:value={svcPublicURL}
 						/>
+						{#if svcType === 'iis'}
+							<p class="text-xs text-muted-foreground">
+								Needed when Watcher must create the IIS site and binding automatically.
+							</p>
+						{/if}
 					</div>
 				</div>
 
@@ -1372,22 +1423,22 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
 				<div class="grid gap-4 md:grid-cols-2">
 					<div class="space-y-2">
-						<Label for="editSvcType">Service Type</Label>
+						<Label for="editSvcType">Hosting Mode</Label>
 						<Select
 							id="editSvcType"
 							bind:value={editSvcType}
 						>
 							<option value="nssm">Binary (NSSM)</option>
-							<option value="static">Static Site (IIS)</option>
+							<option value="iis">IIS Site</option>
 						</Select>
 					</div>
 					<div class="space-y-2">
 						<Label for="editSvcName"
-							>{editSvcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label
+							>{editSvcType === 'iis' ? 'Service Identifier' : 'Windows Service Name'}</Label
 						>
 						<Input
 							id="editSvcName"
-							placeholder={editSvcType === 'static' ? 'my-frontend' : 'my-app-web-1'}
+							placeholder={editSvcType === 'iis' ? 'marketing-site' : 'my-app-web-1'}
 							bind:value={editSvcName}
 							required
 						/>
@@ -1419,6 +1470,17 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 							</p>
 						</div>
 					{:else}
+						<div class="space-y-2 md:col-span-2">
+							<Label for="editSvcIISAppKind">IIS App Kind</Label>
+							<Select id="editSvcIISAppKind" bind:value={editSvcIISAppKind}>
+								{#each iisAppKinds as kind (kind.value)}
+									<option value={kind.value}>{kind.label}</option>
+								{/each}
+							</Select>
+							<p class="text-xs text-muted-foreground">
+								{iisAppKinds.find((kind) => kind.value === editSvcIISAppKind)?.hint}
+							</p>
+						</div>
 						<div class="space-y-2">
 							<Label for="editSvcIISAppPool">IIS App Pool Name</Label>
 							<Input id="editSvcIISAppPool" placeholder="my-frontend" bind:value={editSvcIISAppPool} />
@@ -1426,6 +1488,10 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 						<div class="space-y-2">
 							<Label for="editSvcIISSiteName">IIS Site Name</Label>
 							<Input id="editSvcIISSiteName" placeholder="my-frontend" bind:value={editSvcIISSiteName} />
+						</div>
+						<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
+							<span class="font-medium text-foreground/90">Bootstrap profile:</span>
+							{' '}{iisAppKindLabel(editSvcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
 						</div>
 					{/if}
 
@@ -1438,12 +1504,17 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 						/>
 					</div>
 					<div class="space-y-2">
-						<Label for="editSvcPublicURL">Public URL (optional)</Label>
+						<Label for="editSvcPublicURL">Public URL</Label>
 						<Input
 							id="editSvcPublicURL"
 							placeholder="https://my-app.example.com"
 							bind:value={editSvcPublicURL}
 						/>
+						{#if editSvcType === 'iis'}
+							<p class="text-xs text-muted-foreground">
+								Needed when Watcher must create the IIS site and binding automatically.
+							</p>
+						{/if}
 					</div>
 				</div>
 

@@ -58,17 +58,22 @@ export interface Watcher {
 	updated_at: string;
 }
 
+export type ServiceType = 'nssm' | 'iis';
+export type IISAppKind = 'static' | 'php' | 'aspnet_classic';
+
 export interface Service {
 	id: number;
 	watcher_id: number;
-	service_type: 'nssm' | 'static';
+	service_type: ServiceType | 'static';
 	windows_service_name: string;
 	binary_name: string;
 	start_arguments: string;
 	env_file: string;
 	health_check_url: string;
+	iis_app_kind: IISAppKind;
 	iis_app_pool: string;
 	iis_site_name: string;
+	iis_managed_runtime: string;
 	public_url: string;
 	env_content: string;
 	config_files: ServiceConfigFile[];
@@ -196,6 +201,25 @@ export interface UpdateSelfConfigRequest {
 	api_base_url?: string;
 	watcher_repo_url?: string;
 	watcher_service_name?: string;
+}
+
+export function isIISService(serviceType: Service['service_type'] | ServiceType): boolean {
+	return serviceType === 'iis' || serviceType === 'static';
+}
+
+export function serviceTypeLabel(serviceType: Service['service_type'] | ServiceType): string {
+	return isIISService(serviceType) ? 'IIS Site' : 'Binary (NSSM)';
+}
+
+export function iisAppKindLabel(kind: string): string {
+	switch (kind) {
+		case 'php':
+			return 'PHP';
+		case 'aspnet_classic':
+			return 'ASP.NET Classic';
+		default:
+			return 'Static Site';
+	}
 }
 
 // ── API methods ──────────────────────────────────────────────

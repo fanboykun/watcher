@@ -54,14 +54,17 @@ type HealthCheckConfig struct {
 }
 
 type ServiceConfig struct {
-	ServiceType        string // "nssm" or "static"
+	ServiceType        string // "nssm" or "iis"
 	WindowsServiceName string
 	BinaryName         string
 	StartArguments     string
 	EnvFile            string
 	HealthCheckURL     string
+	IISAppKind         string
 	IISAppPool         string
 	IISSiteName        string
+	IISManagedRuntime  string
+	PublicURL          string
 }
 
 // WatcherConfigFromDB converts a database.Watcher into the in-memory WatcherConfig
@@ -92,10 +95,7 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 		},
 	}
 	for _, s := range w.Services {
-		svcType := s.ServiceType
-		if svcType == "" {
-			svcType = "nssm" // default for backwards compatibility
-		}
+		svcType := normalizeServiceType(s.ServiceType)
 		cfg.Services = append(cfg.Services, ServiceConfig{
 			ServiceType:        svcType,
 			WindowsServiceName: s.WindowsServiceName,
@@ -103,11 +103,41 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 			StartArguments:     s.StartArguments,
 			EnvFile:            s.EnvFile,
 			HealthCheckURL:     s.HealthCheckURL,
+			IISAppKind:         normalizeIISAppKind(s.IISAppKind, s.IISManagedRuntime),
 			IISAppPool:         s.IISAppPool,
 			IISSiteName:        s.IISSiteName,
+			IISManagedRuntime:  s.IISManagedRuntime,
+			PublicURL:          s.PublicURL,
 		})
 	}
 	return cfg
+}
+
+func normalizeServiceType(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "", "nssm":
+		return "nssm"
+	case "iis", "static":
+		return "iis"
+	default:
+		return strings.TrimSpace(raw)
+	}
+}
+
+func normalizeIISAppKind(kind, runtime string) string {
+	switch strings.TrimSpace(strings.ToLower(kind)) {
+	case "", "static":
+		if normalizedRuntime := normalizeIISManagedRuntime(runtime); normalizedRuntime != "" {
+			return "aspnet_classic"
+		}
+		return "static"
+	case "php":
+		return "php"
+	case "aspnet_classic", "aspnet-classic", "aspnet", "asp.net", "asp.net_classic":
+		return "aspnet_classic"
+	default:
+		return strings.TrimSpace(kind)
+	}
 }
 
 func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus) *RepoWatcher {

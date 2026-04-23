@@ -68,6 +68,7 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 		{model: &Watcher{}, column: "github_token", field: "GitHubToken"},
 		{model: &DeployLog{}, column: "triggered_by", field: "TriggeredBy"},
 		{model: &Service{}, column: "env_content", field: "EnvContent"},
+		{model: &Service{}, column: "iis_app_kind", field: "IISAppKind"},
 	}
 
 	for _, spec := range columns {
@@ -87,6 +88,29 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 
 	if err := ensureWatcherServiceNameIsNonUnique(db); err != nil {
 		return fmt.Errorf("ensure non-unique service_name index: %w", err)
+	}
+
+	if err := normalizeLegacyServiceTypes(db); err != nil {
+		return fmt.Errorf("normalize legacy service types: %w", err)
+	}
+
+	return nil
+}
+
+func normalizeLegacyServiceTypes(db *gorm.DB) error {
+	if err := db.Exec("UPDATE services SET service_type = 'iis' WHERE LOWER(TRIM(service_type)) = 'static'").Error; err != nil {
+		return fmt.Errorf("rewrite legacy static service_type: %w", err)
+	}
+
+	if err := db.Exec(`
+		UPDATE services
+		SET iis_app_kind = CASE
+			WHEN LOWER(TRIM(COALESCE(iis_managed_runtime, ''))) IN ('v2', 'v2.0', 'v4', 'v4.0', '.net clr v4.0') THEN 'aspnet_classic'
+			ELSE 'static'
+		END
+		WHERE service_type = 'iis' AND (iis_app_kind IS NULL OR TRIM(iis_app_kind) = '')
+	`).Error; err != nil {
+		return fmt.Errorf("backfill iis_app_kind: %w", err)
 	}
 
 	return nil

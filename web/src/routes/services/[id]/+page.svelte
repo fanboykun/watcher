@@ -1,7 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { api, type Service, type Watcher, type HealthEvent, type DeployLog, type ServiceConfigFile } from '$lib/api';
+	import {
+		api,
+		iisAppKindLabel,
+		isIISService,
+		serviceTypeLabel,
+		type DeployLog,
+		type HealthEvent,
+		type IISAppKind,
+		type Service,
+		type ServiceConfigFile,
+		type Watcher
+	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Tabs from '$lib/components/ui/tabs';
@@ -50,17 +61,25 @@
 	let savingEnv = $state(false);
 	let showEditService = $state(false);
 	let updatingService = $state(false);
-	let editSvcType = $state<'nssm' | 'static'>('nssm');
+	let editSvcType = $state<'nssm' | 'iis'>('nssm');
 	let editSvcName = $state('');
 	let editSvcBinary = $state('');
 	let editSvcStartArguments = $state('');
 	let editSvcEnvFile = $state('');
 	let editSvcEnvContent = $state('');
 	let editSvcHealthURL = $state('');
+	let editSvcIISAppKind = $state<IISAppKind>('static');
 	let editSvcIISAppPool = $state('');
 	let editSvcIISSiteName = $state('');
+	let editSvcIISManagedRuntime = $state('');
 	let editSvcPublicURL = $state('');
 	let editSvcConfigFiles = $state<ServiceConfigFile[]>([]);
+
+	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
+		{ value: 'static', label: 'Static Site', hint: 'Frontend build or static files served directly by IIS.' },
+		{ value: 'php', label: 'PHP', hint: 'PHP app on IIS with FastCGI and PHP already installed.' },
+		{ value: 'aspnet_classic', label: 'ASP.NET Classic', hint: 'Classic ASP.NET app using the managed CLR app pool.' }
+	];
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
@@ -143,15 +162,17 @@
 
 	function openEditServiceDialog() {
 		if (!service) return;
-		editSvcType = service.service_type;
+		editSvcType = isIISService(service.service_type) ? 'iis' : 'nssm';
 		editSvcName = service.windows_service_name || '';
 		editSvcBinary = service.binary_name || '';
 		editSvcStartArguments = service.start_arguments || '';
 		editSvcEnvFile = service.env_file || '';
 		editSvcEnvContent = service.env_content || '';
 		editSvcHealthURL = service.health_check_url || '';
+		editSvcIISAppKind = service.iis_app_kind || 'static';
 		editSvcIISAppPool = service.iis_app_pool || '';
 		editSvcIISSiteName = service.iis_site_name || '';
+		editSvcIISManagedRuntime = service.iis_managed_runtime || '';
 		editSvcPublicURL = service.public_url || '';
 		editSvcConfigFiles = [...(service.config_files || []).map((file) => ({ ...file }))];
 		showEditService = true;
@@ -178,8 +199,10 @@
 				env_content: editSvcEnvContent,
 				config_files: editSvcConfigFiles.filter((file) => file.file_path.trim() !== ''),
 				health_check_url: editSvcHealthURL,
+				iis_app_kind: editSvcIISAppKind,
 				iis_app_pool: editSvcIISAppPool,
 				iis_site_name: editSvcIISSiteName,
+				iis_managed_runtime: editSvcIISManagedRuntime,
 				public_url: editSvcPublicURL
 			});
 			showEditService = false;
@@ -277,30 +300,32 @@
 				<Button.Root variant="outline" size="sm" onclick={openEditServiceDialog}>
 					<Pencil class="mr-1.5 h-4 w-4" /> Edit
 				</Button.Root>
-				<Button.Root
-					variant="outline"
-					size="sm"
-					class="text-emerald-400"
-					onclick={() => runAction(() => api.startService(id))}
-				>
-					<Play class="mr-1.5 h-4 w-4" /> Start
-				</Button.Root>
-				<Button.Root
-					variant="outline"
-					size="sm"
-					class="text-red-400"
-					onclick={() => runAction(() => api.stopService(id))}
-				>
-					<Square class="mr-1.5 h-4 w-4" /> Stop
-				</Button.Root>
-				<Button.Root
-					variant="outline"
-					size="sm"
-					class="text-amber-400"
-					onclick={() => runAction(() => api.restartService(id))}
-				>
-					<RefreshCw class="mr-1.5 h-4 w-4" /> Restart
-				</Button.Root>
+				{#if !isIISService(service.service_type)}
+					<Button.Root
+						variant="outline"
+						size="sm"
+						class="text-emerald-400"
+						onclick={() => runAction(() => api.startService(id))}
+					>
+						<Play class="mr-1.5 h-4 w-4" /> Start
+					</Button.Root>
+					<Button.Root
+						variant="outline"
+						size="sm"
+						class="text-red-400"
+						onclick={() => runAction(() => api.stopService(id))}
+					>
+						<Square class="mr-1.5 h-4 w-4" /> Stop
+					</Button.Root>
+					<Button.Root
+						variant="outline"
+						size="sm"
+						class="text-amber-400"
+						onclick={() => runAction(() => api.restartService(id))}
+					>
+						<RefreshCw class="mr-1.5 h-4 w-4" /> Restart
+					</Button.Root>
+				{/if}
 				<Button.Root variant="outline" size="sm" class="text-blue-400" onclick={checkHealth}>
 					<Heart class="mr-1.5 h-4 w-4" /> Health
 				</Button.Root>
@@ -326,12 +351,20 @@
 		<Card.Root class="border-border bg-card">
 			<Card.Content class="grid gap-4 p-6 sm:grid-cols-4">
 				<div>
-					<p class="text-xs text-muted-foreground">Binary</p>
-					<p class="mt-1 font-mono text-sm">{service.binary_name}</p>
+					<p class="text-xs text-muted-foreground">Hosting Mode</p>
+					<p class="mt-1 text-sm">{serviceTypeLabel(service.service_type)}</p>
 				</div>
 				<div>
-					<p class="text-xs text-muted-foreground">Env File</p>
-					<p class="mt-1 font-mono text-sm">{service.env_file || '—'}</p>
+					<p class="text-xs text-muted-foreground">{isIISService(service.service_type) ? 'IIS App Kind' : 'Binary'}</p>
+					<p class="mt-1 font-mono text-sm">{isIISService(service.service_type) ? iisAppKindLabel(service.iis_app_kind || 'static') : (service.binary_name || '—')}</p>
+				</div>
+				<div>
+					<p class="text-xs text-muted-foreground">{isIISService(service.service_type) ? 'IIS App Pool' : 'Env File'}</p>
+					<p class="mt-1 font-mono text-sm">{isIISService(service.service_type) ? (service.iis_app_pool || '—') : (service.env_file || '—')}</p>
+				</div>
+				<div>
+					<p class="text-xs text-muted-foreground">{isIISService(service.service_type) ? 'IIS Site Name' : 'Health URL'}</p>
+					<p class="mt-1 font-mono text-sm">{isIISService(service.service_type) ? (service.iis_site_name || '—') : (service.health_check_url || '—')}</p>
 				</div>
 				<div>
 					<p class="text-xs text-muted-foreground">Health URL</p>
@@ -363,31 +396,26 @@
 			</Card.Content>
 		</Card.Root>
 
-		{#if service.service_type === 'static'}
+		{#if isIISService(service.service_type)}
 			<div class="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
 				<div class="mb-2 flex items-center gap-2 font-medium text-blue-400">
 					<TerminalSquare class="h-5 w-5" />
-					IIS Configuration Required
+					IIS Bootstrap
 				</div>
 				<p class="mb-4 text-sm text-foreground/80">
-					The Watcher automatically manages extracting releases and updating target junctions for
-					static sites, but it does <strong>not</strong> create the IIS website itself. Run these commands
-					once in an Administrator PowerShell to link IIS to this deployment:
+					Watcher can now create the IIS app pool and site automatically on first deploy when
+					<code>iis_app_pool</code>, <code>iis_site_name</code>, and <code>public_url</code> are set. The
+					root application is kept pointed at <code>{watcher?.install_dir}\current</code> on each deploy.
 				</p>
-				<div class="overflow-x-auto rounded-md border border-border bg-black/50 p-3">
-					<pre class="max-w-full font-mono text-xs leading-relaxed text-blue-300"><span
-							class="text-muted-foreground"># 1. Create the application pool</span
-						>
-appcmd.exe add apppool /name:"{service.iis_app_pool}"
-
-<span class="text-muted-foreground"
-							># 2. Create the site (change the port/host binding as needed)</span
-						>
-appcmd.exe add site /name:"{service.iis_site_name}" /bindings:http/*:8080: /physicalPath:"{watcher?.install_dir}\current"
-
-<span class="text-muted-foreground"># 3. Assign the site to the application pool</span>
-appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app_pool}"</pre>
-				</div>
+				<p class="text-sm text-foreground/80">
+					This service is configured as <code>{iisAppKindLabel(service.iis_app_kind || 'static')}</code>.
+					Watcher will choose the IIS managed runtime automatically for that app kind, and if the site already
+					exists it will reuse it and refresh the root path and app pool assignment.
+				</p>
+				<p class="text-sm text-foreground/80">
+					Watcher does not install PHP, .NET hosting bundles, or IIS handler mappings. Those server-level
+					prerequisites still need to exist before the deployed site can serve traffic successfully.
+				</p>
 			</div>
 		{/if}
 
@@ -734,17 +762,17 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
 				<div class="grid gap-4 md:grid-cols-2">
 					<div class="space-y-2">
-						<Label for="editSvcType">Service Type</Label>
+						<Label for="editSvcType">Hosting Mode</Label>
 						<Select id="editSvcType" bind:value={editSvcType}>
 							<option value="nssm">Binary (NSSM)</option>
-							<option value="static">Static Site (IIS)</option>
+							<option value="iis">IIS Site</option>
 						</Select>
 					</div>
 					<div class="space-y-2">
-						<Label for="editSvcName">{editSvcType === 'static' ? 'Service Identifier' : 'Windows Service Name'}</Label>
+						<Label for="editSvcName">{editSvcType === 'iis' ? 'Service Identifier' : 'Windows Service Name'}</Label>
 						<Input
 							id="editSvcName"
-							placeholder={editSvcType === 'static' ? 'my-frontend' : 'my-app-web-1'}
+							placeholder={editSvcType === 'iis' ? 'marketing-site' : 'my-app-web-1'}
 							bind:value={editSvcName}
 							required
 						/>
@@ -776,6 +804,17 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 							</p>
 						</div>
 					{:else}
+						<div class="space-y-2 md:col-span-2">
+							<Label for="editSvcIISAppKind">IIS App Kind</Label>
+							<Select id="editSvcIISAppKind" bind:value={editSvcIISAppKind}>
+								{#each iisAppKinds as kind (kind.value)}
+									<option value={kind.value}>{kind.label}</option>
+								{/each}
+							</Select>
+							<p class="text-xs text-muted-foreground">
+								{iisAppKinds.find((kind) => kind.value === editSvcIISAppKind)?.hint}
+							</p>
+						</div>
 						<div class="space-y-2">
 							<Label for="editSvcIISAppPool">IIS App Pool Name</Label>
 							<Input id="editSvcIISAppPool" placeholder="my-frontend" bind:value={editSvcIISAppPool} />
@@ -783,6 +822,10 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 						<div class="space-y-2">
 							<Label for="editSvcIISSiteName">IIS Site Name</Label>
 							<Input id="editSvcIISSiteName" placeholder="my-frontend" bind:value={editSvcIISSiteName} />
+						</div>
+						<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
+							<span class="font-medium text-foreground/90">Bootstrap profile:</span>
+							{' '}{iisAppKindLabel(editSvcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
 						</div>
 					{/if}
 
@@ -795,12 +838,17 @@ appcmd.exe set app "{service.iis_site_name}/" /applicationPool:"{service.iis_app
 						/>
 					</div>
 					<div class="space-y-2">
-						<Label for="editSvcPublicURL">Public URL (optional)</Label>
+						<Label for="editSvcPublicURL">Public URL</Label>
 						<Input
 							id="editSvcPublicURL"
 							placeholder="https://my-app.example.com"
 							bind:value={editSvcPublicURL}
 						/>
+						{#if editSvcType === 'iis'}
+							<p class="text-xs text-muted-foreground">
+								Needed when Watcher must create the IIS site and binding automatically.
+							</p>
+						{/if}
 					</div>
 				</div>
 

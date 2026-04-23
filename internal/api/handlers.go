@@ -21,12 +21,97 @@ import (
 	"gorm.io/gorm"
 )
 
-// defaultServiceType returns "nssm" if the provided type is empty.
-func defaultServiceType(t string) string {
-	if t == "" {
+// normalizeServiceType keeps legacy "static" records working while moving new writes to "iis".
+func normalizeServiceType(t string) string {
+	switch strings.TrimSpace(strings.ToLower(t)) {
+	case "", "nssm":
 		return "nssm"
+	case "iis", "static":
+		return "iis"
+	default:
+		return strings.TrimSpace(t)
 	}
-	return t
+}
+
+func normalizeIISAppKind(kind, runtime string) string {
+	switch strings.TrimSpace(strings.ToLower(kind)) {
+	case "", "static":
+		if normalizeIISManagedRuntime(runtime) != "" {
+			return "aspnet_classic"
+		}
+		return "static"
+	case "php":
+		return "php"
+	case "aspnet_classic", "aspnet-classic", "aspnet", "asp.net", "asp.net_classic":
+		return "aspnet_classic"
+	default:
+		return strings.TrimSpace(kind)
+	}
+}
+
+func normalizeIISManagedRuntime(runtime string) string {
+	switch strings.TrimSpace(strings.ToLower(runtime)) {
+	case "", "none", "no-managed-code", "no managed code":
+		return ""
+	case "v2", "v2.0":
+		return "v2.0"
+	case "v4", "v4.0", ".net clr v4.0":
+		return "v4.0"
+	default:
+		return strings.TrimSpace(runtime)
+	}
+}
+
+func resolvedIISManagedRuntime(appKind, runtime string) string {
+	switch normalizeIISAppKind(appKind, runtime) {
+	case "php", "static":
+		return ""
+	case "aspnet_classic":
+		if normalized := normalizeIISManagedRuntime(runtime); normalized != "" {
+			return normalized
+		}
+		return "v4.0"
+	default:
+		return normalizeIISManagedRuntime(runtime)
+	}
+}
+
+func validateServicePayload(svc *database.Service) error {
+	if svc == nil {
+		return fmt.Errorf("service payload is required")
+	}
+
+	svc.ServiceType = normalizeServiceType(svc.ServiceType)
+	svc.WindowsServiceName = strings.TrimSpace(svc.WindowsServiceName)
+	svc.BinaryName = strings.TrimSpace(svc.BinaryName)
+	svc.EnvFile = strings.TrimSpace(svc.EnvFile)
+	svc.HealthCheckURL = strings.TrimSpace(svc.HealthCheckURL)
+	svc.IISAppKind = normalizeIISAppKind(svc.IISAppKind, svc.IISManagedRuntime)
+	svc.IISAppPool = strings.TrimSpace(svc.IISAppPool)
+	svc.IISSiteName = strings.TrimSpace(svc.IISSiteName)
+	svc.PublicURL = strings.TrimSpace(svc.PublicURL)
+	svc.IISManagedRuntime = resolvedIISManagedRuntime(svc.IISAppKind, svc.IISManagedRuntime)
+
+	if svc.WindowsServiceName == "" {
+		return fmt.Errorf("windows_service_name is required")
+	}
+
+	switch svc.ServiceType {
+	case "nssm":
+		if svc.BinaryName == "" {
+			return fmt.Errorf("binary_name is required for NSSM services")
+		}
+	case "iis":
+		if svc.IISAppKind != "static" && svc.IISAppKind != "php" && svc.IISAppKind != "aspnet_classic" {
+			return fmt.Errorf("iis_app_kind must be one of: static, php, aspnet_classic")
+		}
+		svc.BinaryName = ""
+		svc.EnvFile = ""
+	default:
+		return fmt.Errorf("service_type must be one of: nssm, iis")
+	}
+
+	return nil
 }
 
 func defaultReleaseRef(ref string) string {
@@ -179,13 +264,19 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 	for _, svcReq := range req.Services {
 		svc := database.Service{
 			WatcherID:          watcher.ID,
-			ServiceType:        defaultServiceType(svcReq.ServiceType),
+			ServiceType:        normalizeServiceType(svcReq.ServiceType),
 			WindowsServiceName: svcReq.WindowsServiceName,
 			BinaryName:         svcReq.BinaryName,
 			EnvFile:            svcReq.EnvFile,
 			HealthCheckURL:     svcReq.HealthCheckURL,
+			IISAppKind:         normalizeIISAppKind(svcReq.IISAppKind, svcReq.IISManagedRuntime),
 			IISAppPool:         svcReq.IISAppPool,
 			IISSiteName:        svcReq.IISSiteName,
+			IISManagedRuntime:  resolvedIISManagedRuntime(svcReq.IISAppKind, svcReq.IISManagedRuntime),
+		}
+		if err := validateServicePayload(&svc); err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return
 		}
 		if err := h.db.Create(&svc).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
@@ -316,7 +407,7 @@ func (h *Handler) cleanupWatcherServices(watcher *database.Watcher) error {
 	}
 
 	for _, svc := range watcher.Services {
-		if defaultServiceType(svc.ServiceType) != "nssm" {
+		if normalizeServiceType(svc.ServiceType) != "nssm" {
 			continue
 		}
 		name := strings.TrimSpace(svc.WindowsServiceName)
@@ -442,16 +533,22 @@ func (h *Handler) CreateService(c *gin.Context) {
 
 	svc := database.Service{
 		WatcherID:          watcher.ID,
-		ServiceType:        defaultServiceType(req.ServiceType),
+		ServiceType:        normalizeServiceType(req.ServiceType),
 		WindowsServiceName: req.WindowsServiceName,
 		BinaryName:         req.BinaryName,
 		StartArguments:     req.StartArguments,
 		EnvFile:            req.EnvFile,
 		HealthCheckURL:     req.HealthCheckURL,
+		IISAppKind:         normalizeIISAppKind(req.IISAppKind, req.IISManagedRuntime),
 		IISAppPool:         req.IISAppPool,
 		IISSiteName:        req.IISSiteName,
+		IISManagedRuntime:  resolvedIISManagedRuntime(req.IISAppKind, req.IISManagedRuntime),
 		PublicURL:          req.PublicURL,
 		EnvContent:         req.EnvContent,
+	}
+	if err := validateServicePayload(&svc); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
 	}
 
 	if err := h.db.Create(&svc).Error; err != nil {
@@ -503,7 +600,7 @@ func (h *Handler) UpdateService(c *gin.Context) {
 
 	updates := map[string]any{}
 	if req.ServiceType != nil {
-		updates["service_type"] = *req.ServiceType
+		updates["service_type"] = normalizeServiceType(*req.ServiceType)
 	}
 	if req.WindowsServiceName != nil {
 		updates["windows_service_name"] = *req.WindowsServiceName
@@ -520,11 +617,17 @@ func (h *Handler) UpdateService(c *gin.Context) {
 	if req.HealthCheckURL != nil {
 		updates["health_check_url"] = *req.HealthCheckURL
 	}
+	if req.IISAppKind != nil {
+		updates["iis_app_kind"] = normalizeIISAppKind(*req.IISAppKind, svc.IISManagedRuntime)
+	}
 	if req.IISAppPool != nil {
 		updates["iis_app_pool"] = *req.IISAppPool
 	}
 	if req.IISSiteName != nil {
 		updates["iis_site_name"] = *req.IISSiteName
+	}
+	if req.IISManagedRuntime != nil {
+		updates["iis_managed_runtime"] = normalizeIISManagedRuntime(*req.IISManagedRuntime)
 	}
 	if req.PublicURL != nil {
 		updates["public_url"] = *req.PublicURL
@@ -532,6 +635,60 @@ func (h *Handler) UpdateService(c *gin.Context) {
 	if req.EnvContent != nil {
 		updates["env_content"] = *req.EnvContent
 	}
+
+	nextSvc := *svc
+	if req.ServiceType != nil {
+		nextSvc.ServiceType = normalizeServiceType(*req.ServiceType)
+	}
+	if req.WindowsServiceName != nil {
+		nextSvc.WindowsServiceName = *req.WindowsServiceName
+	}
+	if req.BinaryName != nil {
+		nextSvc.BinaryName = *req.BinaryName
+	}
+	if req.StartArguments != nil {
+		nextSvc.StartArguments = *req.StartArguments
+	}
+	if req.EnvFile != nil {
+		nextSvc.EnvFile = *req.EnvFile
+	}
+	if req.HealthCheckURL != nil {
+		nextSvc.HealthCheckURL = *req.HealthCheckURL
+	}
+	if req.IISAppKind != nil {
+		nextSvc.IISAppKind = *req.IISAppKind
+	}
+	if req.IISAppPool != nil {
+		nextSvc.IISAppPool = *req.IISAppPool
+	}
+	if req.IISSiteName != nil {
+		nextSvc.IISSiteName = *req.IISSiteName
+	}
+	if req.IISManagedRuntime != nil {
+		nextSvc.IISManagedRuntime = *req.IISManagedRuntime
+	}
+	if req.PublicURL != nil {
+		nextSvc.PublicURL = *req.PublicURL
+	}
+	if req.EnvContent != nil {
+		nextSvc.EnvContent = *req.EnvContent
+	}
+	if err := validateServicePayload(&nextSvc); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	updates["service_type"] = nextSvc.ServiceType
+	updates["windows_service_name"] = nextSvc.WindowsServiceName
+	updates["binary_name"] = nextSvc.BinaryName
+	updates["start_arguments"] = nextSvc.StartArguments
+	updates["env_file"] = nextSvc.EnvFile
+	updates["health_check_url"] = nextSvc.HealthCheckURL
+	updates["iis_app_kind"] = nextSvc.IISAppKind
+	updates["iis_app_pool"] = nextSvc.IISAppPool
+	updates["iis_site_name"] = nextSvc.IISSiteName
+	updates["iis_managed_runtime"] = nextSvc.IISManagedRuntime
+	updates["public_url"] = nextSvc.PublicURL
+	updates["env_content"] = nextSvc.EnvContent
 
 	if len(updates) > 0 {
 		if err := h.db.Model(svc).Updates(updates).Error; err != nil {

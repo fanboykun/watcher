@@ -52,6 +52,10 @@ func (h *Handler) StartService(c *gin.Context) {
 	if err != nil {
 		return
 	}
+	if normalizeServiceType(svc.ServiceType) != "nssm" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "dashboard start is only available for NSSM-managed services"})
+		return
+	}
 	if err := h.requireWindows(c); err != nil {
 		return
 	}
@@ -72,6 +76,10 @@ func (h *Handler) StopService(c *gin.Context) {
 	if err != nil {
 		return
 	}
+	if normalizeServiceType(svc.ServiceType) != "nssm" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "dashboard stop is only available for NSSM-managed services"})
+		return
+	}
 	if err := h.requireWindows(c); err != nil {
 		return
 	}
@@ -89,6 +97,10 @@ func (h *Handler) StopService(c *gin.Context) {
 func (h *Handler) RestartService(c *gin.Context) {
 	svc, err := h.findServiceByID(c)
 	if err != nil {
+		return
+	}
+	if normalizeServiceType(svc.ServiceType) != "nssm" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "dashboard restart is only available for NSSM-managed services"})
 		return
 	}
 	if err := h.requireWindows(c); err != nil {

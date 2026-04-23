@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type ServiceWithWatcher } from '$lib/api';
+	import { api, isIISService, serviceTypeLabel, iisAppKindLabel, type ServiceWithWatcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
@@ -36,7 +36,7 @@
 <div class="space-y-6">
 	<div>
 		<h1 class="text-2xl font-bold tracking-tight">Services</h1>
-		<p class="text-sm text-muted-foreground">All NSSM-managed Windows services</p>
+		<p class="text-sm text-muted-foreground">All managed services across NSSM and IIS watchers</p>
 	</div>
 
 	{#if error}
@@ -59,7 +59,8 @@
 					<Table.Row class="border-border hover:bg-transparent">
 						<Table.Head>Service</Table.Head>
 						<Table.Head>Watcher</Table.Head>
-						<Table.Head>Binary</Table.Head>
+						<Table.Head>Mode</Table.Head>
+						<Table.Head>Target</Table.Head>
 						<Table.Head>Health URL</Table.Head>
 						<Table.Head class="text-right">Actions</Table.Head>
 					</Table.Row>
@@ -81,41 +82,50 @@
 									{svc.watcher_name}
 								</a>
 							</Table.Cell>
-							<Table.Cell class="font-mono text-xs text-muted-foreground"
-								>{svc.binary_name}</Table.Cell
-							>
+							<Table.Cell class="font-mono text-xs text-muted-foreground">
+								{serviceTypeLabel(svc.service_type)}
+							</Table.Cell>
+							<Table.Cell class="font-mono text-xs text-muted-foreground">
+								{#if isIISService(svc.service_type)}
+									{iisAppKindLabel(svc.iis_app_kind || 'static')}
+								{:else}
+									{svc.binary_name}
+								{/if}
+							</Table.Cell>
 							<Table.Cell class="font-mono text-xs text-muted-foreground"
 								>{svc.health_check_url || '—'}</Table.Cell
 							>
 							<Table.Cell>
 								<div class="flex items-center justify-end gap-1">
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										class="h-8 w-8 text-emerald-400"
-										onclick={() => serviceAction(() => api.startService(svc.id))}
-										title="Start"
-									>
-										<Play class="h-4 w-4" />
-									</Button.Root>
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										class="h-8 w-8 text-red-400"
-										onclick={() => serviceAction(() => api.stopService(svc.id))}
-										title="Stop"
-									>
-										<Square class="h-4 w-4" />
-									</Button.Root>
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										class="h-8 w-8 text-amber-400"
-										onclick={() => serviceAction(() => api.restartService(svc.id))}
-										title="Restart"
-									>
-										<RefreshCw class="h-4 w-4" />
-									</Button.Root>
+									{#if !isIISService(svc.service_type)}
+										<Button.Root
+											variant="ghost"
+											size="icon"
+											class="h-8 w-8 text-emerald-400"
+											onclick={() => serviceAction(() => api.startService(svc.id))}
+											title="Start"
+										>
+											<Play class="h-4 w-4" />
+										</Button.Root>
+										<Button.Root
+											variant="ghost"
+											size="icon"
+											class="h-8 w-8 text-red-400"
+											onclick={() => serviceAction(() => api.stopService(svc.id))}
+											title="Stop"
+										>
+											<Square class="h-4 w-4" />
+										</Button.Root>
+										<Button.Root
+											variant="ghost"
+											size="icon"
+											class="h-8 w-8 text-amber-400"
+											onclick={() => serviceAction(() => api.restartService(svc.id))}
+											title="Restart"
+										>
+											<RefreshCw class="h-4 w-4" />
+										</Button.Root>
+									{/if}
 									<Button.Root
 										variant="ghost"
 										size="icon"

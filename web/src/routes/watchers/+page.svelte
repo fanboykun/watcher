@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type Watcher, type InspectRepoResponse, type Service } from '$lib/api';
+	import {
+		api,
+		iisAppKindLabel,
+		isIISService,
+		serviceTypeLabel,
+		type IISAppKind,
+		type InspectRepoResponse,
+		type Service,
+		type Watcher
+	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
@@ -40,6 +49,12 @@
 	let formGitHubToken = $state('');
 	let useCustomGitHubToken = $state(false);
 	let formServices = $state<Partial<Service>[]>([]);
+
+	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
+		{ value: 'static', label: 'Static Site', hint: 'HTML/CSS/JS or frontend build output served by IIS.' },
+		{ value: 'php', label: 'PHP', hint: 'PHP app hosted by IIS with FastCGI/PHP already installed.' },
+		{ value: 'aspnet_classic', label: 'ASP.NET Classic', hint: 'Classic ASP.NET app using the .NET CLR app pool.' }
+	];
 
 	onMount(load);
 
@@ -91,6 +106,11 @@
 				start_arguments: '',
 				env_file: '.env',
 				env_content: '',
+				iis_app_kind: 'static',
+				iis_app_pool: '',
+				iis_site_name: '',
+				iis_managed_runtime: '',
+				public_url: '',
 				config_files: [],
 				health_check_url: formHcURL,
 			}];
@@ -161,6 +181,11 @@
 			start_arguments: '',
 			env_file: '.env',
 			env_content: '',
+			iis_app_kind: 'static',
+			iis_app_pool: '',
+			iis_site_name: '',
+			iis_managed_runtime: '',
+			public_url: '',
 			config_files: [],
 		}];
 	}
@@ -499,39 +524,69 @@
 
 								<div class="grid gap-3 sm:grid-cols-2">
 									<div class="space-y-1">
-										<Label class="text-xs">Type</Label>
+										<Label class="text-xs">Hosting Mode</Label>
 										<Select bind:value={svc.service_type} class="h-8 text-xs">
 											<option value="nssm">NSSM Native Windows</option>
-											<option value="static">Static IIS App</option>
+											<option value="iis">IIS Site</option>
 										</Select>
 									</div>
 									<div class="space-y-1">
-										<Label class="text-xs">Window Service Name</Label>
+										<Label class="text-xs">{isIISService(svc.service_type || 'nssm') ? 'Service Identifier' : 'Windows Service Name'}</Label>
 										<Input class="h-8 text-xs" bind:value={svc.windows_service_name} placeholder="myapp-web" />
 									</div>
-									<div class="space-y-1">
-										<Label class="text-xs">Executable Name</Label>
-										<Input class="h-8 text-xs" bind:value={svc.binary_name} placeholder="myapp.exe" />
-									</div>
-									<div class="space-y-1">
-										<Label class="text-xs">Start Arguments</Label>
-										<Input class="h-8 text-xs" bind:value={svc.start_arguments} placeholder="serve --port 8080" />
-									</div>
-									<div class="space-y-1">
-										<Label class="text-xs">Env file relative path</Label>
-										<Input class="h-8 text-xs" bind:value={svc.env_file} placeholder=".env.prod" />
-									</div>
-									<div class="space-y-1 sm:col-span-2">
-										<Label class="text-xs">Env content (optional)</Label>
-										<Textarea
-											class="min-h-[120px] font-mono text-xs text-blue-300"
-											bind:value={svc.env_content}
-											placeholder="KEY=VALUE&#10;API_PORT=3000"
-										/>
-										<p class="text-[11px] text-muted-foreground">
-											If provided, watcher writes this to <code>{svc.env_file || '.env'}</code> in install dir.
-										</p>
-									</div>
+									{#if !isIISService(svc.service_type || 'nssm')}
+										<div class="space-y-1">
+											<Label class="text-xs">Executable Name</Label>
+											<Input class="h-8 text-xs" bind:value={svc.binary_name} placeholder="myapp.exe" />
+										</div>
+										<div class="space-y-1">
+											<Label class="text-xs">Start Arguments</Label>
+											<Input class="h-8 text-xs" bind:value={svc.start_arguments} placeholder="serve --port 8080" />
+										</div>
+										<div class="space-y-1">
+											<Label class="text-xs">Env file relative path</Label>
+											<Input class="h-8 text-xs" bind:value={svc.env_file} placeholder=".env.prod" />
+										</div>
+										<div class="space-y-1 sm:col-span-2">
+											<Label class="text-xs">Env content (optional)</Label>
+											<Textarea
+												class="min-h-[120px] font-mono text-xs text-blue-300"
+												bind:value={svc.env_content}
+												placeholder="KEY=VALUE&#10;API_PORT=3000"
+											/>
+											<p class="text-[11px] text-muted-foreground">
+												If provided, watcher writes this to <code>{svc.env_file || '.env'}</code> in install dir.
+											</p>
+										</div>
+									{:else}
+										<div class="space-y-1 sm:col-span-2">
+											<Label class="text-xs">IIS App Kind</Label>
+											<Select bind:value={svc.iis_app_kind} class="h-8 text-xs">
+												{#each iisAppKinds as kind (kind.value)}
+													<option value={kind.value}>{kind.label}</option>
+												{/each}
+											</Select>
+											<p class="text-[11px] text-muted-foreground">
+												{iisAppKinds.find((kind) => kind.value === (svc.iis_app_kind || 'static'))?.hint}
+											</p>
+										</div>
+										<div class="space-y-1">
+											<Label class="text-xs">IIS App Pool</Label>
+											<Input class="h-8 text-xs" bind:value={svc.iis_app_pool} placeholder="myapp-web" />
+										</div>
+										<div class="space-y-1">
+											<Label class="text-xs">IIS Site Name</Label>
+											<Input class="h-8 text-xs" bind:value={svc.iis_site_name} placeholder="myapp-web" />
+										</div>
+										<div class="space-y-1">
+											<Label class="text-xs">Public URL</Label>
+											<Input class="h-8 text-xs" bind:value={svc.public_url} placeholder="https://app.example.com" />
+										</div>
+										<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-[11px] text-muted-foreground sm:col-span-2">
+											<span class="font-medium text-foreground/90">{serviceTypeLabel(svc.service_type || 'nssm')}:</span>
+											{' '}{iisAppKindLabel(String(svc.iis_app_kind || 'static'))}. Watcher will set the IIS app pool runtime automatically for this profile.
+										</div>
+									{/if}
 									<div class="space-y-2 sm:col-span-2">
 										<div class="flex items-center justify-between">
 											<Label class="text-xs">Additional managed config files</Label>

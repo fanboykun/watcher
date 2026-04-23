@@ -15,6 +15,10 @@ import (
 	"time"
 )
 
+var runCommand = func(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
+}
+
 type Deployer struct {
 	wcfg     *WatcherConfig
 	nssmPath string
@@ -258,7 +262,7 @@ func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
 			}
 		}
 	}
-	out, err := exec.Command("cmd", "/C", "mklink", "/J", currentDir, releaseDir).CombinedOutput()
+	out, err := runCommand("cmd", "/C", "mklink", "/J", currentDir, releaseDir)
 	if err != nil {
 		d.lWarn("mklink /J failed, falling back to copy", "output", string(out))
 		return copyDir(releaseDir, currentDir)
@@ -269,9 +273,8 @@ func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
 // ensureServiceByType dispatches to the correct ensure logic based on ServiceType.
 func (d *Deployer) ensureServiceByType(svc ServiceConfig, currentDir string) error {
 	switch svc.ServiceType {
-	case "static":
-		d.l("static service -- no NSSM registration needed", "name", svc.WindowsServiceName)
-		return nil
+	case "iis", "static":
+		return d.ensureIISService(svc, currentDir)
 	default: // "nssm"
 		if svc.BinaryName == "" {
 			return fmt.Errorf("binary_name is empty for service %s — cannot register with NSSM", svc.WindowsServiceName)
@@ -300,7 +303,7 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 	if !existing {
 		d.l("service not registered, installing via NSSM", "name", svc.WindowsServiceName)
 
-		out, err := exec.Command(d.nssmPath, "install", svc.WindowsServiceName, binPath).CombinedOutput()
+		out, err := runCommand(d.nssmPath, "install", svc.WindowsServiceName, binPath)
 		if err != nil {
 			return fmt.Errorf("nssm install %s: %w (output: %s)", svc.WindowsServiceName, err, string(out))
 		}
@@ -327,7 +330,7 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 		}
 
 		for _, kv := range settings {
-			o, e := exec.Command(d.nssmPath, "set", svc.WindowsServiceName, kv[0], kv[1]).CombinedOutput()
+			o, e := runCommand(d.nssmPath, "set", svc.WindowsServiceName, kv[0], kv[1])
 			if e != nil {
 				d.lWarn("nssm set warning", "key", kv[0], "error", e, "output", string(o))
 			}
@@ -343,7 +346,7 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 			{"AppParameters", svc.StartArguments},
 		}
 		for _, kv := range settings {
-			out, err := exec.Command(d.nssmPath, "set", svc.WindowsServiceName, kv[0], kv[1]).CombinedOutput()
+			out, err := runCommand(d.nssmPath, "set", svc.WindowsServiceName, kv[0], kv[1])
 			if err != nil {
 				d.lWarn("failed to update service setting", "name", svc.WindowsServiceName, "key", kv[0], "error", err, "output", string(out))
 			}
@@ -355,7 +358,7 @@ func (d *Deployer) ensureService(svc ServiceConfig, binPath string) error {
 
 // serviceExists checks if a Windows service is registered (via NSSM or SCM)
 func (d *Deployer) serviceExists(name string) bool {
-	out, err := exec.Command(d.nssmPath, "status", name).CombinedOutput()
+	out, err := runCommand(d.nssmPath, "status", name)
 	if err != nil {
 		// NSSM exits non-zero if service doesn't exist
 		// Double-check the output to distinguish "not found" from other errors
@@ -371,11 +374,10 @@ func (d *Deployer) serviceExists(name string) bool {
 // stopServiceByType dispatches to the correct stop logic based on ServiceType.
 func (d *Deployer) stopServiceByType(svc ServiceConfig) error {
 	switch svc.ServiceType {
-	case "static":
-		// Static services don't have a process to stop.
-		// Optionally stop the IIS app pool, but usually unnecessary
-		// since we just swap the junction.
-		d.l("static service -- skipping stop", "name", svc.WindowsServiceName)
+	case "iis", "static":
+		// IIS targets do not have a service process to stop here.
+		// IIS continues serving from the stable current/ path.
+		d.l("iis service -- skipping stop", "name", svc.WindowsServiceName, "kind", svc.IISAppKind)
 		return nil
 	default: // "nssm"
 		return d.stopService(svc.WindowsServiceName)
@@ -390,7 +392,7 @@ func (d *Deployer) stopService(name string) error {
 	)
 
 	d.l("stopping service", "name", name)
-	out, err := exec.Command(d.nssmPath, "stop", name, "confirm").CombinedOutput()
+	out, err := runCommand(d.nssmPath, "stop", name, "confirm")
 	if err != nil && !isServiceMissingOutput(string(out)) {
 		d.lWarn("nssm stop returned non-zero", "name", name, "error", err, "output", string(out))
 	}
@@ -402,7 +404,7 @@ func (d *Deployer) stopService(name string) error {
 	}
 
 	d.lWarn("service did not stop gracefully, forcing stop", "name", name, "error", waitErr)
-	killOut, killErr := exec.Command("taskkill", "/F", "/FI", fmt.Sprintf("SERVICES eq %s", name)).CombinedOutput()
+	killOut, killErr := runCommand("taskkill", "/F", "/FI", fmt.Sprintf("SERVICES eq %s", name))
 	if killErr != nil {
 		d.lWarn("taskkill fallback failed", "name", name, "error", killErr, "output", string(killOut))
 	}
@@ -419,7 +421,7 @@ func (d *Deployer) stopService(name string) error {
 // startServiceByType dispatches to the correct start logic based on ServiceType.
 func (d *Deployer) startServiceByType(svc ServiceConfig) error {
 	switch svc.ServiceType {
-	case "static":
+	case "iis", "static":
 		return d.recycleAppPool(svc)
 	default: // "nssm"
 		return d.startService(svc.WindowsServiceName)
@@ -433,7 +435,7 @@ func (d *Deployer) startService(name string) error {
 	)
 
 	d.l("starting service", "name", name)
-	outBytes, err := exec.Command(d.nssmPath, "start", name).CombinedOutput()
+	outBytes, err := runCommand(d.nssmPath, "start", name)
 	out := string(outBytes)
 
 	if err != nil && !strings.Contains(out, "SERVICE_START_PENDING") && !strings.Contains(out, "SERVICE_RUNNING") {
@@ -452,6 +454,206 @@ func (d *Deployer) startService(name string) error {
 	return nil
 }
 
+func appcmdPath() string {
+	return `C:\Windows\System32\inetsrv\appcmd.exe`
+}
+
+func (d *Deployer) ensureIISService(svc ServiceConfig, currentDir string) error {
+	if strings.TrimSpace(svc.IISSiteName) == "" && strings.TrimSpace(svc.IISAppPool) == "" {
+		d.l("iis service -- no IIS registration configured", "name", svc.WindowsServiceName, "kind", svc.IISAppKind)
+		return nil
+	}
+
+	runtime := resolvedIISManagedRuntime(svc)
+	d.l("ensuring IIS service", "name", svc.WindowsServiceName, "kind", svc.IISAppKind, "runtime", runtimeDisplay(runtime))
+
+	if svc.IISAppPool != "" {
+		if err := d.ensureIISAppPool(svc.IISAppPool, runtime); err != nil {
+			return err
+		}
+	}
+	if svc.IISSiteName != "" {
+		if err := d.ensureIISSite(svc, currentDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func resolvedIISManagedRuntime(svc ServiceConfig) string {
+	switch strings.TrimSpace(strings.ToLower(svc.IISAppKind)) {
+	case "", "static", "php":
+		return ""
+	case "aspnet_classic":
+		if normalized := normalizeIISManagedRuntime(svc.IISManagedRuntime); normalized != "" {
+			return normalized
+		}
+		return "v4.0"
+	default:
+		return normalizeIISManagedRuntime(svc.IISManagedRuntime)
+	}
+}
+
+func runtimeDisplay(runtime string) string {
+	if normalizeIISManagedRuntime(runtime) == "" {
+		return "No Managed Code"
+	}
+	return normalizeIISManagedRuntime(runtime)
+}
+
+func (d *Deployer) ensureIISAppPool(name, runtime string) error {
+	exists, err := d.iisObjectExists("apppool", name)
+	if err != nil {
+		return err
+	}
+	if exists {
+		d.l("IIS app pool already exists", "pool", name)
+	} else {
+		d.l("creating IIS app pool", "pool", name)
+		out, err := runCommand(appcmdPath(), "add", "apppool", "/name:"+name)
+		if err != nil {
+			return fmt.Errorf("create IIS app pool %s: %w (output: %s)", name, err, string(out))
+		}
+	}
+
+	if err := d.setIISAppPoolManagedRuntime(name, runtime); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Deployer) ensureIISSite(svc ServiceConfig, currentDir string) error {
+	exists, err := d.iisObjectExists("site", svc.IISSiteName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		binding, err := iisBindingFromPublicURL(svc.PublicURL)
+		if err != nil {
+			return fmt.Errorf("build IIS binding for %s: %w", svc.IISSiteName, err)
+		}
+
+		d.l("creating IIS site", "site", svc.IISSiteName, "binding", binding, "path", currentDir)
+		out, err := runCommand(appcmdPath(), "add", "site", "/name:"+svc.IISSiteName, "/bindings:"+binding, "/physicalPath:"+currentDir)
+		if err != nil {
+			return fmt.Errorf("create IIS site %s: %w (output: %s)", svc.IISSiteName, err, string(out))
+		}
+	} else {
+		d.l("IIS site already exists", "site", svc.IISSiteName)
+	}
+
+	if err := d.setIISSitePhysicalPath(svc.IISSiteName, currentDir); err != nil {
+		return err
+	}
+	if svc.IISAppPool != "" {
+		if err := d.setIISSiteAppPool(svc.IISSiteName, svc.IISAppPool); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *Deployer) iisObjectExists(kind, name string) (bool, error) {
+	out, err := runCommand(appcmdPath(), "list", kind, name)
+	if err == nil {
+		return true, nil
+	}
+	if isIISObjectMissingOutput(string(out)) {
+		return false, nil
+	}
+	return false, fmt.Errorf("check IIS %s %s: %w (output: %s)", kind, name, err, string(out))
+}
+
+func isIISObjectMissingOutput(output string) bool {
+	lower := strings.ToLower(output)
+	return containsAny(lower,
+		"cannot find requested collection element",
+		"cannot find config object",
+		"object identifier",
+		"was not found",
+		"does not exist",
+	)
+}
+
+func normalizeIISManagedRuntime(raw string) string {
+	value := strings.TrimSpace(strings.ToLower(raw))
+	switch value {
+	case "", "none", "no-managed-code", "no managed code":
+		return ""
+	case "v2.0", "v2":
+		return "v2.0"
+	case "v4.0", "v4", ".net clr v4.0":
+		return "v4.0"
+	default:
+		return strings.TrimSpace(raw)
+	}
+}
+
+func (d *Deployer) setIISAppPoolManagedRuntime(poolName, runtime string) error {
+	runtime = normalizeIISManagedRuntime(runtime)
+	display := runtime
+	if display == "" {
+		display = "No Managed Code"
+	}
+
+	d.l("configuring IIS app pool runtime", "pool", poolName, "runtime", display)
+	out, err := runCommand(appcmdPath(), "set", "apppool", poolName, "/managedRuntimeVersion:"+runtime)
+	if err != nil {
+		return fmt.Errorf("set IIS app pool %s runtime %s: %w (output: %s)", poolName, display, err, string(out))
+	}
+	return nil
+}
+
+func (d *Deployer) setIISSitePhysicalPath(siteName, currentDir string) error {
+	d.l("updating IIS site path", "site", siteName, "path", currentDir)
+	out, err := runCommand(appcmdPath(), "set", "vdir", siteName+"/", "/physicalPath:"+currentDir)
+	if err != nil {
+		return fmt.Errorf("set IIS site %s physical path: %w (output: %s)", siteName, err, string(out))
+	}
+	return nil
+}
+
+func (d *Deployer) setIISSiteAppPool(siteName, appPool string) error {
+	d.l("assigning IIS app pool", "site", siteName, "pool", appPool)
+	out, err := runCommand(appcmdPath(), "set", "app", siteName+"/", "/applicationPool:"+appPool)
+	if err != nil {
+		return fmt.Errorf("set IIS site %s app pool %s: %w (output: %s)", siteName, appPool, err, string(out))
+	}
+	return nil
+}
+
+func iisBindingFromPublicURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("public_url is required to auto-create an IIS site")
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse public_url: %w", err)
+	}
+	if u.Scheme == "" {
+		return "", fmt.Errorf("public_url must include a scheme, for example http://example.com")
+	}
+
+	protocol := strings.ToLower(u.Scheme)
+	if protocol != "http" && protocol != "https" {
+		return "", fmt.Errorf("unsupported public_url scheme %q", u.Scheme)
+	}
+
+	port := u.Port()
+	if port == "" {
+		if protocol == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+
+	host := u.Hostname()
+	return fmt.Sprintf("%s/*:%s:%s", protocol, port, host), nil
+}
+
 // recycleAppPool recycles an IIS app pool via appcmd.exe.
 // This clears cached content and picks up the newly swapped junction files.
 func (d *Deployer) recycleAppPool(svc ServiceConfig) error {
@@ -460,10 +662,9 @@ func (d *Deployer) recycleAppPool(svc ServiceConfig) error {
 		return nil
 	}
 
-	appcmd := `C:\Windows\System32\inetsrv\appcmd.exe`
 	d.l("recycling IIS app pool", "pool", svc.IISAppPool)
 
-	out, err := exec.Command(appcmd, "recycle", "apppool", svc.IISAppPool).CombinedOutput()
+	out, err := runCommand(appcmdPath(), "recycle", "apppool", svc.IISAppPool)
 	if err != nil {
 		d.lWarn("app pool recycle failed", "pool", svc.IISAppPool, "error", err, "output", string(out))
 		return fmt.Errorf("recycle apppool %s: %w (output: %s)", svc.IISAppPool, err, string(out))
@@ -542,7 +743,7 @@ func isServiceMissingOutput(output string) bool {
 }
 
 func (d *Deployer) queryServiceState(name string) (string, error) {
-	out, err := exec.Command(d.nssmPath, "status", name).CombinedOutput()
+	out, err := runCommand(d.nssmPath, "status", name)
 	text := string(out)
 	state := parseServiceState(text)
 	if err != nil {

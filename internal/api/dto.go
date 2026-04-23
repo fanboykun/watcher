@@ -52,14 +52,16 @@ type ConfigFileRequest struct {
 
 // CreateServiceRequest is the body for POST /api/watchers/:id/services
 type CreateServiceRequest struct {
-	ServiceType        string              `json:"service_type"` // "nssm" (default) or "static"
+	ServiceType        string              `json:"service_type"` // "nssm" (default) or "iis"
 	WindowsServiceName string              `json:"windows_service_name" binding:"required"`
 	BinaryName         string              `json:"binary_name"` // NSSM only
 	StartArguments     string              `json:"start_arguments"`
 	EnvFile            string              `json:"env_file"` // NSSM only
 	HealthCheckURL     string              `json:"health_check_url"`
-	IISAppPool         string              `json:"iis_app_pool"`  // Static only
-	IISSiteName        string              `json:"iis_site_name"` // Static only
+	IISAppKind         string              `json:"iis_app_kind"`        // IIS only: static | php | aspnet_classic
+	IISAppPool         string              `json:"iis_app_pool"`        // IIS-hosted only
+	IISSiteName        string              `json:"iis_site_name"`       // IIS-hosted only
+	IISManagedRuntime  string              `json:"iis_managed_runtime"` // IIS-hosted only; "" = No Managed Code
 	PublicURL          string              `json:"public_url"`
 	EnvContent         string              `json:"env_content"`
 	ConfigFiles        []ConfigFileRequest `json:"config_files"`
@@ -73,8 +75,10 @@ type UpdateServiceRequest struct {
 	StartArguments     *string              `json:"start_arguments"`
 	EnvFile            *string              `json:"env_file"`
 	HealthCheckURL     *string              `json:"health_check_url"`
+	IISAppKind         *string              `json:"iis_app_kind"`
 	IISAppPool         *string              `json:"iis_app_pool"`
 	IISSiteName        *string              `json:"iis_site_name"`
+	IISManagedRuntime  *string              `json:"iis_managed_runtime"`
 	PublicURL          *string              `json:"public_url"`
 	EnvContent         *string              `json:"env_content"`
 	ConfigFiles        *[]ConfigFileRequest `json:"config_files"`

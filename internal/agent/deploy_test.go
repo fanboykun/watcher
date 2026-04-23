@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -211,5 +212,210 @@ func TestListAvailableVersions_DecodesStoredVersionNames(t *testing.T) {
 	}
 	if result[0].Path != storedDir {
 		t.Fatalf("listed path = %q, want %q", result[0].Path, storedDir)
+	}
+}
+
+func TestIISBindingFromPublicURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{name: "http default port", raw: "http://example.com", want: "http/*:80:example.com"},
+		{name: "http custom port", raw: "http://example.com:8080", want: "http/*:8080:example.com"},
+		{name: "https default port", raw: "https://example.com", want: "https/*:443:example.com"},
+		{name: "empty host allowed", raw: "http://:8080", want: "http/*:8080:"},
+		{name: "missing scheme", raw: "example.com", wantErr: true},
+		{name: "empty", raw: "", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := iisBindingFromPublicURL(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got binding %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("binding = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnsureServiceByType_IISCreatesRegistration(t *testing.T) {
+	origRunCommand := runCommand
+	t.Cleanup(func() { runCommand = origRunCommand })
+
+	var calls []string
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		call := name
+		if len(args) > 0 {
+			call += " " + strings.Join(args, " ")
+		}
+		calls = append(calls, call)
+		cmd := strings.Join(args, " ")
+		switch cmd {
+		case "list apppool my-pool":
+			return []byte("ERROR ( message:Cannot find requested collection element )"), os.ErrNotExist
+		case "add apppool /name:my-pool":
+			return []byte("APPPOOL object \"my-pool\" added"), nil
+		case "set apppool my-pool /managedRuntimeVersion:v4.0":
+			return []byte("APPPOOL object changed"), nil
+		case "list site my-site":
+			return []byte("ERROR ( message:Cannot find requested collection element )"), os.ErrNotExist
+		case "add site /name:my-site /bindings:http/*:8080:example.com /physicalPath:C:/apps/current":
+			return []byte("SITE object \"my-site\" added"), nil
+		case "set vdir my-site/ /physicalPath:C:/apps/current":
+			return []byte("VDIR object changed"), nil
+		case "set app my-site/ /applicationPool:my-pool":
+			return []byte("APP object changed"), nil
+		default:
+			t.Fatalf("unexpected command: %s", cmd)
+			return nil, nil
+		}
+	}
+
+	d := NewDeployer(&WatcherConfig{}, "nssm", NewLogger("test"), nil)
+	err := d.ensureServiceByType(ServiceConfig{
+		ServiceType:        "iis",
+		WindowsServiceName: "frontend",
+		IISAppKind:         "aspnet_classic",
+		IISSiteName:        "my-site",
+		IISAppPool:         "my-pool",
+		IISManagedRuntime:  "v4.0",
+		PublicURL:          "http://example.com:8080",
+	}, "C:/apps/current")
+	if err != nil {
+		t.Fatalf("ensureServiceByType returned error: %v", err)
+	}
+
+	want := []string{
+		appcmdPath() + " list apppool my-pool",
+		appcmdPath() + " add apppool /name:my-pool",
+		appcmdPath() + " set apppool my-pool /managedRuntimeVersion:v4.0",
+		appcmdPath() + " list site my-site",
+		appcmdPath() + " add site /name:my-site /bindings:http/*:8080:example.com /physicalPath:C:/apps/current",
+		appcmdPath() + " set vdir my-site/ /physicalPath:C:/apps/current",
+		appcmdPath() + " set app my-site/ /applicationPool:my-pool",
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("call[%d] = %q, want %q", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestEnsureServiceByType_IISStaticDefaultsAppPoolToNoManagedCode(t *testing.T) {
+	origRunCommand := runCommand
+	t.Cleanup(func() { runCommand = origRunCommand })
+
+	var sawRuntime bool
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		switch strings.Join(args, " ") {
+		case "list apppool my-pool":
+			return []byte("APPPOOL \"my-pool\""), nil
+		case "set apppool my-pool /managedRuntimeVersion:":
+			sawRuntime = true
+			return []byte("APPPOOL object changed"), nil
+		default:
+			t.Fatalf("unexpected command: %s", strings.Join(args, " "))
+			return nil, nil
+		}
+	}
+
+	d := NewDeployer(&WatcherConfig{}, "nssm", NewLogger("test"), nil)
+	err := d.ensureServiceByType(ServiceConfig{
+		ServiceType:       "iis",
+		IISAppKind:        "static",
+		IISAppPool:        "my-pool",
+		IISManagedRuntime: "",
+	}, "C:/apps/current")
+	if err != nil {
+		t.Fatalf("ensureServiceByType returned error: %v", err)
+	}
+	if !sawRuntime {
+		t.Fatal("expected app pool runtime to be configured")
+	}
+}
+
+func TestEnsureServiceByType_IISRequiresPublicURLWhenCreatingSite(t *testing.T) {
+	origRunCommand := runCommand
+	t.Cleanup(func() { runCommand = origRunCommand })
+
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		switch strings.Join(args, " ") {
+		case "list site my-site":
+			return []byte("ERROR ( message:Cannot find requested collection element )"), os.ErrNotExist
+		default:
+			return []byte(""), nil
+		}
+	}
+
+	d := NewDeployer(&WatcherConfig{}, "nssm", NewLogger("test"), nil)
+	err := d.ensureServiceByType(ServiceConfig{
+		ServiceType:        "iis",
+		IISAppKind:         "php",
+		WindowsServiceName: "frontend",
+		IISSiteName:        "my-site",
+	}, "C:/apps/current")
+	if err == nil {
+		t.Fatal("expected error when public URL is missing for a new IIS site")
+	}
+}
+
+func TestEnsureServiceByType_IISUpdatesExistingSiteWithoutPublicURL(t *testing.T) {
+	origRunCommand := runCommand
+	t.Cleanup(func() { runCommand = origRunCommand })
+
+	var calls []string
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		call := name
+		if len(args) > 0 {
+			call += " " + strings.Join(args, " ")
+		}
+		calls = append(calls, call)
+		switch strings.Join(args, " ") {
+		case "list site my-site":
+			return []byte("SITE \"my-site\""), nil
+		case "set vdir my-site/ /physicalPath:C:/apps/current":
+			return []byte("VDIR object changed"), nil
+		default:
+			t.Fatalf("unexpected command: %s", strings.Join(args, " "))
+			return nil, nil
+		}
+	}
+
+	d := NewDeployer(&WatcherConfig{}, "nssm", NewLogger("test"), nil)
+	err := d.ensureServiceByType(ServiceConfig{
+		ServiceType:        "iis",
+		IISAppKind:         "static",
+		WindowsServiceName: "frontend",
+		IISSiteName:        "my-site",
+	}, "C:/apps/current")
+	if err != nil {
+		t.Fatalf("ensureServiceByType returned error: %v", err)
+	}
+
+	want := []string{
+		appcmdPath() + " list site my-site",
+		appcmdPath() + " set vdir my-site/ /physicalPath:C:/apps/current",
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("call[%d] = %q, want %q", i, calls[i], want[i])
+		}
 	}
 }

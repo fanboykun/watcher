@@ -51,14 +51,16 @@ type Watcher struct {
 type Service struct {
 	ID                 uint                `gorm:"primaryKey" json:"id"`
 	WatcherID          uint                `gorm:"not null;index" json:"watcher_id"`
-	ServiceType        string              `gorm:"not null;default:'nssm'" json:"service_type"` // "nssm" or "static"
+	ServiceType        string              `gorm:"not null;default:'nssm'" json:"service_type"` // "nssm" or "iis"
 	WindowsServiceName string              `gorm:"not null" json:"windows_service_name"`
 	BinaryName         string              `gorm:"not null;default:''" json:"binary_name"` // NSSM only
 	StartArguments     string              `gorm:"not null;default:''" json:"start_arguments"`
 	EnvFile            string              `gorm:"not null;default:''" json:"env_file"` // NSSM only
 	HealthCheckURL     string              `gorm:"not null;default:''" json:"health_check_url"`
-	IISAppPool         string              `gorm:"not null;default:''" json:"iis_app_pool"`  // Static only
-	IISSiteName        string              `gorm:"not null;default:''" json:"iis_site_name"` // Static only
+	IISAppKind         string              `gorm:"not null;default:'static'" json:"iis_app_kind"`  // IIS only: static | php | aspnet_classic
+	IISAppPool         string              `gorm:"not null;default:''" json:"iis_app_pool"`        // IIS-hosted only
+	IISSiteName        string              `gorm:"not null;default:''" json:"iis_site_name"`       // IIS-hosted only
+	IISManagedRuntime  string              `gorm:"not null;default:''" json:"iis_managed_runtime"` // IIS-hosted only; maintained from app kind for compatibility
 	PublicURL          string              `gorm:"not null;default:''" json:"public_url"`
 	EnvContent         string              `gorm:"type:text" json:"env_content"`
 	ConfigFiles        []ServiceConfigFile `gorm:"foreignKey:ServiceID;constraint:OnDelete:CASCADE" json:"config_files"`
