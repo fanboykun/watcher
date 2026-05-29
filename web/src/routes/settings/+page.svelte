@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import {
 		api,
+		auth,
 		type SelfVersionResponse,
 		type SelfUpdateCheckResponse,
 		type SelfConfigResponse
@@ -10,20 +11,25 @@
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
-	import { Download, Info, RotateCcw, AlertTriangle, CheckCircle2, Copy } from '@lucide/svelte';
+	import { Download, Info, RotateCcw, AlertTriangle, CheckCircle2, Copy, LockKeyhole } from '@lucide/svelte';
 
 	let versionInfo = $state<SelfVersionResponse | null>(null);
 	let updateInfo = $state<SelfUpdateCheckResponse | null>(null);
 	let agentConfig = $state<SelfConfigResponse | null>(null);
+	let authStatus = $state<{ authenticated: boolean; using_default_password: boolean } | null>(null);
 	let error = $state('');
 	let success = $state('');
 	
 	let isChecking = $state(false);
 	let isUpdating = $state(false);
 	let isSavingConfig = $state(false);
+	let isSavingPassword = $state(false);
 	let uninstallScript = $state('');
 	let githubTokenInput = $state('');
 	let clearGitHubToken = $state(false);
+	let currentPassword = $state('');
+	let newPassword = $state('');
+	let confirmPassword = $state('');
 
 	let cfgEnvironment = $state('');
 	let cfgGithubDeployEnabled = $state(true);
@@ -40,7 +46,11 @@
 	onMount(() => {
 		const init = async () => {
 			try {
-				[versionInfo, agentConfig] = await Promise.all([api.selfVersion(), api.selfConfig()]);
+				[versionInfo, agentConfig, authStatus] = await Promise.all([
+					api.selfVersion(),
+					api.selfConfig(),
+					api.authStatus()
+				]);
 				syncConfigForm();
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to load version info';
@@ -96,6 +106,32 @@
 			error = e instanceof Error ? e.message : 'Failed to save config';
 		} finally {
 			isSavingConfig = false;
+		}
+	}
+
+	async function savePassword() {
+		isSavingPassword = true;
+		error = '';
+		success = '';
+		try {
+			if (!newPassword.trim()) {
+				throw new Error('New password is required');
+			}
+			if (newPassword !== confirmPassword) {
+				throw new Error('New password confirmation does not match');
+			}
+			const res = await api.updateAuthPassword(currentPassword, newPassword);
+			auth.setPassword(newPassword);
+			authStatus = { authenticated: true, using_default_password: res.using_default_password };
+			currentPassword = '';
+			newPassword = '';
+			confirmPassword = '';
+			success = res.message;
+			setTimeout(() => (success = ''), 4000);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update password';
+		} finally {
+			isSavingPassword = false;
 		}
 	}
 
@@ -183,6 +219,41 @@
 			{error}
 		</div>
 	{/if}
+
+	<Card.Root class="bg-card">
+		<Card.Header>
+			<Card.Title class="flex items-center gap-2">
+				<LockKeyhole class="h-4 w-4" /> Dashboard Password
+			</Card.Title>
+			<Card.Description>Change the password used for the dashboard and API.</Card.Description>
+		</Card.Header>
+		<Card.Content class="space-y-4">
+			{#if authStatus?.using_default_password}
+				<div class="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
+					The dashboard is still using the default password. Change it before exposing Watcher beyond a trusted machine.
+				</div>
+			{/if}
+
+			<div class="grid gap-4 md:grid-cols-3">
+				<div class="space-y-2">
+					<label class="text-sm text-muted-foreground" for="current-password">Current Password</label>
+					<Input id="current-password" type="password" bind:value={currentPassword} autocomplete="current-password" />
+				</div>
+				<div class="space-y-2">
+					<label class="text-sm text-muted-foreground" for="new-password">New Password</label>
+					<Input id="new-password" type="password" bind:value={newPassword} autocomplete="new-password" />
+				</div>
+				<div class="space-y-2">
+					<label class="text-sm text-muted-foreground" for="confirm-password">Confirm Password</label>
+					<Input id="confirm-password" type="password" bind:value={confirmPassword} autocomplete="new-password" />
+				</div>
+			</div>
+
+			<Button.Root onclick={savePassword} disabled={isSavingPassword}>
+				{isSavingPassword ? 'Saving...' : 'Update Password'}
+			</Button.Root>
+		</Card.Content>
+	</Card.Root>
 
 	<Card.Root class="bg-card">
 		<Card.Header>

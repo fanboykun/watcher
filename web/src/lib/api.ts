@@ -1,9 +1,30 @@
 // API client for the watcher agent backend
 const API_BASE = '/api';
+const AUTH_PASSWORD_KEY = 'watcher.auth.password';
+
+export function getAuthPassword(): string {
+	if (typeof localStorage === 'undefined') return '';
+	return localStorage.getItem(AUTH_PASSWORD_KEY) || '';
+}
+
+export function setAuthPassword(password: string) {
+	if (typeof localStorage === 'undefined') return;
+	localStorage.setItem(AUTH_PASSWORD_KEY, password);
+}
+
+export function clearAuthPassword() {
+	if (typeof localStorage === 'undefined') return;
+	localStorage.removeItem(AUTH_PASSWORD_KEY);
+}
+
+function authHeader(): Record<string, string> {
+	const password = getAuthPassword();
+	return password ? { Authorization: `Bearer ${password}` } : {};
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
 	const res = await fetch(`${API_BASE}${path}`, {
-		headers: { 'Content-Type': 'application/json', ...options?.headers },
+		headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers },
 		...options
 	});
 	if (!res.ok) {
@@ -19,7 +40,97 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 	return res.json();
 }
 
+export interface AuthenticatedEventStream {
+	close(): void;
+}
+
+type EventStreamHandlers = {
+	onMessage: (data: string) => void | Promise<void>;
+	onError?: (error: unknown) => void;
+};
+
+function eventData(block: string): string | null {
+	const lines = block.split(/\r?\n/);
+	const data = lines
+		.filter((line) => line.startsWith('data:'))
+		.map((line) => line.slice(5).trimStart());
+	return data.length > 0 ? data.join('\n') : null;
+}
+
+function delay(ms: number) {
+	return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+export function openAuthenticatedEventStream(
+	path: string,
+	handlers: EventStreamHandlers,
+	options: { reconnect?: boolean } = {}
+): AuthenticatedEventStream {
+	const controller = new AbortController();
+	let closed = false;
+
+	const run = async () => {
+		do {
+			try {
+				const res = await fetch(`${API_BASE}${path}`, {
+					headers: authHeader(),
+					signal: controller.signal
+				});
+				if (!res.ok) {
+					throw new Error(res.statusText || `HTTP ${res.status}`);
+				}
+				if (!res.body) {
+					throw new Error('stream body is not available');
+				}
+
+				const reader = res.body.getReader();
+				const decoder = new TextDecoder();
+				let buffer = '';
+				while (!closed) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					buffer += decoder.decode(value, { stream: true });
+
+					let boundary = buffer.indexOf('\n\n');
+					while (boundary >= 0) {
+						const block = buffer.slice(0, boundary);
+						buffer = buffer.slice(boundary + 2);
+						const data = eventData(block);
+						if (data !== null) {
+							await handlers.onMessage(data);
+						}
+						boundary = buffer.indexOf('\n\n');
+					}
+				}
+			} catch (error) {
+				if (!closed) {
+					handlers.onError?.(error);
+				}
+			}
+
+			if (!closed && options.reconnect) {
+				await delay(1500);
+			}
+		} while (!closed && options.reconnect);
+	};
+
+	void run();
+
+	return {
+		close() {
+			closed = true;
+			controller.abort();
+		}
+	};
+}
+
+
 // ── Types ────────────────────────────────────────────────────
+
+export interface AuthStatusResponse {
+	authenticated: boolean;
+	using_default_password: boolean;
+}
 
 export interface InspectRepoResponse {
 	latest_version: string;
@@ -224,7 +335,27 @@ export function iisAppKindLabel(kind: string): string {
 
 // ── API methods ──────────────────────────────────────────────
 
+export const auth = {
+	getPassword: getAuthPassword,
+	setPassword: setAuthPassword,
+	clearPassword: clearAuthPassword,
+	hasPassword: () => getAuthPassword() !== ''
+};
+
 export const api = {
+	// Auth
+	authLogin: (password: string) =>
+		request<AuthStatusResponse>('/auth/login', {
+			method: 'POST',
+			body: JSON.stringify({ password })
+		}),
+	authStatus: () => request<AuthStatusResponse>('/auth/status'),
+	updateAuthPassword: (currentPassword: string, newPassword: string) =>
+		request<{ message: string; using_default_password: boolean }>('/auth/password', {
+			method: 'PUT',
+			body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+		}),
+
 	// System
 	status: () => request<SystemStatus>('/status'),
 	agentLogs: (lines = 100) => request<{ lines: string[] }>(`/logs?lines=${lines}`),
@@ -260,7 +391,10 @@ export const api = {
 	resumeWatcherUpdates: (id: number) => request<{ message: string }>(`/watchers/${id}/resume`, { method: 'POST' }),
 	deleteWatcherVersion: (id: number, version: string) => request<{ message: string }>(`/watchers/${id}/versions/${version}`, { method: 'DELETE' }),
 	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') => request<{ data: PollEvent[], total: number, page: number, pageSize: number }>(`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`),
-
+	streamWatcherEvents: (id: number, onMessage: (data: string) => void | Promise<void>, onError?: (error: unknown) => void) =>
+		openAuthenticatedEventStream(`/watchers/${id}/events`, { onMessage, onError }, { reconnect: true }),
+	streamDeployLog: (id: number, logId: number, onMessage: (data: string) => void | Promise<void>, onError?: (error: unknown) => void) =>
+		openAuthenticatedEventStream(`/watchers/${id}/deploys/${logId}/stream`, { onMessage, onError }),
 	// Services (flat)
 	listServices: () => request<ServiceWithWatcher[]>('/services'),
 	getService: (id: number) => request<{ service: Service; watcher: Watcher }>(`/services/${id}`),

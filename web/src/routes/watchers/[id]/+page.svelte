@@ -6,6 +6,7 @@
 		iisAppKindLabel,
 		isIISService,
 		serviceTypeLabel,
+		type AuthenticatedEventStream,
 		type DeployLog,
 		type IISAppKind,
 		type Service,
@@ -120,7 +121,7 @@
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'overview');
 
-	let watcherEventSource: EventSource | null = null;
+	let watcherEventSource: AuthenticatedEventStream | null = null;
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
@@ -199,34 +200,36 @@
 		};
 		init();
 
-		watcherEventSource = new EventSource(`/api/watchers/${id}/events`);
-		watcherEventSource.onmessage = (e) => {
-			try {
-				const ev = JSON.parse(e.data) as { type?: string };
-				switch (ev.type) {
-					case 'deploy_started':
-						scheduleRefresh(false, false);
-						break;
-					case 'deploy_finished':
-					case 'version_changed':
-						scheduleRefresh(true, false);
-						break;
-					case 'poll_event':
-						scheduleRefresh(false, true);
-						break;
-					case 'status_changed':
-						scheduleRefresh(false, false);
-						break;
-					default:
-						scheduleRefresh(false, false);
+		watcherEventSource = api.streamWatcherEvents(
+			id,
+			(data) => {
+				try {
+					const ev = JSON.parse(data) as { type?: string };
+					switch (ev.type) {
+						case 'deploy_started':
+							scheduleRefresh(false, false);
+							break;
+						case 'deploy_finished':
+						case 'version_changed':
+							scheduleRefresh(true, false);
+							break;
+						case 'poll_event':
+							scheduleRefresh(false, true);
+							break;
+						case 'status_changed':
+							scheduleRefresh(false, false);
+							break;
+						default:
+							scheduleRefresh(false, false);
+					}
+				} catch {
+					scheduleRefresh(false, false);
 				}
-			} catch {
-				scheduleRefresh(false, false);
+			},
+			() => {
+				// The fetch stream helper reconnects watcher events after temporary disconnects.
 			}
-		};
-		watcherEventSource.onerror = () => {
-			// Browser SSE auto-reconnect handles temporary disconnects.
-		};
+		);
 
 		return () => {
 			if (watcherEventSource) {
@@ -762,14 +765,15 @@
 			</Card.Root>
 		{/if}
 
-		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 		<Tabs.Root
 			bind:value={activeTab}
 			onValueChange={(v) => {
 				if (v) {
-					goto(`${page.url.pathname}?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true }).catch(
-						() => {}
-					);
+					goto(resolve(`/watchers/[id]?tab=${v}`, { id: String(id) }), {
+						replaceState: true,
+						keepFocus: true,
+						noScroll: true
+					}).catch(() => {});
 				}
 			}}
 		>
@@ -1325,7 +1329,7 @@
 						</div>
 						<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
 							<span class="font-medium text-foreground/90">Bootstrap profile:</span>
-							{' '}{iisAppKindLabel(svcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
+							 {iisAppKindLabel(svcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
 						</div>
 					{/if}
 
@@ -1491,7 +1495,7 @@
 						</div>
 						<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
 							<span class="font-medium text-foreground/90">Bootstrap profile:</span>
-							{' '}{iisAppKindLabel(editSvcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
+							 {iisAppKindLabel(editSvcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
 						</div>
 					{/if}
 

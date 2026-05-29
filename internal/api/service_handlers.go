@@ -319,6 +319,9 @@ func tailFile(path string, n int) ([]string, error) {
 	for scanner.Scan() {
 		allLines = append(allLines, scanner.Text())
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 
 	if len(allLines) <= n {
 		return allLines, nil

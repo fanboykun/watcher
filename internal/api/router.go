@@ -21,6 +21,11 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath stri
 
 	apiGroup := r.Group("/api")
 	{
+		apiGroup.POST("/auth/login", h.AuthLogin)
+		apiGroup.Use(h.RequireAuth())
+		apiGroup.GET("/auth/status", h.AuthStatus)
+		apiGroup.PUT("/auth/password", h.UpdateAuthPassword)
+
 		// System
 		apiGroup.GET("/status", h.SystemStatus)
 		apiGroup.GET("/logs", h.AgentLogs)

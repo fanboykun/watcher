@@ -4,9 +4,12 @@ import (
 	"fmt"
 
 	"github.com/glebarez/sqlite"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+const DefaultAuthPassword = "watcher"
 
 // NewDB opens (or creates) a SQLite database at the given path,
 // configures it for concurrent use, and runs AutoMigrate.
@@ -21,6 +24,7 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 	}
 
 	if err := db.AutoMigrate(
+		&AuthCredential{},
 		&Watcher{},
 		&Service{},
 		&ServiceConfigFile{},
@@ -34,8 +38,35 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 	if err := ensureSchemaCompatibility(db); err != nil {
 		return nil, fmt.Errorf("failed to apply compatibility migrations: %w", err)
 	}
+	if err := ensureDefaultAuthCredential(db); err != nil {
+		return nil, fmt.Errorf("failed to seed auth credential: %w", err)
+	}
 
 	return db, nil
+}
+
+func ensureDefaultAuthCredential(db *gorm.DB) error {
+	var count int64
+	if err := db.Model(&AuthCredential{}).Count(&count).Error; err != nil {
+		return fmt.Errorf("count auth credentials: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(DefaultAuthPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash default password: %w", err)
+	}
+
+	cred := AuthCredential{
+		PasswordHash:         string(hash),
+		UsingDefaultPassword: true,
+	}
+	if err := db.Create(&cred).Error; err != nil {
+		return fmt.Errorf("create default auth credential: %w", err)
+	}
+	return nil
 }
 
 func ensureSchemaCompatibility(db *gorm.DB) error {

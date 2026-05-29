@@ -4,6 +4,16 @@ import (
 	"time"
 )
 
+// AuthCredential stores the single dashboard/API password hash.
+type AuthCredential struct {
+	ID                   uint   `gorm:"primaryKey" json:"id"`
+	PasswordHash         string `gorm:"not null" json:"-"`
+	UsingDefaultPassword bool   `gorm:"not null;default:false" json:"using_default_password"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // Watcher represents a repository being monitored for releases.
 type Watcher struct {
 	ID                    uint   `gorm:"primaryKey" json:"id"`

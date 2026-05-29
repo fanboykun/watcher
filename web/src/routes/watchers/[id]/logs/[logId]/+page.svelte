@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { api, type DeployLog, type Watcher } from '$lib/api';
+	import { api, type AuthenticatedEventStream, type DeployLog, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import {
@@ -17,13 +17,12 @@
 	import { onMount } from 'svelte';
 
 	const id = Number(page.params.id);
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const logId = Number((page.params as any).logId);
+	const logId = Number(page.params.logId);
 
 	let watcher = $state<Watcher | null>(null);
 	let deployLog = $state<DeployLog | null>(null);
 	let error = $state('');
-	let streamSource: EventSource | null = null;
+	let streamSource: AuthenticatedEventStream | null = null;
 	let liveLogs = $state('');
 	let logContainer = $state<HTMLDivElement | null>(null);
 
@@ -36,23 +35,26 @@
 				]);
 				liveLogs = deployLog?.logs || '';
 				if (deployLog && !deployLog.completed_at) {
-					streamSource = new EventSource(`/api/watchers/${id}/deploys/${logId}/stream`);
-					streamSource.onmessage = async (e) => {
-						if (e.data === 'DONE') {
-							streamSource?.close();
-							streamSource = null;
-							deployLog = await api.watcherDeployLog(id, logId);
-							liveLogs = deployLog.logs || '';
-							return;
+					streamSource = api.streamDeployLog(
+						id,
+						logId,
+						async (data) => {
+							if (data === 'DONE') {
+								streamSource?.close();
+								streamSource = null;
+								deployLog = await api.watcherDeployLog(id, logId);
+								liveLogs = deployLog.logs || '';
+								return;
+							}
+							liveLogs = liveLogs ? `${liveLogs}\n${data}` : data;
+							if (deployLog) {
+								deployLog = { ...deployLog, logs: liveLogs };
+							}
+						},
+						() => {
+							// Keep the existing log content if the stream drops.
 						}
-						liveLogs = liveLogs ? `${liveLogs}\n${e.data}` : e.data;
-						if (deployLog) {
-							deployLog = { ...deployLog, logs: liveLogs };
-						}
-					};
-					streamSource.onerror = () => {
-						// Browser will auto-reconnect for temporary disconnects.
-					};
+					);
 				}
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to load deploy log';

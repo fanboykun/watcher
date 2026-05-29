@@ -4,8 +4,36 @@ import (
 	"path/filepath"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+func TestNewDBSeedsDefaultAuthCredential(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "auth.db")
+	db, err := NewDB(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+
+	var creds []AuthCredential
+	if err := db.Find(&creds).Error; err != nil {
+		t.Fatalf("find auth credentials: %v", err)
+	}
+	if len(creds) != 1 {
+		t.Fatalf("expected one auth credential, got %d", len(creds))
+	}
+	if !creds[0].UsingDefaultPassword {
+		t.Fatalf("expected default password flag to be true")
+	}
+	if creds[0].PasswordHash == DefaultAuthPassword {
+		t.Fatalf("expected stored password to be hashed")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(creds[0].PasswordHash), []byte(DefaultAuthPassword)); err != nil {
+		t.Fatalf("expected default password to validate: %v", err)
+	}
+}
 
 func TestNewDBAddsWatcherGitHubTokenColumnForLegacyDB(t *testing.T) {
 	t.Parallel()
