@@ -25,6 +25,11 @@ type authStatusResponse struct {
 	UsingDefaultPassword bool `json:"using_default_password"`
 }
 
+type authBootstrapResponse struct {
+	UsingDefaultPassword bool   `json:"using_default_password"`
+	DefaultPassword      string `json:"default_password,omitempty"`
+}
+
 // RequireAuth protects API routes with the single dashboard/API password.
 func (h *Handler) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -57,6 +62,20 @@ func (h *Handler) AuthLogin(c *gin.Context) {
 		Authenticated:        true,
 		UsingDefaultPassword: cred.UsingDefaultPassword,
 	})
+}
+
+func (h *Handler) AuthBootstrap(c *gin.Context) {
+	cred, err := h.authCredential()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "auth credential is not available"})
+		return
+	}
+
+	resp := authBootstrapResponse{UsingDefaultPassword: cred.UsingDefaultPassword}
+	if cred.UsingDefaultPassword {
+		resp.DefaultPassword = database.DefaultAuthPassword
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *Handler) AuthStatus(c *gin.Context) {

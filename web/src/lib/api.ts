@@ -132,6 +132,11 @@ export interface AuthStatusResponse {
 	using_default_password: boolean;
 }
 
+export interface AuthBootstrapResponse {
+	using_default_password: boolean;
+	default_password?: string;
+}
+
 export interface InspectRepoResponse {
 	latest_version: string;
 	published_at: string;
@@ -344,6 +349,7 @@ export const auth = {
 
 export const api = {
 	// Auth
+	authBootstrap: () => request<AuthBootstrapResponse>('/auth/bootstrap'),
 	authLogin: (password: string) =>
 		request<AuthStatusResponse>('/auth/login', {
 			method: 'POST',

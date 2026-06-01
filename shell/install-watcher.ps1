@@ -1,20 +1,18 @@
 # ==============================================================
 # install-watcher.ps1
-# Interactive bootstrap: configures installation via a GUI wizard.
+# Interactive bootstrap: configures installation via an interactive CLI.
 # Run as Administrator on Windows 10/11 or Windows Server 2022.
 # ==============================================================
 
 param(
     [switch]$Silent,
-    [switch]$DebugMode,
-    [string]$InstallConfigPath = "",
-    [string]$LogPathOverride = ""
+    [switch]$DebugMode
 )
 
 $ErrorActionPreference = "Stop"
 
 # ==============================================================
-# DEFAULTS -- used by wizard pre-fill and silent mode
+# DEFAULTS -- used by interactive prompts and silent mode
 # ==============================================================
 $Defaults = @{
     Profile     = 0 # 0=Binary, 1=Static, 2=Both, 3=Full Stack
@@ -36,39 +34,11 @@ $ScriptPath    = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) { $PSCom
 $ScriptDir     = Split-Path -Parent $ScriptPath
 $ParentDir     = Split-Path -Parent $ScriptDir
 $Script:IsServer = (Get-CimInstance Win32_OperatingSystem).ProductType -ne 1
-$Script:LogPath  = if (-not [string]::IsNullOrWhiteSpace($LogPathOverride)) { $LogPathOverride } else { Join-Path $env:TEMP ("watcher-installer-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log") }
-$Script:ProgressUi = $null
-$Script:WinFormsInitialized = $false
+$Script:LogPath  = Join-Path $env:TEMP ("watcher-installer-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
 
 # ==============================================================
 # LOGGING
 # ==============================================================
-function Invoke-ProgressUiUpdate {
-    param(
-        [scriptblock]$Action,
-        [switch]$Wait
-    )
-
-    if (-not ($Script:ProgressUi -and $Script:ProgressUi.Form -and -not $Script:ProgressUi.Form.IsDisposed)) {
-        return
-    }
-
-    $form = $Script:ProgressUi.Form
-    $actionCopy = $Action.GetNewClosure()
-    $callback = [System.Windows.Forms.MethodInvoker]{ & $actionCopy }
-
-    if ($form.InvokeRequired) {
-        if ($Wait) {
-            [void]$form.Invoke($callback)
-        } else {
-            [void]$form.BeginInvoke($callback)
-        }
-        return
-    }
-
-    & $actionCopy
-}
-
 function Write-InstallerLog {
     param(
         [string]$Level,
@@ -82,23 +52,12 @@ function Write-InstallerLog {
         Add-Content -Path $Script:LogPath -Value $line -Encoding ASCII
     } catch {}
 
-    if ($Silent -or $DebugMode) {
-        switch ($Level.ToUpperInvariant()) {
-            "ERROR" { Write-Host $line -ForegroundColor Red }
-            "WARN"  { Write-Host $line -ForegroundColor Yellow }
-            "OK"    { Write-Host $line -ForegroundColor Green }
-            "STEP"  { Write-Host $line -ForegroundColor Cyan }
-            default { Write-Host $line }
-        }
-    }
-
-    $lineCopy = $line
-    Invoke-ProgressUiUpdate -Wait {
-        $Script:ProgressUi.LogBox.AppendText($lineCopy + [Environment]::NewLine)
-        $Script:ProgressUi.LogBox.SelectionStart = $Script:ProgressUi.LogBox.TextLength
-        $Script:ProgressUi.LogBox.ScrollToCaret()
-        $Script:ProgressUi.StatusLabel.Text = $lineCopy
-        $Script:ProgressUi.Form.Refresh()
+    switch ($Level.ToUpperInvariant()) {
+        "ERROR" { Write-Host $line -ForegroundColor Red }
+        "WARN"  { Write-Host $line -ForegroundColor Yellow }
+        "OK"    { Write-Host $line -ForegroundColor Green }
+        "STEP"  { Write-Host $line -ForegroundColor Cyan }
+        default { Write-Host $line }
     }
 }
 
@@ -133,10 +92,14 @@ function Show-Message {
         return
     }
 
-    Add-Type -AssemblyName System.Windows.Forms
-    $iconValue = [System.Windows.Forms.MessageBoxIcon]::$Icon
-    $buttons = [System.Windows.Forms.MessageBoxButtons]::OK
-    [void][System.Windows.Forms.MessageBox]::Show($Text, $Title, $buttons, $iconValue)
+    $color = switch ($Icon) {
+        "Error" { "Red" }
+        "Warning" { "Yellow" }
+        default { "White" }
+    }
+    Write-Host ""
+    Write-Host $Title -ForegroundColor $color
+    Write-Host $Text -ForegroundColor $color
 }
 
 if (-not (Test-IsAdministrator)) {
@@ -182,19 +145,7 @@ function Set-ProgressStep {
         [string]$Status
     )
 
-    $valueCopy = $Value
-    $statusCopy = $Status
-    Invoke-ProgressUiUpdate -Wait {
-        if ($valueCopy -lt $Script:ProgressUi.ProgressBar.Minimum) {
-            $valueCopy = $Script:ProgressUi.ProgressBar.Minimum
-        }
-        if ($valueCopy -gt $Script:ProgressUi.ProgressBar.Maximum) {
-            $valueCopy = $Script:ProgressUi.ProgressBar.Maximum
-        }
-        $Script:ProgressUi.ProgressBar.Value = $valueCopy
-        $Script:ProgressUi.StatusLabel.Text = $statusCopy
-        $Script:ProgressUi.Form.Refresh()
-    }
+    Write-Info ("Progress {0}%: {1}" -f $Value, $Status)
 }
 
 function Get-IISFeatureList {
@@ -626,766 +577,211 @@ function Invoke-Installation {
 }
 
 # ==============================================================
-# GUI WIZARD
+# CONSOLE INSTALLER
 # ==============================================================
-function Initialize-WinForms {
-    if ($Script:WinFormsInitialized) {
+function Read-ConsoleDefault {
+    param(
+        [string]$Prompt,
+        [string]$Default
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Default)) {
+        $value = Read-Host $Prompt
+    } else {
+        $value = Read-Host ("{0} [{1}]" -f $Prompt, $Default)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $Default
+    }
+    return $value.Trim()
+}
+
+function Read-ConsoleYesNo {
+    param(
+        [string]$Prompt,
+        [bool]$Default = $true
+    )
+
+    $suffix = if ($Default) { "[Y/n]" } else { "[y/N]" }
+    while ($true) {
+        $value = Read-Host ("{0} {1}" -f $Prompt, $suffix)
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            return $Default
+        }
+
+        switch ($value.Trim().ToLowerInvariant()) {
+            "y" { return $true }
+            "yes" { return $true }
+            "n" { return $false }
+            "no" { return $false }
+            default { Write-Warn "Enter Y or N." }
+        }
+    }
+}
+
+function Read-ConsoleIntDefault {
+    param(
+        [string]$Prompt,
+        [int]$Default,
+        [int]$Min,
+        [int]$Max
+    )
+
+    while ($true) {
+        $raw = Read-ConsoleDefault -Prompt $Prompt -Default ([string]$Default)
+        $parsed = 0
+        if ([int]::TryParse($raw, [ref]$parsed) -and $parsed -ge $Min -and $parsed -le $Max) {
+            return $parsed
+        }
+        Write-Warn ("Enter a number between {0} and {1}." -f $Min, $Max)
+    }
+}
+
+function Open-DebugLog {
+    if (-not (Test-Path $Script:LogPath)) {
+        Write-Warn ("Debug log file not found: {0}" -f $Script:LogPath)
         return
     }
 
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-    [System.Windows.Forms.Application]::EnableVisualStyles()
-    [System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
-    $Script:WinFormsInitialized = $true
+    try {
+        Start-Process -FilePath "notepad.exe" -ArgumentList @($Script:LogPath) -ErrorAction Stop
+    } catch {
+        Write-Warn ("Could not open debug log: {0}" -f $_.Exception.Message)
+        Write-Info ("Debug log: {0}" -f $Script:LogPath)
+    }
 }
 
-function New-Label {
-    param($Text, $X, $Y, $Width = 160, $Height = 20)
-    $label = New-Object System.Windows.Forms.Label
-    $label.Text = $Text
-    $label.Location = New-Object System.Drawing.Point($X, $Y)
-    $label.Size = New-Object System.Drawing.Size($Width, $Height)
-    $label.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    return $label
+function Open-Dashboard {
+    param($Config)
+
+    $dashboardUrl = "http://localhost:{0}" -f $Config.APIPort
+    try {
+        Start-Process -FilePath $dashboardUrl -ErrorAction Stop
+    } catch {
+        Write-Warn ("Could not open dashboard: {0}" -f $_.Exception.Message)
+        Write-Info ("Dashboard URL: {0}" -f $dashboardUrl)
+    }
 }
 
-function New-TextBox {
-    param($Text, $X, $Y, $Width = 280)
-    $textBox = New-Object System.Windows.Forms.TextBox
-    $textBox.Text = $Text
-    $textBox.Location = New-Object System.Drawing.Point($X, $Y)
-    $textBox.Size = New-Object System.Drawing.Size($Width, 24)
-    $textBox.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    return $textBox
-}
+function Show-ConsoleWizard {
+    $Config = $Defaults.Clone()
 
-function New-StatusLabel {
-    param($X, $Y, $Width = 400)
-    $label = New-Object System.Windows.Forms.Label
-    $label.Text = ""
-    $label.Location = New-Object System.Drawing.Point($X, $Y)
-    $label.Size = New-Object System.Drawing.Size($Width, 16)
-    $label.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $label.ForeColor = [System.Drawing.Color]::FromArgb(180, 0, 0)
-    return $label
-}
+    Write-Host ""
+    Write-Host "Watcher Installer" -ForegroundColor Cyan
+    Write-Host "=================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Choose what this host should support:"
+    Write-Host "  1. Binary Services  - NSSM for Windows service deployments"
+    Write-Host "  2. IIS Static       - IIS hosting + URL Rewrite"
+    Write-Host "  3. Hybrid           - Binary services + IIS hosting"
+    Write-Host "  4. Full Stack       - Binary services + IIS hosting + ARR reverse proxy"
+    Write-Host ""
 
-function Show-Wizard {
-    Initialize-WinForms
-
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Watcher - Installation Wizard"
-    $form.Size = New-Object System.Drawing.Size(640, 720)
-    $form.StartPosition = "CenterScreen"
-    $form.FormBorderStyle = "FixedDialog"
-    $form.MaximizeBox = $false
-    $form.MinimizeBox = $false
-    $form.BackColor = [System.Drawing.Color]::FromArgb(248, 246, 240)
-
-    $clientWidth = 620
-    $contentTop = 96
-    $contentHeight = 520
-    $footerTop = 622
-    $buttonTop = 634
-    $clientHeight = 678
-
-    $header = New-Object System.Windows.Forms.Panel
-    $header.Size = New-Object System.Drawing.Size(640, 86)
-    $header.Location = New-Object System.Drawing.Point(0, 0)
-    $header.BackColor = [System.Drawing.Color]::FromArgb(29, 53, 87)
-    $form.Controls.Add($header)
-
-    $title = New-Object System.Windows.Forms.Label
-    $title.Text = "Configure Installation"
-    $title.Location = New-Object System.Drawing.Point(20, 10)
-    $title.Size = New-Object System.Drawing.Size(520, 28)
-    $title.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 15)
-    $title.ForeColor = [System.Drawing.Color]::White
-    $header.Controls.Add($title)
-
-    $stepLabel = New-Object System.Windows.Forms.Label
-    $stepLabel.Text = "Step 1 of 2"
-    $stepLabel.Location = New-Object System.Drawing.Point(540, 12)
-    $stepLabel.Size = New-Object System.Drawing.Size(80, 20)
-    $stepLabel.TextAlign = "MiddleRight"
-    $stepLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $stepLabel.ForeColor = [System.Drawing.Color]::FromArgb(214, 224, 237)
-    $header.Controls.Add($stepLabel)
-
-    $subtitle = New-Object System.Windows.Forms.Label
-    $subtitle.Location = New-Object System.Drawing.Point(20, 38)
-    $subtitle.Size = New-Object System.Drawing.Size(560, 18)
-    $subtitle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(214, 224, 237)
-    $header.Controls.Add($subtitle)
-
-    $subtitle2 = New-Object System.Windows.Forms.Label
-    $subtitle2.Location = New-Object System.Drawing.Point(20, 58)
-    $subtitle2.Size = New-Object System.Drawing.Size(560, 18)
-    $subtitle2.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $subtitle2.ForeColor = [System.Drawing.Color]::FromArgb(186, 202, 221)
-    $header.Controls.Add($subtitle2)
-
-    function New-SectionPanel {
-        param($Title, $Body, $X, $Y, $Width, $Height)
-
-        $panel = New-Object System.Windows.Forms.Panel
-        $panel.Location = New-Object System.Drawing.Point($X, $Y)
-        $panel.Size = New-Object System.Drawing.Size($Width, $Height)
-        $panel.BackColor = [System.Drawing.Color]::White
-        $panel.BorderStyle = "FixedSingle"
-
-        $titleLabel = New-Object System.Windows.Forms.Label
-        $titleLabel.Text = $Title
-        $titleLabel.Location = New-Object System.Drawing.Point(14, 12)
-        $titleLabel.Size = New-Object System.Drawing.Size(($Width - 28), 22)
-        $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
-        $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(34, 40, 49)
-        $panel.Controls.Add($titleLabel)
-
-        $bodyLabel = New-Object System.Windows.Forms.Label
-        $bodyLabel.Text = $Body
-        $bodyLabel.Location = New-Object System.Drawing.Point(14, 34)
-        $bodyLabel.Size = New-Object System.Drawing.Size(($Width - 28), 32)
-        $bodyLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-        $bodyLabel.ForeColor = [System.Drawing.Color]::FromArgb(105, 112, 120)
-        $panel.Controls.Add($bodyLabel)
-
-        return $panel
-    }
-
-    function New-CapabilityCheckBox {
-        param($Text, $X, $Y, $Width = 520)
-
-        $check = New-Object System.Windows.Forms.CheckBox
-        $check.Text = $Text
-        $check.Location = New-Object System.Drawing.Point($X, $Y)
-        $check.Size = New-Object System.Drawing.Size($Width, 22)
-        $check.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-        return $check
-    }
-
-    $page1 = New-Object System.Windows.Forms.Panel
-    $page1.Location = New-Object System.Drawing.Point(0, $contentTop)
-    $page1.Size = New-Object System.Drawing.Size($clientWidth, $contentHeight)
-    $page1.BackColor = $form.BackColor
-    $form.Controls.Add($page1)
-
-    $page2 = New-Object System.Windows.Forms.Panel
-    $page2.Location = New-Object System.Drawing.Point(0, $contentTop)
-    $page2.Size = New-Object System.Drawing.Size($clientWidth, $contentHeight)
-    $page2.BackColor = $form.BackColor
-    $page2.Visible = $false
-    $form.Controls.Add($page2)
-
-    $presetPanel = New-SectionPanel "Quick Presets" "Start from a recommended machine profile, then adjust the capabilities below." 20 6 590 118
-    $page1.Controls.Add($presetPanel)
-
-    $presetButtons = @()
-    $presetSpecs = @(
-        @{ Text = "Binary Services"; X = 14; Y = 70; W = 130 },
-        @{ Text = "IIS Static"; X = 152; Y = 70; W = 110 },
-        @{ Text = "Hybrid"; X = 270; Y = 70; W = 90 },
-        @{ Text = "Full Stack"; X = 368; Y = 70; W = 100 }
-    )
-    foreach ($spec in $presetSpecs) {
-        $btn = New-Object System.Windows.Forms.Button
-        $btn.Text = $spec.Text
-        $btn.Location = New-Object System.Drawing.Point($spec.X, $spec.Y)
-        $btn.Size = New-Object System.Drawing.Size($spec.W, 30)
-        $btn.FlatStyle = "Flat"
-        $btn.BackColor = [System.Drawing.Color]::FromArgb(244, 241, 232)
-        $presetPanel.Controls.Add($btn)
-        $presetButtons += $btn
-    }
-
-    $presetHint = New-Object System.Windows.Forms.Label
-    $presetHint.Text = "Selected preset: Custom"
-    $presetHint.Location = New-Object System.Drawing.Point(480, 76)
-    $presetHint.Size = New-Object System.Drawing.Size(96, 20)
-    $presetHint.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $presetHint.ForeColor = [System.Drawing.Color]::FromArgb(105, 112, 120)
-    $presetPanel.Controls.Add($presetHint)
-
-    $capPanel = New-SectionPanel "Windows Capabilities" "Choose what this host should support. ARR automatically requires IIS hosting." 20 138 590 186
-    $page1.Controls.Add($capPanel)
-
-    $chkNSSM = New-CapabilityCheckBox "Binary services: install NSSM service management" 14 74
-    $chkNSSM.Checked = [bool]$Defaults.InstallNSSM
-    $capPanel.Controls.Add($chkNSSM)
-
-    $capNssmHint = New-Object System.Windows.Forms.Label
-    $capNssmHint.Text = "Needed when Watcher should run or manage Windows services for app binaries."
-    $capNssmHint.Location = New-Object System.Drawing.Point(34, 95)
-    $capNssmHint.Size = New-Object System.Drawing.Size(520, 18)
-    $capNssmHint.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $capNssmHint.ForeColor = [System.Drawing.Color]::FromArgb(105, 112, 120)
-    $capPanel.Controls.Add($capNssmHint)
-
-    $chkIIS = New-CapabilityCheckBox "IIS hosting: enable IIS features, management tools, and URL Rewrite" 14 118
-    $chkIIS.Checked = [bool]$Defaults.InstallIIS
-    $capPanel.Controls.Add($chkIIS)
-
-    $capIISHint = New-Object System.Windows.Forms.Label
-    $capIISHint.Text = "Use for static sites today, and for future IIS-based workloads such as PHP."
-    $capIISHint.Location = New-Object System.Drawing.Point(34, 139)
-    $capIISHint.Size = New-Object System.Drawing.Size(520, 18)
-    $capIISHint.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $capIISHint.ForeColor = [System.Drawing.Color]::FromArgb(105, 112, 120)
-    $capPanel.Controls.Add($capIISHint)
-
-    $chkARR = New-CapabilityCheckBox "Reverse proxy: install ARR and enable IIS proxy support" 14 162
-    $chkARR.Checked = [bool]$Defaults.InstallARR
-    $capPanel.Controls.Add($chkARR)
-
-    $summaryPanel = New-SectionPanel "Install Summary" "A quick read of what this installer is going to prepare on this machine." 20 338 590 126
-    $page1.Controls.Add($summaryPanel)
-    $lblCapabilitySummary = New-Object System.Windows.Forms.Label
-    $lblCapabilitySummary.Location = New-Object System.Drawing.Point(14, 64)
-    $lblCapabilitySummary.Size = New-Object System.Drawing.Size(560, 44)
-    $lblCapabilitySummary.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $lblCapabilitySummary.ForeColor = [System.Drawing.Color]::FromArgb(64, 72, 83)
-    $summaryPanel.Controls.Add($lblCapabilitySummary)
-
-    $pathsPanel = New-SectionPanel "Watcher Configuration" "These values are written into the Watcher install and used by the bootstrap process." 20 6 590 488
-    $page2.Controls.Add($pathsPanel)
-
-    $pathsPanel.Controls.Add((New-Label "Install directory" 14 74 160 20))
-    $tbInstall = New-TextBox $Defaults.InstallDir 14 96 470
-    $pathsPanel.Controls.Add($tbInstall)
-    $btnBrowseInstall = New-Object System.Windows.Forms.Button
-    $btnBrowseInstall.Text = "..."
-    $btnBrowseInstall.Location = New-Object System.Drawing.Point(492, 96)
-    $btnBrowseInstall.Size = New-Object System.Drawing.Size(32, 24)
-    $btnBrowseInstall.FlatStyle = "Flat"
-    $btnBrowseInstall.Add_Click({
-        $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dialog.SelectedPath = $tbInstall.Text
-        if ($dialog.ShowDialog() -eq "OK") {
-            $tbInstall.Text = $dialog.SelectedPath
-        }
-    })
-    $pathsPanel.Controls.Add($btnBrowseInstall)
-    $lblInstallErr = New-StatusLabel 14 124 520
-    $pathsPanel.Controls.Add($lblInstallErr)
-
-    $pathsPanel.Controls.Add((New-Label "Log directory" 14 150 160 20))
-    $tbLog = New-TextBox $Defaults.LogDir 14 172 470
-    $pathsPanel.Controls.Add($tbLog)
-    $btnBrowseLog = New-Object System.Windows.Forms.Button
-    $btnBrowseLog.Text = "..."
-    $btnBrowseLog.Location = New-Object System.Drawing.Point(492, 172)
-    $btnBrowseLog.Size = New-Object System.Drawing.Size(32, 24)
-    $btnBrowseLog.FlatStyle = "Flat"
-    $btnBrowseLog.Add_Click({
-        $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dialog.SelectedPath = $tbLog.Text
-        if ($dialog.ShowDialog() -eq "OK") {
-            $tbLog.Text = $dialog.SelectedPath
-        }
-    })
-    $pathsPanel.Controls.Add($btnBrowseLog)
-
-    $pathsPanel.Controls.Add((New-Label "Watcher Windows service name" 14 218 210 20))
-    $tbService = New-TextBox $Defaults.ServiceName 14 240 240
-    $pathsPanel.Controls.Add($tbService)
-    $lblSvcErr = New-StatusLabel 14 268 520
-    $pathsPanel.Controls.Add($lblSvcErr)
-
-    $pathsPanel.Controls.Add((New-Label "API / dashboard port" 14 294 180 20))
-    $tbPort = New-TextBox $Defaults.APIPort 14 316 80
-    $pathsPanel.Controls.Add($tbPort)
-    $lblPortStatus = New-StatusLabel 108 320 360
-    $pathsPanel.Controls.Add($lblPortStatus)
-    $tbPort.Add_TextChanged({
-        $portText = $tbPort.Text.Trim()
-        if ($portText -match "^\d+$" -and [int]$portText -ge 1 -and [int]$portText -le 65535) {
-            $inUse = netstat -ano 2>$null | Select-String ":$portText\s" | Select-String "LISTEN"
-            if ($inUse) {
-                $lblPortStatus.Text = "Port $portText is already in use"
-                $lblPortStatus.ForeColor = [System.Drawing.Color]::FromArgb(200, 100, 0)
-            } else {
-                $lblPortStatus.Text = "Port $portText is available"
-                $lblPortStatus.ForeColor = [System.Drawing.Color]::FromArgb(0, 130, 0)
+    while ($true) {
+        $profileRaw = Read-ConsoleDefault -Prompt "Preset" -Default "1"
+        switch ($profileRaw) {
+            "1" {
+                $Config.Profile = 0
+                $Config.InstallNSSM = $true
+                $Config.InstallIIS = $false
+                $Config.InstallARR = $false
+                break
             }
-        } else {
-            $lblPortStatus.Text = "Enter a number between 1 and 65535"
-            $lblPortStatus.ForeColor = [System.Drawing.Color]::FromArgb(180, 0, 0)
+            "2" {
+                $Config.Profile = 1
+                $Config.InstallNSSM = $false
+                $Config.InstallIIS = $true
+                $Config.InstallARR = $false
+                break
+            }
+            "3" {
+                $Config.Profile = 2
+                $Config.InstallNSSM = $true
+                $Config.InstallIIS = $true
+                $Config.InstallARR = $false
+                break
+            }
+            "4" {
+                $Config.Profile = 3
+                $Config.InstallNSSM = $true
+                $Config.InstallIIS = $true
+                $Config.InstallARR = $true
+                break
+            }
+            default { Write-Warn "Choose 1, 2, 3, or 4." }
         }
-    })
-
-    $lblNssm = New-Label "NSSM path" 14 352 160 20
-    $pathsPanel.Controls.Add($lblNssm)
-    $tbNssm = New-TextBox $Defaults.NssmPath 14 374 470
-    $pathsPanel.Controls.Add($tbNssm)
-    $btnBrowseNssm = New-Object System.Windows.Forms.Button
-    $btnBrowseNssm.Text = "..."
-    $btnBrowseNssm.Location = New-Object System.Drawing.Point(492, 374)
-    $btnBrowseNssm.Size = New-Object System.Drawing.Size(32, 24)
-    $btnBrowseNssm.FlatStyle = "Flat"
-    $btnBrowseNssm.Add_Click({
-        $dialog = New-Object System.Windows.Forms.OpenFileDialog
-        $dialog.Filter = "NSSM executable|nssm.exe"
-        if ($dialog.ShowDialog() -eq "OK") {
-            $tbNssm.Text = $dialog.FileName
-        }
-    })
-    $pathsPanel.Controls.Add($btnBrowseNssm)
-    $lblNssmErr = New-StatusLabel 14 402 520
-    $pathsPanel.Controls.Add($lblNssmErr)
-
-    $pathsPanel.Controls.Add((New-Label "GitHub token (PAT)" 14 428 160 20))
-    $tokenNote = New-Object System.Windows.Forms.Label
-    $tokenNote.Text = "Required for private repos. Leave empty for public repos."
-    $tokenNote.Location = New-Object System.Drawing.Point(14, 444)
-    $tokenNote.Size = New-Object System.Drawing.Size(520, 16)
-    $tokenNote.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $tokenNote.ForeColor = [System.Drawing.Color]::FromArgb(110, 110, 110)
-    $pathsPanel.Controls.Add($tokenNote)
-
-    $tbToken = New-Object System.Windows.Forms.TextBox
-    $tbToken.Text = $Defaults.GitHubToken
-    $tbToken.Location = New-Object System.Drawing.Point(14, 466)
-    $tbToken.Size = New-Object System.Drawing.Size(270, 24)
-    $tbToken.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    $tbToken.PasswordChar = [char]0x2022
-    $pathsPanel.Controls.Add($tbToken)
-
-    $chkShowToken = New-Object System.Windows.Forms.CheckBox
-    $chkShowToken.Text = "Show"
-    $chkShowToken.Location = New-Object System.Drawing.Point(290, 468)
-    $chkShowToken.Size = New-Object System.Drawing.Size(60, 20)
-    $chkShowToken.Add_CheckedChanged({
-        $tbToken.PasswordChar = if ($chkShowToken.Checked) { [char]0 } else { [char]0x2022 }
-    })
-    $pathsPanel.Controls.Add($chkShowToken)
-
-    function Apply-CapabilityPreset {
-        param([string]$PresetName)
-
-        switch ($PresetName) {
-            "Binary Services" {
-                $chkNSSM.Checked = $true
-                $chkIIS.Checked = $false
-                $chkARR.Checked = $false
-            }
-            "IIS Static" {
-                $chkNSSM.Checked = $false
-                $chkIIS.Checked = $true
-                $chkARR.Checked = $false
-            }
-            "Hybrid" {
-                $chkNSSM.Checked = $true
-                $chkIIS.Checked = $true
-                $chkARR.Checked = $false
-            }
-            "Full Stack" {
-                $chkNSSM.Checked = $true
-                $chkIIS.Checked = $true
-                $chkARR.Checked = $true
-            }
-        }
-        $presetHint.Text = "Selected preset: $PresetName"
+        if ($profileRaw -in @("1", "2", "3", "4")) { break }
     }
 
-    function Sync-CapabilityUi {
-        if ($chkARR.Checked -and -not $chkIIS.Checked) {
-            $chkIIS.Checked = $true
-        }
+    Write-Host ""
+    $Config.InstallDir = (Read-ConsoleDefault -Prompt "Install directory" -Default $Config.InstallDir).TrimEnd("\")
+    $Config.LogDir = (Read-ConsoleDefault -Prompt "Log directory" -Default $Config.LogDir).TrimEnd("\")
+    $Config.ServiceName = Read-ConsoleDefault -Prompt "Watcher Windows service name" -Default $Config.ServiceName
+    $Config.APIPort = Read-ConsoleIntDefault -Prompt "API / dashboard port" -Default ([int]$Config.APIPort) -Min 1 -Max 65535
 
-        $needsNssm = $chkNSSM.Checked
-        $tbNssm.Enabled = $needsNssm
-        $btnBrowseNssm.Enabled = $needsNssm
-        if ($needsNssm) {
-            $lblNssm.ForeColor = [System.Drawing.Color]::Black
-        } else {
-            $lblNssm.ForeColor = [System.Drawing.Color]::Gray
-            $lblNssmErr.Text = ""
-        }
-
-        $summaryParts = @()
-        if ($chkNSSM.Checked) { $summaryParts += "NSSM for binary services" }
-        if ($chkIIS.Checked)  { $summaryParts += "IIS + URL Rewrite" }
-        if ($chkARR.Checked)  { $summaryParts += "ARR reverse proxy" }
-        if ($summaryParts.Count -eq 0) { $summaryParts += "Watcher only (no optional Windows components selected)" }
-        $lblCapabilitySummary.Text = ($summaryParts -join "   |   ")
+    if ($Config.InstallNSSM) {
+        $Config.NssmPath = Read-ConsoleDefault -Prompt "NSSM path" -Default $Config.NssmPath
     }
 
-    foreach ($btn in $presetButtons) {
-        $btn.Add_Click({
-            Apply-CapabilityPreset $this.Text
-            Sync-CapabilityUi
-        })
+    $Config.GitHubToken = Read-ConsoleDefault -Prompt "GitHub token (optional; required for private repos)" -Default $Config.GitHubToken
+
+    if ([string]::IsNullOrWhiteSpace($Config.InstallDir)) {
+        Fail-Install "Install directory is required."
+    }
+    if ([string]::IsNullOrWhiteSpace($Config.ServiceName)) {
+        Fail-Install "Service name is required."
+    }
+    if ($Config.ServiceName -match '[\\/:*?"<>|]') {
+        Fail-Install "Service name contains invalid characters."
     }
 
-    $chkNSSM.Add_CheckedChanged({ $presetHint.Text = "Selected preset: Custom"; Sync-CapabilityUi })
-    $chkIIS.Add_CheckedChanged({ $presetHint.Text = "Selected preset: Custom"; Sync-CapabilityUi })
-    $chkARR.Add_CheckedChanged({ $presetHint.Text = "Selected preset: Custom"; Sync-CapabilityUi })
+    Write-Host ""
+    Write-Host "Install summary" -ForegroundColor Cyan
+    Write-Host "---------------" -ForegroundColor Cyan
+    Write-Host ("Install directory : {0}" -f $Config.InstallDir)
+    Write-Host ("Log directory     : {0}" -f $Config.LogDir)
+    Write-Host ("Service name      : {0}" -f $Config.ServiceName)
+    Write-Host ("Dashboard         : http://localhost:{0}" -f $Config.APIPort)
+    Write-Host ("NSSM              : {0}" -f $(if ($Config.InstallNSSM) { "yes" } else { "no" }))
+    Write-Host ("IIS               : {0}" -f $(if ($Config.InstallIIS) { "yes" } else { "no" }))
+    Write-Host ("ARR               : {0}" -f $(if ($Config.InstallARR) { "yes" } else { "no" }))
+    Write-Host ("Debug log         : {0}" -f $Script:LogPath)
+    Write-Host ""
 
-    switch ([int]$Defaults.Profile) {
-        1 { Apply-CapabilityPreset "IIS Static" }
-        2 { Apply-CapabilityPreset "Hybrid" }
-        3 { Apply-CapabilityPreset "Full Stack" }
-        default { Apply-CapabilityPreset "Binary Services" }
-    }
-    if (-not $Defaults.InstallNSSM -or $Defaults.InstallIIS -or $Defaults.InstallARR) {
-        $chkNSSM.Checked = [bool]$Defaults.InstallNSSM
-        $chkIIS.Checked  = [bool]$Defaults.InstallIIS
-        $chkARR.Checked  = [bool]$Defaults.InstallARR
-        $presetHint.Text = "Selected preset: Custom"
-    }
-    Sync-CapabilityUi
-
-    $sep = New-Object System.Windows.Forms.Panel
-    $sep.Size = New-Object System.Drawing.Size(590, 1)
-    $sep.Location = New-Object System.Drawing.Point(20, $footerTop)
-    $sep.BackColor = [System.Drawing.Color]::FromArgb(220, 220, 220)
-    $form.Controls.Add($sep)
-
-    $btnBack = New-Object System.Windows.Forms.Button
-    $btnBack.Text = "Back"
-    $btnBack.Location = New-Object System.Drawing.Point(324, $buttonTop)
-    $btnBack.Size = New-Object System.Drawing.Size(80, 34)
-    $btnBack.FlatStyle = "Flat"
-    $btnBack.Enabled = $false
-    $form.Controls.Add($btnBack)
-
-    $btnNext = New-Object System.Windows.Forms.Button
-    $btnNext.Text = "Next"
-    $btnNext.Location = New-Object System.Drawing.Point(410, $buttonTop)
-    $btnNext.Size = New-Object System.Drawing.Size(96, 34)
-    $btnNext.BackColor = [System.Drawing.Color]::FromArgb(29, 53, 87)
-    $btnNext.ForeColor = [System.Drawing.Color]::White
-    $btnNext.FlatStyle = "Flat"
-    $form.Controls.Add($btnNext)
-
-    $btnInstall = New-Object System.Windows.Forms.Button
-    $btnInstall.Text = "Install"
-    $btnInstall.Location = New-Object System.Drawing.Point(410, $buttonTop)
-    $btnInstall.Size = New-Object System.Drawing.Size(96, 34)
-    $btnInstall.BackColor = [System.Drawing.Color]::FromArgb(29, 53, 87)
-    $btnInstall.ForeColor = [System.Drawing.Color]::White
-    $btnInstall.FlatStyle = "Flat"
-    $btnInstall.Visible = $false
-    $form.Controls.Add($btnInstall)
-
-    $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text = "Cancel"
-    $btnCancel.Location = New-Object System.Drawing.Point(516, $buttonTop)
-    $btnCancel.Size = New-Object System.Drawing.Size(80, 34)
-    $btnCancel.FlatStyle = "Flat"
-    $btnCancel.Add_Click({
-        $form.DialogResult = "Cancel"
-        $form.Close()
-    })
-    $form.Controls.Add($btnCancel)
-
-    function Set-WizardStep {
-        param([int]$Step)
-
-        $page1.Visible = ($Step -eq 1)
-        $page2.Visible = ($Step -eq 2)
-        $btnBack.Enabled = ($Step -gt 1)
-        $btnNext.Visible = ($Step -eq 1)
-        $btnInstall.Visible = ($Step -eq 2)
-        $stepLabel.Text = "Step $Step of 2"
-
-        if ($Step -eq 1) {
-            $subtitle.Text = "Pick the Windows capabilities this machine needs."
-            $subtitle2.Text = "Presets are shortcuts. You can fine-tune each checkbox below."
-            $form.AcceptButton = $btnNext
-        } else {
-            $subtitle.Text = "Configure where Watcher will be installed and how it should start."
-            $subtitle2.Text = "These values are written into the install and used by the bootstrap process."
-            $form.AcceptButton = $btnInstall
-        }
-    }
-
-    $btnBack.Add_Click({ Set-WizardStep 1 })
-    $btnNext.Add_Click({ Set-WizardStep 2 })
-
-    $btnInstall.Add_Click({
-        $ok = $true
-
-        $lblInstallErr.Text = ""
-        $lblSvcErr.Text = ""
-        $lblSvcErr.ForeColor = [System.Drawing.Color]::FromArgb(180, 0, 0)
-        $lblNssmErr.Text = ""
-        $lblNssmErr.ForeColor = [System.Drawing.Color]::FromArgb(180, 0, 0)
-
-        if ([string]::IsNullOrWhiteSpace($tbInstall.Text)) {
-            $lblInstallErr.Text = "Install directory is required"
-            $ok = $false
-        }
-
-        if ([string]::IsNullOrWhiteSpace($tbService.Text)) {
-            $lblSvcErr.Text = "Service name is required"
-            $ok = $false
-        } elseif ($tbService.Text -match '[\\/:*?"<>|]') {
-            $lblSvcErr.Text = "Service name contains invalid characters"
-            $ok = $false
-        } else {
-            $existing = Get-Service $tbService.Text -ErrorAction SilentlyContinue
-            if ($existing) {
-                $lblSvcErr.Text = "Service already exists and will be updated"
-                $lblSvcErr.ForeColor = [System.Drawing.Color]::FromArgb(200, 100, 0)
-            }
-        }
-
-        if ($chkNSSM.Checked) {
-            if ([string]::IsNullOrWhiteSpace($tbNssm.Text)) {
-                $lblNssmErr.Text = "NSSM path is required"
-                $ok = $false
-            } elseif (-not (Test-Path $tbNssm.Text)) {
-                $lblNssmErr.Text = "Not found locally; installer will try Chocolatey"
-                $lblNssmErr.ForeColor = [System.Drawing.Color]::FromArgb(200, 100, 0)
-            }
-        }
-
-        $portText = $tbPort.Text.Trim()
-        if (-not ($portText -match "^\d+$") -or [int]$portText -lt 1 -or [int]$portText -gt 65535) {
-            $lblPortStatus.Text = "Enter a valid port number"
-            $lblPortStatus.ForeColor = [System.Drawing.Color]::FromArgb(180, 0, 0)
-            $ok = $false
-        }
-
-        if ($ok) {
-            $form.Tag = @{
-                Profile     = $null
-                InstallNSSM = $chkNSSM.Checked
-                InstallIIS  = $chkIIS.Checked
-                InstallARR  = $chkARR.Checked
-                ServiceName = $tbService.Text.Trim()
-                InstallDir  = $tbInstall.Text.Trim().TrimEnd("\")
-                LogDir      = $tbLog.Text.Trim().TrimEnd("\")
-                NssmPath    = $tbNssm.Text.Trim()
-                APIPort     = [int]$tbPort.Text.Trim()
-                GitHubToken = $tbToken.Text
-            }
-            $form.DialogResult = "OK"
-            $form.Close()
-        }
-    })
-
-    Set-WizardStep 1
-
-    $form.CancelButton = $btnCancel
-    $tbPort.Text = $tbPort.Text
-    $form.ClientSize = New-Object System.Drawing.Size($clientWidth, $clientHeight)
-
-    if ($form.ShowDialog() -ne "OK") {
+    if (-not (Read-ConsoleYesNo -Prompt "Proceed with installation?" -Default $true)) {
         Write-Info "Installation cancelled."
         return $null
     }
 
-    return $form.Tag
+    return $Config
 }
 
-function Show-ProgressWindow {
+function Show-CompletionMenu {
     param($Config)
 
-    Initialize-WinForms
-    try {
-        if (-not (Test-Path $Script:LogPath)) {
-            New-Item -ItemType File -Path $Script:LogPath -Force | Out-Null
-        }
-    } catch {}
+    Write-Host ""
+    Write-Host "Installation completed." -ForegroundColor Green
+    Write-Host ""
+    Write-Host (Get-InstallSummary -Config $Config)
 
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Watcher - Installing"
-    $form.Size = New-Object System.Drawing.Size(760, 560)
-    $form.StartPosition = "CenterScreen"
-    $form.FormBorderStyle = "FixedDialog"
-    $form.MaximizeBox = $false
-    $form.MinimizeBox = $true
-    $form.BackColor = [System.Drawing.Color]::White
+    while ($true) {
+        Write-Host ""
+        Write-Host "Next actions:"
+        Write-Host "  1. Open dashboard and close installer"
+        Write-Host "  2. Open debug log"
+        Write-Host "  3. Finish / close installer"
+        $choice = Read-ConsoleDefault -Prompt "Choose an action" -Default "1"
 
-    $title = New-Object System.Windows.Forms.Label
-    $title.Text = "Installing Watcher"
-    $title.Location = New-Object System.Drawing.Point(20, 18)
-    $title.Size = New-Object System.Drawing.Size(300, 28)
-    $title.Font = New-Object System.Drawing.Font("Segoe UI", 14)
-    $form.Controls.Add($title)
-
-    $statusLabel = New-Object System.Windows.Forms.Label
-    $statusLabel.Text = "Preparing installation..."
-    $statusLabel.Location = New-Object System.Drawing.Point(20, 52)
-    $statusLabel.Size = New-Object System.Drawing.Size(700, 20)
-    $statusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    $form.Controls.Add($statusLabel)
-
-    $progressBar = New-Object System.Windows.Forms.ProgressBar
-    $progressBar.Location = New-Object System.Drawing.Point(20, 80)
-    $progressBar.Size = New-Object System.Drawing.Size(700, 18)
-    $progressBar.Minimum = 0
-    $progressBar.Maximum = 100
-    $progressBar.Value = 0
-    $progressBar.Style = "Blocks"
-    $form.Controls.Add($progressBar)
-
-    $logBox = New-Object System.Windows.Forms.TextBox
-    $logBox.Location = New-Object System.Drawing.Point(20, 114)
-    $logBox.Size = New-Object System.Drawing.Size(700, 350)
-    $logBox.Multiline = $true
-    $logBox.ScrollBars = "Vertical"
-    $logBox.ReadOnly = $true
-    $logBox.Font = New-Object System.Drawing.Font("Consolas", 9)
-    $logBox.BackColor = [System.Drawing.Color]::FromArgb(250, 250, 250)
-    $form.Controls.Add($logBox)
-
-    $logHint = New-Object System.Windows.Forms.Label
-    $logHint.Text = "Debug log: $Script:LogPath"
-    $logHint.Location = New-Object System.Drawing.Point(20, 474)
-    $logHint.Size = New-Object System.Drawing.Size(520, 18)
-    $logHint.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $logHint.ForeColor = [System.Drawing.Color]::FromArgb(110, 110, 110)
-    $form.Controls.Add($logHint)
-
-    $btnOpenLog = New-Object System.Windows.Forms.Button
-    $btnOpenLog.Text = "Open Debug Log"
-    $btnOpenLog.Location = New-Object System.Drawing.Point(20, 498)
-    $btnOpenLog.Size = New-Object System.Drawing.Size(120, 30)
-    $btnOpenLog.FlatStyle = "Flat"
-    $btnOpenLog.Add_Click({
-        if (-not (Test-Path $Script:LogPath)) {
-            Show-Message -Text ("Debug log file not found:`r`n`r`n{0}" -f $Script:LogPath) -Icon Warning
-            return
-        }
-
-        try {
-            Start-Process -FilePath "notepad.exe" -ArgumentList @($Script:LogPath) -ErrorAction Stop
-        } catch {
-            Show-Message -Text ("Could not open debug log:`r`n`r`n{0}" -f $_.Exception.Message) -Icon Warning
-        }
-    })
-    $form.Controls.Add($btnOpenLog)
-
-    $btnOpenDashboard = New-Object System.Windows.Forms.Button
-    $btnOpenDashboard.Text = "Open Dashboard"
-    $btnOpenDashboard.Location = New-Object System.Drawing.Point(520, 498)
-    $btnOpenDashboard.Size = New-Object System.Drawing.Size(120, 30)
-    $btnOpenDashboard.FlatStyle = "Flat"
-    $btnOpenDashboard.Enabled = $false
-    $btnOpenDashboard.Add_Click({
-        $dashboardUrl = "http://localhost:{0}" -f $Config.APIPort
-        try {
-            Start-Process -FilePath $dashboardUrl -ErrorAction Stop
-            $form.DialogResult = "OK"
-            $form.Close()
-        } catch {
-            Show-Message -Text ("Could not open dashboard:`r`n`r`n{0}`r`n`r`nURL: {1}" -f $_.Exception.Message, $dashboardUrl) -Icon Warning
-        }
-    })
-    $form.Controls.Add($btnOpenDashboard)
-
-    $btnClose = New-Object System.Windows.Forms.Button
-    $btnClose.Text = "Close"
-    $btnClose.Location = New-Object System.Drawing.Point(650, 498)
-    $btnClose.Size = New-Object System.Drawing.Size(70, 30)
-    $btnClose.FlatStyle = "Flat"
-    $btnClose.Enabled = $false
-    $btnClose.Add_Click({
-        $form.DialogResult = "OK"
-        $form.Close()
-    })
-    $form.Controls.Add($btnClose)
-
-    $Script:ProgressUi = @{
-        Form           = $form
-        StatusLabel    = $statusLabel
-        ProgressBar    = $progressBar
-        LogBox         = $logBox
-        OpenLogButton  = $btnOpenLog
-        OpenDashButton = $btnOpenDashboard
-        CloseButton    = $btnClose
-    }
-
-    $progressConfigPath = Join-Path $env:TEMP ("watcher-installer-config-" + [guid]::NewGuid().ToString("N") + ".json")
-    $progressState = @{
-        Process = $null
-        LastLogLength = 0
-        InstallFinished = $false
-        ConfigPath = $progressConfigPath
-    }
-    $Config | ConvertTo-Json -Depth 4 | Set-Content -Path $progressState.ConfigPath -Encoding UTF8
-
-    $timer = New-Object System.Windows.Forms.Timer
-    $timer.Interval = 500
-    $timer.Add_Tick({
-        if (Test-Path $Script:LogPath) {
-            try {
-                $content = Get-Content -Path $Script:LogPath -Raw -ErrorAction Stop
-                if ($content.Length -gt $progressState.LastLogLength) {
-                    $newText = $content.Substring($progressState.LastLogLength)
-                    $Script:ProgressUi.LogBox.AppendText($newText)
-                    $Script:ProgressUi.LogBox.SelectionStart = $Script:ProgressUi.LogBox.TextLength
-                    $Script:ProgressUi.LogBox.ScrollToCaret()
-                    $progressState.LastLogLength = $content.Length
-                }
-            } catch {}
-        }
-
-        $installProcess = $progressState.Process
-        if ($installProcess -and -not $progressState.InstallFinished -and $installProcess.HasExited) {
-            $progressState.InstallFinished = $true
-            $timer.Stop()
-            try { Remove-Item -Path $progressState.ConfigPath -Force -ErrorAction SilentlyContinue } catch {}
-
-            $Script:ProgressUi.ProgressBar.Style = "Blocks"
-            $Script:ProgressUi.ProgressBar.MarqueeAnimationSpeed = 0
-
-            if ($installProcess.ExitCode -eq 0) {
-                $Script:ProgressUi.ProgressBar.Value = 100
-                $Script:ProgressUi.StatusLabel.Text = "Installation completed successfully."
-                $Script:ProgressUi.OpenDashButton.Enabled = $true
-                $Script:ProgressUi.CloseButton.Text = "Finish"
-                $Script:ProgressUi.CloseButton.Enabled = $true
-                $summary = Get-InstallSummary -Config $Config
-                $Script:ProgressUi.LogBox.AppendText([Environment]::NewLine + $summary + [Environment]::NewLine)
+        switch ($choice) {
+            "1" {
+                Open-Dashboard -Config $Config
                 return
             }
-
-            $Script:ProgressUi.ProgressBar.Value = 100
-            $Script:ProgressUi.StatusLabel.Text = "Installation failed. Review the debug log for details."
-            $Script:ProgressUi.CloseButton.Enabled = $true
-            Show-Message -Text ("Installation failed with exit code {0}.`r`n`r`nDebug log:`r`n{1}" -f $installProcess.ExitCode, $Script:LogPath) -Icon Error
+            "2" { Open-DebugLog }
+            "3" { return }
+            default { Write-Warn "Choose 1, 2, or 3." }
         }
-    })
-
-    $form.Add_FormClosed({
-        $timer.Stop()
-        try { Remove-Item -Path $progressState.ConfigPath -Force -ErrorAction SilentlyContinue } catch {}
-    })
-
-    $form.Add_Shown({
-        try {
-            $Script:ProgressUi.StatusLabel.Text = "Installation is running. This can take several minutes."
-            $Script:ProgressUi.ProgressBar.Style = "Marquee"
-            $Script:ProgressUi.ProgressBar.MarqueeAnimationSpeed = 30
-
-            $powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
-            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $startInfo.FileName = $powershell
-            $startInfo.Arguments = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" -Silent -InstallConfigPath "{1}" -LogPathOverride "{2}"' -f $ScriptPath, $progressState.ConfigPath, $Script:LogPath)
-            $startInfo.UseShellExecute = $false
-            $startInfo.CreateNoWindow = $true
-            $progressState.Process = [System.Diagnostics.Process]::Start($startInfo)
-            $timer.Start()
-        } catch {
-            $Script:ProgressUi.ProgressBar.Style = "Blocks"
-            $Script:ProgressUi.ProgressBar.MarqueeAnimationSpeed = 0
-            $Script:ProgressUi.ProgressBar.Value = 100
-            $Script:ProgressUi.StatusLabel.Text = "Installation failed to start. Review the debug log for details."
-            $Script:ProgressUi.CloseButton.Enabled = $true
-            Write-InstallerLog -Level "ERROR" -Message ("Failed to start installer worker process: {0}" -f $_.Exception.Message)
-            Show-Message -Text ("Failed to start installer worker process.`r`n`r`n{0}" -f $_.Exception.Message) -Icon Error
-        }
-    })
-
-    [void]$form.ShowDialog()
-    if ($DebugMode) {
-        exit 0
     }
 }
 
@@ -1395,14 +791,8 @@ function Show-ProgressWindow {
 try {
     if ($Silent) {
         $Config = $Defaults.Clone()
-        if (-not [string]::IsNullOrWhiteSpace($InstallConfigPath)) {
-            $configObject = Get-Content -Path $InstallConfigPath -Raw | ConvertFrom-Json
-            foreach ($prop in $configObject.PSObject.Properties) {
-                $Config[$prop.Name] = $prop.Value
-            }
-        }
     } else {
-        $Config = Show-Wizard
+        $Config = Show-ConsoleWizard
         if (-not $Config) {
             exit 0
         }
@@ -1422,14 +812,15 @@ try {
     $Config.DBPath       = Join-Path $Config.InstallDir "watcher.db"
     $Config.RestartDelay = 5000
 
+    Invoke-Installation -Config $Config
+    Write-Info ""
+    Write-Info (Get-InstallSummary -Config $Config)
+
     if ($Silent) {
-        Invoke-Installation -Config $Config
-        Write-Info ""
-        Write-Info (Get-InstallSummary -Config $Config)
         exit 0
     }
 
-    Show-ProgressWindow -Config $Config
+    Show-CompletionMenu -Config $Config
 } catch {
     $message = $_.Exception.Message
     Write-InstallerLog -Level "ERROR" -Message $message

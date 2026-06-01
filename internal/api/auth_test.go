@@ -11,6 +11,39 @@ import (
 	"github.com/fanboykun/watcher/internal/database"
 )
 
+func TestAuthBootstrapShowsDefaultPasswordOnlyBeforeChange(t *testing.T) {
+	t.Parallel()
+
+	r := newTestAuthRouter(t)
+
+	initial := authRequest(r, http.MethodGet, "/api/auth/bootstrap", "", "")
+	if initial.Code != http.StatusOK {
+		t.Fatalf("initial bootstrap status = %d, want %d; body=%s", initial.Code, http.StatusOK, initial.Body.String())
+	}
+	if !strings.Contains(initial.Body.String(), `"using_default_password":true`) {
+		t.Fatalf("expected default flag in initial bootstrap, body=%s", initial.Body.String())
+	}
+	if !strings.Contains(initial.Body.String(), `"default_password":"watcher"`) {
+		t.Fatalf("expected default password in initial bootstrap, body=%s", initial.Body.String())
+	}
+
+	changed := authRequest(r, http.MethodPut, "/api/auth/password", `{"current_password":"watcher","new_password":"changed-password"}`, "watcher")
+	if changed.Code != http.StatusOK {
+		t.Fatalf("password change status = %d, want %d; body=%s", changed.Code, http.StatusOK, changed.Body.String())
+	}
+
+	after := authRequest(r, http.MethodGet, "/api/auth/bootstrap", "", "")
+	if after.Code != http.StatusOK {
+		t.Fatalf("after bootstrap status = %d, want %d; body=%s", after.Code, http.StatusOK, after.Body.String())
+	}
+	if strings.Contains(after.Body.String(), `"default_password"`) {
+		t.Fatalf("expected default password to be omitted after change, body=%s", after.Body.String())
+	}
+	if strings.Contains(after.Body.String(), `"using_default_password":true`) {
+		t.Fatalf("expected default flag to be false after change, body=%s", after.Body.String())
+	}
+}
+
 func TestAuthLoginSucceedsAndFails(t *testing.T) {
 	t.Parallel()
 

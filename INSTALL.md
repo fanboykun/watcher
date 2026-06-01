@@ -27,47 +27,40 @@ watcher-vX.Y.Z.zip
 
 ---
 
-## Run the Installer (GUI Wizard)
+## Run the Installer (Interactive CLI)
 
-The installation is driven by a clean, interactive Windows GUI that automatically requests Administrator privileges and handles execution policies.
+The recommended installer is an elevated interactive PowerShell flow launched by `install.bat`.
 
 1. Extract the release zip to your preferred directory (e.g., `C:\apps\watcher\`)
 2. Double-click **`install.bat`**
+3. Choose a preset and confirm the generated install summary
 
 Compatibility options:
 
-- `install-debug.bat` launches the installer in debug mode with visible PowerShell output
+- `install-debug.bat` launches the installer with `-NoExit` so the PowerShell window stays open after errors
 - `installer.exe` is optional/experimental and not the primary path for now
 
 > **Note:** If you prefer running it from an existing Administrator PowerShell prompt, you can use:
 > `Set-ExecutionPolicy Bypass -Scope Process -Force; .\shell\install-watcher.ps1`
 
-The GUI wizard now starts with grouped **Windows capabilities** plus quick preset buttons.
-
-Core capability groups:
-
-1. **Binary services**: Installs Chocolatey + NSSM
-2. **IIS hosting**: Enables IIS + management tools + URL Rewrite
-3. **Reverse proxy**: Installs ARR and enables IIS proxy support
-
 Quick presets:
 
-1. **Binary Services**
-2. **IIS Static**
-3. **Hybrid**
-4. **Full Stack**
+1. **Binary Services**: Chocolatey + NSSM for app binaries managed as Windows services
+2. **IIS Static**: IIS hosting + management tools + URL Rewrite
+3. **Hybrid**: Binary services + IIS hosting
+4. **Full Stack**: Binary services + IIS hosting + ARR reverse proxy
 
-Depending on the selected capabilities, the wizard will:
+Depending on the selected capabilities, the installer will:
 
-1. Install **Chocolatey** and **NSSM**
-2. Enable **IIS** Windows features, download and install **URL Rewrite** / **ARR**
+1. Install **Chocolatey** and **NSSM** when binary service support is selected
+2. Enable required **IIS** Windows features and install **URL Rewrite** / **ARR** when selected
 3. Create the `logs\` directory
 4. Generate a default **`.env`** config file (with restricted permissions)
 5. Verify outbound HTTPS to github.com
 6. Register the watcher agent as a Windows service (`app-watcher`)
 7. Start the service and verify the API is responding
 
-After installation, the dashboard will open automatically in your default browser at **http://localhost:8080** (or your chosen port).
+After installation, the completion menu lets you open the dashboard, open the debug log, or finish/close the installer.
 
 ---
 

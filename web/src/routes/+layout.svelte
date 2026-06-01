@@ -1,12 +1,11 @@
 <script lang="ts">
 	import './layout.css';
-	import favicon from '$lib/assets/favicon.svg';
 	import { page } from '$app/state';
-	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock, Settings, Github, LogOut, LockKeyhole, AlertCircle } from '@lucide/svelte';
+	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock, Settings, Github, LogOut, AlertCircle } from '@lucide/svelte';
 	import * as Button from '$lib/components/ui/button';
 	import Separator from '$lib/components/ui/separator/separator.svelte';
 	import { Input } from '$lib/components/ui/input';
-	import { resolve } from '$app/paths';
+	import { asset, resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { api, auth } from '$lib/api';
 
@@ -18,6 +17,7 @@
 	let loginPassword = $state('');
 	let authError = $state('');
 	let loggingIn = $state(false);
+	let defaultPassword = $state('');
 
 	const navItems = [
 		{ href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -32,17 +32,29 @@
 		validateStoredAuth();
 	});
 
+	async function loadAuthBootstrap() {
+		try {
+			const bootstrap = await api.authBootstrap();
+			defaultPassword = bootstrap.using_default_password ? (bootstrap.default_password ?? '') : '';
+		} catch {
+			defaultPassword = '';
+		}
+	}
+
 	async function validateStoredAuth() {
 		if (!auth.hasPassword()) {
+			await loadAuthBootstrap();
 			checkingAuth = false;
 			return;
 		}
 		try {
 			const status = await api.authStatus();
 			authenticated = status.authenticated;
+			defaultPassword = '';
 		} catch {
 			auth.clearPassword();
 			authenticated = false;
+			await loadAuthBootstrap();
 		} finally {
 			checkingAuth = false;
 		}
@@ -82,7 +94,10 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
+	<link rel="icon" href={asset('/watcher.ico')} sizes="any" />
+	<link rel="icon" href={asset('/watcher.svg')} type="image/svg+xml" />
+	<link rel="apple-touch-icon" href={asset('/watcher.png')} />
+	<meta name="theme-color" content="#09090b" />
 	<title>Watcher Agent</title>
 </svelte:head>
 
@@ -94,9 +109,7 @@
 	<div class="dark flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
 		<form class="w-full max-w-sm space-y-5 rounded-lg border border-border bg-card p-6 shadow-sm" onsubmit={(e) => { e.preventDefault(); login(); }}>
 			<div class="space-y-2 text-center">
-				<div class="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-					<LockKeyhole class="h-5 w-5" />
-				</div>
+				<img src={asset('/watcher.svg')} alt="Watcher" class="mx-auto h-12 w-12 rounded-lg bg-primary p-2 invert" />
 				<h1 class="text-lg font-semibold">Watcher</h1>
 				<p class="text-sm text-muted-foreground">Enter the dashboard password</p>
 			</div>
@@ -111,6 +124,9 @@
 			<div class="space-y-2">
 				<label class="text-sm text-muted-foreground" for="watcher-password">Password</label>
 				<Input id="watcher-password" type="password" bind:value={loginPassword} autocomplete="current-password" autofocus />
+				{#if defaultPassword}
+					<p class="text-xs text-muted-foreground">Default password: <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{defaultPassword}</code></p>
+				{/if}
 			</div>
 
 			<Button.Root type="submit" class="w-full" disabled={loggingIn}>
@@ -127,11 +143,7 @@
 				: '-translate-x-full'}"
 		>
 			<div class="flex h-16 items-center gap-3 border-b border-border px-6">
-				<div
-					class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-				>
-					<Eye class="h-4 w-4" />
-				</div>
+				<img src={asset('/watcher.svg')} alt="Watcher" class="h-8 w-8 rounded-lg bg-primary p-1.5 invert" />
 				<div>
 					<h1 class="text-sm font-semibold">Watcher</h1>
 					<p class="text-[11px] text-muted-foreground">Deploy Agent</p>

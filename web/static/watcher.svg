@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <g fill="none" stroke="#000" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M304 360 C252 362, 213 375, 183 408" />
+    <path d="M183 408 L391 736" />
+    <path d="M391 736 C403 755, 425 763, 454 763" />
+    <path d="M454 763 L629 763" />
+    <path d="M629 763 C662 763, 682 751, 694 724" />
+    <path d="M694 724 L840 409" />
+    <path d="M840 409 C810 376, 772 363, 716 360" />
+    <path d="M716 360 H622" />
+    <path d="M304 360 H449" />
+    <path d="M183 408 C236 436, 322 447, 422 449" />
+    <path d="M602 449 C703 447, 787 436, 840 409" />
+    <path d="M161 495 C123 458, 76 449, 63 503" />
+    <path d="M63 503 C43 584, 121 654, 217 707" />
+    <path d="M217 707 C281 743, 346 769, 393 784" />
+    <path d="M170 511 C127 507, 113 551, 140 596" />
+    <path d="M140 596 C181 663, 268 717, 357 755" />
+    <ellipse cx="536" cy="826" rx="164" ry="59" />
+  </g>
+  <path d="M512 178 h96 v174 h88 l-184 180 -184 -180 h92 z" fill="#000" stroke="#000" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M427 449 L512 530 L598 449" fill="none" stroke="#000" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

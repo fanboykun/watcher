@@ -1,7 +1,12 @@
 # Watcher Agent
 
+<p align="center">
+  <img src="web/static/watcher.png" alt="Watcher" width="120" height="120">
+</p>
+
 [![Go Version](https://img.shields.io/badge/go-1.25+-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Total downloads](https://img.shields.io/github/downloads/fanboykun/watcher/total?label=downloads)](https://github.com/fanboykun/watcher/releases)
 
 Watcher is a pull-based deployment agent for Windows machines.
 
@@ -11,6 +16,16 @@ It runs as a single binary (`watcher.exe`) that hosts:
 - an embedded Svelte dashboard
 
 The agent polls GitHub releases, deploys new artifacts, manages services, performs health checks, and records state/history in SQLite.
+
+[![Download Watcher](https://img.shields.io/badge/Download-Watcher-2ea44f?style=for-the-badge&logo=github)](https://github.com/fanboykun/watcher/releases/latest/download/watcher-latest.zip)
+
+---
+
+## Install
+
+Download the latest release zip, extract it on the Windows host, then run `install.bat` to start the interactive installer.
+
+Full installation guide: [INSTALL.md](INSTALL.md)
 
 ---
 

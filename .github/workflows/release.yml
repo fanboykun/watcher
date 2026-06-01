@@ -252,15 +252,16 @@ jobs:
       # ── Assemble release package ────────────────────────────────────────────
       # The zip contains everything the user needs to bootstrap a server:
       #   watcher.exe             -- the agent binary (SPA embedded)
-      #   install.bat             -- double-click to launch the GUI wizard
+      #   install.bat             -- double-click to launch the interactive CLI installer
       #   shell/
-      #     install-watcher.ps1   -- wizard + automated install script
+      #     install-watcher.ps1   -- interactive + automated install script
       #   .env.example            -- example config (copy to .env and edit)
       #   INSTALL.md              -- step-by-step install guide
       - name: Assemble release package
         id: zip
         run: |
           ZIP_NAME="${{ env.APP_NAME }}-${{ needs.tag.outputs.new_tag }}.zip"
+          LATEST_ZIP_NAME="${{ env.APP_NAME }}-latest.zip"
           STAGING="staging"
 
           mkdir -p "$STAGING/shell"
@@ -272,8 +273,10 @@ jobs:
           cp INSTALL.md                     "$STAGING/"
 
           cd "$STAGING" && zip -r "../${ZIP_NAME}" . && cd ..
+          cp "${ZIP_NAME}" "${LATEST_ZIP_NAME}"
 
           echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
+          echo "latest_zip_name=${LATEST_ZIP_NAME}" >> $GITHUB_OUTPUT
           echo "Release package contents:"
           unzip -l "${ZIP_NAME}"
 
@@ -317,11 +320,12 @@ jobs:
 
             1. Download `${{ steps.zip.outputs.zip_name }}`
             2. Extract to `D:\apps\watcher\` on your Windows server
-            3. Double-click `install.bat` to launch the setup wizard
+            3. Double-click `install.bat` to launch the interactive CLI installer
 
             See `INSTALL.md` inside the zip for the full guide.
           files: |
             ${{ steps.zip.outputs.zip_name }}
+            ${{ steps.zip.outputs.latest_zip_name }}
             version.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -332,7 +336,9 @@ jobs:
           REPO="${{ github.repository }}"
           VERSION="${{ needs.tag.outputs.new_tag }}"
           ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
+          LATEST_ZIP_NAME="${{ steps.zip.outputs.latest_zip_name }}"
           echo ""
           echo "Released: $VERSION (${{ needs.tag.outputs.bump_type }} bump)"
           echo "Download: https://github.com/${REPO}/releases/download/${VERSION}/${ZIP_NAME}"
+          echo "Latest alias: https://github.com/${REPO}/releases/latest/download/${LATEST_ZIP_NAME}"
           echo ""
