@@ -137,10 +137,32 @@ export interface AuthBootstrapResponse {
 	default_password?: string;
 }
 
+export interface InspectServiceTarget {
+	name: string;
+	version: string;
+	artifact: string;
+	artifact_url: string;
+	published_at: string;
+	app_kind: 'nssm' | 'static' | 'php' | 'aspnet_classic' | string;
+	windows_service_name: string;
+	binary_name: string;
+	start_arguments: string;
+	env_file: string;
+	health_check_url: string;
+	iis_app_pool: string;
+	iis_site_name: string;
+	iis_managed_runtime: string;
+	public_url: string;
+}
+
 export interface InspectRepoResponse {
+	source: 'manifest' | 'repo_assets' | string;
+	repo_url: string;
+	metadata_url: string;
 	latest_version: string;
 	published_at: string;
 	assets: string[];
+	services: Record<string, InspectServiceTarget>;
 }
 
 export interface Watcher {
@@ -421,10 +443,10 @@ export const api = {
 	deleteService: (watcherId: number, serviceId: number) => request<{ message: string }>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'DELETE' }),
 
 	// GitHub Integration
-	inspectRepo: (repoUrl: string, githubToken = '') =>
+	inspectRepo: (repoUrl: string, releaseRef = 'latest', githubToken = '') =>
 		request<InspectRepoResponse>('/github/inspect', {
 			method: 'POST',
-			body: JSON.stringify({ repo_url: repoUrl, github_token: githubToken })
+			body: JSON.stringify({ repo_url: repoUrl, release_ref: releaseRef, github_token: githubToken })
 		}),
 
 	// Agent Self-Management

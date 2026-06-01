@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -385,10 +386,16 @@ func TestEnsureServiceByType_IISUpdatesExistingSiteWithoutPublicURL(t *testing.T
 		}
 		calls = append(calls, call)
 		switch strings.Join(args, " ") {
+		case "list apppool frontend":
+			return []byte("APPPOOL \"frontend\""), nil
+		case "set apppool frontend /managedRuntimeVersion:":
+			return []byte("APPPOOL object changed"), nil
 		case "list site my-site":
 			return []byte("SITE \"my-site\""), nil
 		case "set vdir my-site/ /physicalPath:C:/apps/current":
 			return []byte("VDIR object changed"), nil
+		case "set app my-site/ /applicationPool:frontend":
+			return []byte("APP object changed"), nil
 		default:
 			t.Fatalf("unexpected command: %s", strings.Join(args, " "))
 			return nil, nil
@@ -407,8 +414,11 @@ func TestEnsureServiceByType_IISUpdatesExistingSiteWithoutPublicURL(t *testing.T
 	}
 
 	want := []string{
+		appcmdPath() + " list apppool frontend",
+		appcmdPath() + " set apppool frontend /managedRuntimeVersion:",
 		appcmdPath() + " list site my-site",
 		appcmdPath() + " set vdir my-site/ /physicalPath:C:/apps/current",
+		appcmdPath() + " set app my-site/ /applicationPool:frontend",
 	}
 	if len(calls) != len(want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
@@ -416,6 +426,45 @@ func TestEnsureServiceByType_IISUpdatesExistingSiteWithoutPublicURL(t *testing.T
 	for i := range want {
 		if calls[i] != want[i] {
 			t.Fatalf("call[%d] = %q, want %q", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestEnsureIISServiceDefaultsAppPoolAndSiteFromServiceName(t *testing.T) {
+	oldRunCommand := runCommand
+	defer func() { runCommand = oldRunCommand }()
+
+	var calls []string
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		if len(args) >= 3 && args[0] == "list" && (args[1] == "apppool" || args[1] == "site") {
+			return []byte("object was not found"), errors.New("missing")
+		}
+		return []byte("ok"), nil
+	}
+
+	d := NewDeployer(&WatcherConfig{InstallDir: t.TempDir()}, "nssm.exe", newTestLogger(), func(string) {})
+	svc := ServiceConfig{
+		ServiceType:        "iis",
+		WindowsServiceName: "admin-fe",
+		IISAppKind:         "static",
+		PublicURL:          "http://admin.example.test",
+	}
+
+	if err := d.ensureIISService(svc, filepath.Join(t.TempDir(), "current")); err != nil {
+		t.Fatalf("ensureIISService returned error: %v", err)
+	}
+
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"add apppool /name:admin-fe",
+		"set apppool admin-fe /managedRuntimeVersion:",
+		"add site /name:admin-fe /bindings:http/*:80:admin.example.test",
+		"set app admin-fe/ /applicationPool:admin-fe",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected command containing %q, got calls:\n%s", want, joined)
 		}
 	}
 }

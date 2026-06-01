@@ -1,22 +1,13 @@
-name: Release SvelteKit Static Site
+name: Release Go Monorepo Service
 
-# Watcher-ready release template for a single SvelteKit static site.
-# Produces a static zip plus version.json for Watcher service_type=static.
+# Watcher-ready release template for one Go service inside a monorepo.
+# Copy this workflow per service and edit SERVICE_NAME, SERVICE_TITLE, and SERVICE_DIR.
 
 on:
   push:
     branches: [main, master]
     paths:
-      - "src/**"
-      - "static/**"
-      - "package.json"
-      - "bun.lock"
-      - "components.json"
-      - "svelte.config.js"
-      - "vite.config.js"
-      - "vite.config.ts"
-      - "tsconfig.json"
-      - ".github/workflows/release.yml"
+      - "services/example/**"
   workflow_dispatch:
     inputs:
       force_bump:
@@ -29,26 +20,26 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: release-${{ github.repository }}-${{ github.ref }}-${{ github.workflow }}
+  group: release-${{ github.repository }}-go-monorepo-service
   cancel-in-progress: false
 
 env:
-  APP_NAME: admin-fe
-  APP_DISPLAY_NAME: Admin Frontend
-  BUN_VERSION: latest
-  BUILD_DIR: build
-  APP_KIND: static
-  IIS_APP_POOL: admin-fe
-  IIS_SITE_NAME: admin-fe
-  IIS_MANAGED_RUNTIME: ""
-  PUBLIC_URL: https://admin.example.com
-  HEALTH_CHECK_URL: https://admin.example.com/health
+  SERVICE_NAME: example
+  SERVICE_TITLE: Example Service
+  SERVICE_DIR: services/example
+  GO_VERSION: "1.25.6"
+  BINARY_NAME: web.exe
+  ENTRY: ./cmd/web
+  WINDOWS_SERVICE_NAME: example
+  START_ARGUMENTS: ""
+  ENV_FILE: .env
+  HEALTH_CHECK_URL: http://localhost:8080/health
 
 jobs:
   release:
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    name: Release ${{ env.APP_DISPLAY_NAME }}
+    name: Release ${{ env.SERVICE_TITLE }}
 
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +51,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Determine version bump and tag
+      - name: Determine service version bump and tag
         id: semver
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,16 +63,17 @@ jobs:
 
           git fetch --tags --force origin "+refs/tags/*:refs/tags/*" >/dev/null 2>&1 || true
 
-          LATEST_TAG="$(git tag --list "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 1 || true)"
+          TAG_PREFIX="${SERVICE_NAME}/"
+          LATEST_TAG="$(git tag --list "${TAG_PREFIX}v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 1 || true)"
           if [ -z "$LATEST_TAG" ]; then
             LATEST_VER="v0.0.0"
           else
-            LATEST_VER="$LATEST_TAG"
+            LATEST_VER="${LATEST_TAG#${TAG_PREFIX}}"
           fi
 
           echo "----- Tag lookup -----"
           echo "Top 5 tags by semver:"
-          git tag --list "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 5 | sed 's/^/  /' || true
+          git tag --list "${TAG_PREFIX}v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 5 | sed 's/^/  /' || true
           echo "Selected latest tag : ${LATEST_TAG:-<none>}"
           echo "Working from version: ${LATEST_VER}"
           echo "----------------------"
@@ -167,7 +159,7 @@ jobs:
           esac
 
           NEW_VER="v${MAJOR}.${MINOR}.${PATCH}"
-          NEW_TAG="${NEW_VER}"
+          NEW_TAG="${TAG_PREFIX}${NEW_VER}"
 
           echo "Bump type : $BUMP"
           echo "Old tag   : ${LATEST_TAG:-<none>}"
@@ -208,32 +200,37 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
 
-      - uses: oven-sh/setup-bun@v1
+      - uses: actions/setup-go@v5
         if: steps.semver.outputs.should_release == 'true'
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: Install dependencies
-        if: steps.semver.outputs.should_release == 'true'
-        run: bun install --frozen-lockfile
-
-      - name: Build SvelteKit static site
+      - name: Build Windows amd64 service binary
         if: steps.semver.outputs.should_release == 'true'
         run: |
           set -euo pipefail
-          bun --bun run build
+          mkdir -p dist
+          cd "${{ env.SERVICE_DIR }}"
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -ldflags="-X main.Version=${{ steps.semver.outputs.new_ver }}" \
+            -o "../../dist/${{ env.BINARY_NAME }}" \
+            "${{ env.ENTRY }}"
+          cd ../..
+          if [ -f "${{ env.SERVICE_DIR }}/.env.example" ]; then
+            cp "${{ env.SERVICE_DIR }}/.env.example" dist/.env.example
+          fi
           echo "===== BUILD OUTPUT CHECK ====="
-          ls -lah "${{ env.BUILD_DIR }}"
-          echo "===== BUNDLE SIZE CHECK ====="
-          du -sh "${{ env.BUILD_DIR }}"
+          ls -lah dist
+          echo "===== BUNDLE INPUT SIZE CHECK ====="
+          du -sh dist
 
       - name: Package release zip
         id: zip
         if: steps.semver.outputs.should_release == 'true'
         run: |
           set -euo pipefail
-          ZIP_NAME="${{ env.APP_NAME }}-${{ steps.semver.outputs.new_ver }}.zip"
-          cd "${{ env.BUILD_DIR }}" && zip -r "../${ZIP_NAME}" . && cd ..
+          ZIP_NAME="${{ env.SERVICE_NAME }}-${{ steps.semver.outputs.new_ver }}-windows-amd64.zip"
+          cd dist && zip -r "../${ZIP_NAME}" . && cd ..
           BUNDLE_SIZE="$(du -h "${ZIP_NAME}" | cut -f1)"
           echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
           echo "bundle_size=${BUNDLE_SIZE}" >> "$GITHUB_OUTPUT"
@@ -252,17 +249,16 @@ jobs:
           cat > version.json <<JSON
           {
             "services": {
-              "${{ env.APP_NAME }}": {
-                "version": "${VERSION}",
+              "${{ env.SERVICE_NAME }}": {
+                "version": "${TAG}",
                 "artifact": "${ZIP_NAME}",
                 "artifact_url": "${ARTIFACT_URL}",
                 "published_at": "${PUBLISHED_AT}",
-                "app_kind": "${{ env.APP_KIND }}",
-                "windows_service_name": "${{ env.IIS_SITE_NAME }}",
-                "iis_app_pool": "${{ env.IIS_APP_POOL }}",
-                "iis_site_name": "${{ env.IIS_SITE_NAME }}",
-                "iis_managed_runtime": "${{ env.IIS_MANAGED_RUNTIME }}",
-                "public_url": "${{ env.PUBLIC_URL }}",
+                "app_kind": "nssm",
+                "windows_service_name": "${{ env.WINDOWS_SERVICE_NAME }}",
+                "binary_name": "${{ env.BINARY_NAME }}",
+                "start_arguments": "${{ env.START_ARGUMENTS }}",
+                "env_file": "${{ env.ENV_FILE }}",
                 "health_check_url": "${{ env.HEALTH_CHECK_URL }}"
               }
             }
@@ -328,7 +324,7 @@ jobs:
             echo ""
             echo "| Field | Value |"
             echo "|-------|-------|"
-            echo "| App | \`${APP_NAME}\` |"
+            echo "| App | \`${SERVICE_NAME}\` |"
             echo "| Version | \`${NEW_VER}\` |"
             echo "| Tag | \`${NEW_TAG}\` |"
             echo "| Bump type | \`${BUMP_TYPE}\` |"
@@ -339,7 +335,7 @@ jobs:
             echo ""
             echo "| File | Link |"
             echo "|------|------|"
-            echo "| Static site zip | [\`${ZIP_NAME}\`](${ARTIFACT_URL}) |"
+            echo "| Windows amd64 zip | [\`${ZIP_NAME}\`](${ARTIFACT_URL}) |"
             echo "| Watcher metadata | [\`version.json\`](${VERSION_JSON_URL}) |"
             echo ""
             echo "## Watcher Integration"
@@ -366,7 +362,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.semver.outputs.new_tag }}
-          name: "${{ env.APP_DISPLAY_NAME }} ${{ steps.semver.outputs.new_ver }} (${{ steps.semver.outputs.bump_type }})"
+          name: "${{ env.SERVICE_TITLE }} ${{ steps.semver.outputs.new_ver }} (${{ steps.semver.outputs.bump_type }})"
           body_path: RELEASE_BODY.md
           files: |
             ${{ steps.zip.outputs.zip_name }}
@@ -381,7 +377,7 @@ jobs:
           VERSION="${{ steps.semver.outputs.new_ver }}"
           ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
           echo "========================================"
-          echo "Released: ${{ env.APP_DISPLAY_NAME }} $VERSION (${{ steps.semver.outputs.bump_type }} bump)"
+          echo "Released: ${{ env.SERVICE_TITLE }} $VERSION (${{ steps.semver.outputs.bump_type }} bump)"
           echo "Metadata URL: https://github.com/${REPO}/releases/download/${TAG}/version.json"
           echo "Repository URL: https://github.com/${REPO}"
           echo "Direct artifact URL: https://github.com/${REPO}/releases/download/${TAG}/${ZIP_NAME}"

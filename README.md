@@ -81,31 +81,78 @@ Each watcher loop:
 
 ## Metadata Sources
 
+Watcher prefers a `version.json` manifest. Repo asset discovery still exists as a legacy/manual fallback, but new org release workflows should publish `version.json` for every Watcher-managed release.
+
 `metadata_url` accepts either:
-- a release `version.json` URL (classic flow), or
-- a repo URL like `https://github.com/<owner>/<repo>` (native repo mode)
+
+- a direct release manifest URL such as `https://github.com/<owner>/<repo>/releases/latest/download/version.json`, or
+- a repo URL such as `https://github.com/<owner>/<repo>`. During watcher creation, the UI tries to find `version.json` for the selected release ref first.
+
+Detailed manifest reference: [docs/version-json.md](docs/version-json.md).
+
+### Consumer release requirements
+
+Watcher only picks up a consumer repository release when the app repository follows these rules:
+
+- Publish a GitHub Release, not only a tag. Draft releases are ignored by GitHub's latest-release API.
+- Upload the deployable zip as a release asset.
+- Upload `version.json` as a release asset for every Watcher-managed release. This is the hard org contract.
+- Keep `version.json.services["<service_name>"]` exactly equal to the Watcher `service_name`.
+- Set `version` to the exact version Watcher should compare. For monorepos, prefer the full service tag such as `services/prs/v1.2.3`.
+- Set `artifact` to the exact release asset filename.
+- Set `artifact_url` to the exact GitHub release download URL for that asset. Slash tags such as `services/prs/v1.2.3` are supported.
+- Set deployment hints (`app_kind`, `binary_name`, IIS fields, health URL) so the create wizard can build the right service config without guessing.
+- Package the zip so Watcher can use it immediately after extraction:
+  - `nssm`: the configured `binary_name` must exist at the zip root.
+  - `static` / `php` / `aspnet_classic`: the site/app files must exist at the zip root.
+- For monorepos, publish a manifest index release, usually tag `latest`, that points each service to its service-scoped release asset.
+- Do not publish two service releases concurrently from the same repo; serialize release workflows with GitHub Actions `concurrency`.
 
 ### `version.json` shape
 
 ```json
 {
   "services": {
-    "<service_name>": {
+    "my-app": {
       "version": "v1.2.3",
       "artifact": "my-app-v1.2.3.zip",
       "artifact_url": "https://github.com/<owner>/<repo>/releases/download/v1.2.3/my-app-v1.2.3.zip",
-      "published_at": "2024-01-15T10:00:00Z"
+      "published_at": "2026-06-01T04:19:05Z",
+      "app_kind": "nssm",
+      "windows_service_name": "my-app",
+      "binary_name": "my-app.exe",
+      "start_arguments": "",
+      "env_file": ".env",
+      "health_check_url": "http://localhost:8080/health"
     }
   }
 }
 ```
 
+### Supported manifest properties
+
+| Property | Required | Applies to | Meaning |
+| --- | --- | --- | --- |
+| `version` | yes | all | Version stored in Watcher state and compared on each poll. |
+| `artifact` | yes | all | Exact release asset filename. |
+| `artifact_url` | yes | all | GitHub release download URL for the deployable artifact. |
+| `published_at` | recommended | all | UTC timestamp for display and diagnostics. |
+| `app_kind` | recommended | all | `nssm`, `static`, `php`, or `aspnet_classic`. |
+| `windows_service_name` | recommended | all | NSSM service name or IIS service identifier/default name. |
+| `binary_name` | required for `nssm` | `nssm` | Executable filename expected after extraction. |
+| `start_arguments` | optional | `nssm` | Arguments passed to the NSSM application. |
+| `env_file` | optional | `nssm` | Relative env file path for managed env content. |
+| `health_check_url` | optional | all | Service-level health check URL. |
+| `iis_app_pool` | recommended | `static`, `php`, `aspnet_classic` | IIS app pool name. |
+| `iis_site_name` | recommended | `static`, `php`, `aspnet_classic` | IIS site name. |
+| `iis_managed_runtime` | optional | `aspnet_classic` | IIS runtime such as `v4.0`; leave empty for static/PHP. |
+| `public_url` | optional | IIS-hosted apps | URL displayed in the UI and useful for health checks. |
+
 ### Artifact expectations
 
-- Zip artifacts should contain deploy binaries/content.
+- Zip artifacts should contain deploy binaries/content at the root.
 - For `nssm` services, `binary_name` must exist after extraction under `current/`.
-
----
+- For IIS-hosted services, site files should exist directly under `current/`.
 
 ## API Summary
 
@@ -279,11 +326,16 @@ make clean
 - `.github/workflows/release.yml`
   - releases the watcher itself
 - `workflows/release-go-nssm.yml`
-  - template for Go/NSSM app repos watched by watcher
+  - Watcher-ready release template for a single Go repository with one or more Windows/NSSM binaries
+  - emits a flat Windows amd64 zip and `version.json`
 - `workflows/release-bun-iis.yml`
-  - template for static/Bun app repos watched by watcher
+  - Watcher-ready release template for a SvelteKit static site served as a static/IIS target
+  - emits a static build zip and `version.json`
+- `workflows/release-go-monorepo.yml`
+  - Watcher-ready release template for one Go service inside a mono repo
+  - uses service-scoped tags such as `<service>/v1.2.3` and service-only path triggers
 - `workflows/deploy.yml`
-  - additional deployment workflow template
+  - legacy direct deployment workflow template
 
 ---
 

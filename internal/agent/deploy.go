@@ -459,9 +459,10 @@ func appcmdPath() string {
 }
 
 func (d *Deployer) ensureIISService(svc ServiceConfig, currentDir string) error {
+	svc = withDefaultIISTargets(svc)
+
 	if strings.TrimSpace(svc.IISSiteName) == "" && strings.TrimSpace(svc.IISAppPool) == "" {
-		d.l("iis service -- no IIS registration configured", "name", svc.WindowsServiceName, "kind", svc.IISAppKind)
-		return nil
+		return fmt.Errorf("iis service %s requires windows_service_name, iis_app_pool, or iis_site_name", svc.WindowsServiceName)
 	}
 
 	runtime := resolvedIISManagedRuntime(svc)
@@ -478,6 +479,17 @@ func (d *Deployer) ensureIISService(svc ServiceConfig, currentDir string) error 
 		}
 	}
 	return nil
+}
+
+func withDefaultIISTargets(svc ServiceConfig) ServiceConfig {
+	defaultName := strings.TrimSpace(svc.WindowsServiceName)
+	if strings.TrimSpace(svc.IISAppPool) == "" {
+		svc.IISAppPool = defaultName
+	}
+	if strings.TrimSpace(svc.IISSiteName) == "" {
+		svc.IISSiteName = defaultName
+	}
+	return svc
 }
 
 func resolvedIISManagedRuntime(svc ServiceConfig) string {

@@ -7,6 +7,7 @@
 		serviceTypeLabel,
 		type IISAppKind,
 		type InspectRepoResponse,
+		type InspectServiceTarget,
 		type Service,
 		type Watcher
 	} from '$lib/api';
@@ -35,6 +36,7 @@
 
 	let createStep = $state(1);
 	let inspectResult = $state<InspectRepoResponse | null>(null);
+	let selectedInspectService = $state('');
 
 	// Create form fields
 	let formName = $state('');
@@ -67,6 +69,72 @@
 		}
 	}
 
+	function inspectServices(): InspectServiceTarget[] {
+		return Object.values(inspectResult?.services || {});
+	}
+
+	function repoNameFromURL(raw: string) {
+		const cleaned = raw.split('/releases')[0].replace(/\/$/, '');
+		const parts = cleaned.split('/');
+		return parts[parts.length - 1] || 'my-app';
+	}
+
+	function serviceTypeFromAppKind(appKind: string | undefined) {
+		switch ((appKind || 'nssm').toLowerCase()) {
+			case 'static':
+			case 'php':
+			case 'aspnet_classic':
+				return 'iis';
+			default:
+				return 'nssm';
+		}
+	}
+
+	function iisKindFromAppKind(appKind: string | undefined): IISAppKind {
+		switch ((appKind || 'static').toLowerCase()) {
+			case 'php':
+				return 'php';
+			case 'aspnet_classic':
+				return 'aspnet_classic';
+			default:
+				return 'static';
+		}
+	}
+
+	function selectInspectTarget(name: string) {
+		const target = inspectResult?.services?.[name];
+		if (!target) return;
+
+		selectedInspectService = name;
+		formServiceName = name;
+		formName = target.windows_service_name || name;
+		formInstallDir = `C:\\apps\\${name}`;
+		if (inspectResult?.source === 'manifest' && inspectResult.metadata_url) {
+			formMetadataURL = inspectResult.metadata_url;
+		}
+		if (target.health_check_url) {
+			formHcURL = target.health_check_url;
+			formHcEnabled = true;
+		}
+
+		const serviceType = serviceTypeFromAppKind(target.app_kind);
+		formServices = [{
+			service_type: serviceType,
+			windows_service_name: target.windows_service_name || name,
+			binary_name: serviceType === 'nssm' ? (target.binary_name || `${name}.exe`) : '',
+			start_arguments: target.start_arguments || '',
+			env_file: serviceType === 'nssm' ? (target.env_file || '.env') : '',
+			env_content: '',
+			iis_app_kind: iisKindFromAppKind(target.app_kind),
+			iis_app_pool: target.iis_app_pool || target.windows_service_name || name,
+			iis_site_name: target.iis_site_name || target.windows_service_name || name,
+			iis_managed_runtime: target.iis_managed_runtime || '',
+			public_url: target.public_url || '',
+			config_files: [],
+			health_check_url: target.health_check_url || formHcURL,
+		}];
+	}
+
 	async function inspectRepo() {
 		if (!formMetadataURL) return;
 		if (useCustomGitHubToken && !formGitHubToken.trim()) {
@@ -76,17 +144,23 @@
 		inspecting = true;
 		error = '';
 		try {
-			// Trim to proper repo URL if accidentally copied trailing parts
-			let cleaned = formMetadataURL.split('/releases')[0];
+			const inputURL = formMetadataURL.trim();
+			const releaseRef = formReleaseRef.trim() || 'latest';
 			const token = useCustomGitHubToken ? formGitHubToken.trim() : '';
-			inspectResult = await api.inspectRepo(cleaned, token);
-			formMetadataURL = cleaned;
-			
-			const parts = cleaned.split('/');
-			const repoName = parts[parts.length - 1] || 'my-app';
+			inspectResult = await api.inspectRepo(inputURL, releaseRef, token);
+			formMetadataURL = inspectResult.source === 'manifest' && inspectResult.metadata_url ? inspectResult.metadata_url : (inspectResult.repo_url || inputURL);
+
+			const repoName = repoNameFromURL(inspectResult.repo_url || inputURL);
 			formName = repoName;
 			formServiceName = repoName;
 			formInstallDir = `C:\\apps\\${repoName}`;
+			selectedInspectService = '';
+			formServices = [];
+
+			const services = inspectServices();
+			if (services.length === 1) {
+				selectInspectTarget(services[0].name);
+			}
 			
 			createStep = 2;
 		} catch (e) {
@@ -97,6 +171,11 @@
 	}
 
 	function jumpToNext() {
+		if (inspectServices().length > 0 && !selectedInspectService) {
+			error = 'Choose one deploy target before continuing.';
+			return;
+		}
+		error = '';
 		createStep = 3;
 		if (formServices.length === 0) {
 			formServices = [{
@@ -170,6 +249,7 @@
 		useCustomGitHubToken = false;
 		formServices = [];
 		inspectResult = null;
+		selectedInspectService = '';
 		error = '';
 	}
 
@@ -405,14 +485,20 @@
 
 				{#if createStep === 1}
 					<div class="space-y-4">
-						<div class="space-y-3">
-							<Label for="metadataURL">GitHub Repository URL</Label>
-							<Input
-								id="metadataURL"
-								placeholder="https://github.com/org/repo"
-								bind:value={formMetadataURL}
-								required
-							/>
+						<div class="grid gap-4 sm:grid-cols-[1fr_180px]">
+							<div class="space-y-3">
+								<Label for="metadataURL">GitHub Repository or version.json URL</Label>
+								<Input
+									id="metadataURL"
+									placeholder="https://github.com/org/repo"
+									bind:value={formMetadataURL}
+									required
+								/>
+							</div>
+							<div class="space-y-3">
+								<Label for="releaseRefInitial">Release Ref</Label>
+								<Input id="releaseRefInitial" placeholder="latest" bind:value={formReleaseRef} />
+							</div>
 						</div>
 						<div class="space-y-2 rounded-md border border-border bg-muted/20 p-3">
 							<label class="inline-flex items-center gap-2 text-sm">
@@ -442,8 +528,7 @@
 							</div>
 						</div>
 						<p class="text-xs text-muted-foreground">
-							Supported: Public & Private Repositories (if token configured).
-							We will fetch the latest release and find the corresponding assets.
+							Manifest-first setup: Watcher will try <code>version.json</code> for the selected ref and use repo asset discovery only as a legacy fallback.
 						</p>
 					</div>
 				{:else if createStep === 2}
@@ -455,6 +540,48 @@
 							<div class="text-muted-foreground">
 								{inspectResult?.assets?.length || 0} assets attached
 							</div>
+						</div>
+
+						<div class="space-y-3 rounded border border-border/70 bg-muted/20 p-3">
+							<div class="flex items-center justify-between gap-3 text-sm">
+								<div>
+									<p class="font-medium">Deploy Target</p>
+									<p class="text-xs text-muted-foreground">
+										{inspectResult?.source === 'manifest' ? 'Loaded from version.json. Choose one service for this watcher.' : 'Legacy repo asset discovery. Review generated fields before saving.'}
+									</p>
+								</div>
+								<span class="rounded border border-border px-2 py-1 text-xs text-muted-foreground">
+									{inspectResult?.source === 'manifest' ? 'version.json' : 'repo assets'}
+								</span>
+							</div>
+
+							{#if inspectServices().length > 0}
+								<div class="grid gap-2 sm:grid-cols-2">
+									{#each inspectServices() as target (target.name)}
+										<button
+											type="button"
+											class={`rounded border p-3 text-left text-sm transition ${selectedInspectService === target.name ? 'border-primary bg-primary/10' : 'border-border bg-background/70 hover:bg-muted/40'}`}
+											onclick={() => selectInspectTarget(target.name)}
+										>
+											<div class="flex items-start justify-between gap-2">
+												<span class="font-medium">{target.name}</span>
+												<span class="text-xs text-muted-foreground">{target.version}</span>
+											</div>
+											<p class="mt-1 truncate font-mono text-xs text-muted-foreground">{target.artifact}</p>
+											<p class="mt-2 text-xs text-muted-foreground">
+												{serviceTypeLabel(serviceTypeFromAppKind(target.app_kind))}
+												{#if serviceTypeFromAppKind(target.app_kind) === 'nssm'}
+													- {target.binary_name || `${target.name}.exe`}
+												{:else}
+													- {iisAppKindLabel(target.app_kind || 'static')}
+												{/if}
+											</p>
+										</button>
+									{/each}
+								</div>
+							{:else}
+								<p class="text-sm text-muted-foreground">No deployable targets were detected.</p>
+							{/if}
 						</div>
 
 						<div class="grid gap-4 sm:grid-cols-2">
@@ -584,7 +711,7 @@
 										</div>
 										<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-[11px] text-muted-foreground sm:col-span-2">
 											<span class="font-medium text-foreground/90">{serviceTypeLabel(svc.service_type || 'nssm')}:</span>
-											{' '}{iisAppKindLabel(String(svc.iis_app_kind || 'static'))}. Watcher will set the IIS app pool runtime automatically for this profile.
+											{iisAppKindLabel(String(svc.iis_app_kind || 'static'))}. Watcher will set the IIS app pool runtime automatically for this profile.
 										</div>
 									{/if}
 									<div class="space-y-2 sm:col-span-2">

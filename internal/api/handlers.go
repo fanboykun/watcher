@@ -105,6 +105,12 @@ func validateServicePayload(svc *database.Service) error {
 		if svc.IISAppKind != "static" && svc.IISAppKind != "php" && svc.IISAppKind != "aspnet_classic" {
 			return fmt.Errorf("iis_app_kind must be one of: static, php, aspnet_classic")
 		}
+		if svc.IISAppPool == "" {
+			svc.IISAppPool = svc.WindowsServiceName
+		}
+		if svc.IISSiteName == "" {
+			svc.IISSiteName = svc.WindowsServiceName
+		}
 		svc.BinaryName = ""
 		svc.EnvFile = ""
 	default:
@@ -1101,6 +1107,7 @@ func (h *Handler) touchWatchersUpdatedAt() {
 
 type inspectRequest struct {
 	RepoURL     string `json:"repo_url" binding:"required"`
+	ReleaseRef  string `json:"release_ref"`
 	GitHubToken string `json:"github_token"`
 }
 
@@ -1119,7 +1126,7 @@ func (h *Handler) InspectGitHubRepo(c *gin.Context) {
 	logger := agent.NewLogger("") // Temporary logger to stdout
 	client := agent.NewGitHubClient(token, logger)
 
-	resp, err := client.InspectRepository(c.Request.Context(), req.RepoURL)
+	resp, err := client.InspectRepository(c.Request.Context(), req.RepoURL, req.ReleaseRef)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return

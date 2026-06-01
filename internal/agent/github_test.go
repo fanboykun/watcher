@@ -1088,3 +1088,93 @@ func TestFetchMetadataFromRepo_DerivesServiceNamesFromAssets(t *testing.T) {
 		t.Fatalf("artifact = %q", svc.Artifact)
 	}
 }
+
+func TestInspectRepository_PrefersManifestVersionJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/iweka-dev/people-function-backend/releases/latest":
+			release := githubRelease{
+				TagName: "latest",
+				Assets: []githubAsset{
+					{
+						ID:                 10,
+						Name:               "version.json",
+						URL:                "http://" + r.Host + "/asset/10",
+						BrowserDownloadURL: "http://" + r.Host + "/download/version.json",
+					},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(release)
+		case "/download/version.json":
+			meta := VersionMetadata{Services: map[string]ServiceMeta{
+				"prs": {
+					Version:            "services/prs/v0.1.0",
+					Artifact:           "prs-v0.1.0.zip",
+					ArtifactURL:        "https://github.com/iweka-dev/people-function-backend/releases/download/services/prs/v0.1.0/prs-v0.1.0.zip",
+					PublishedAt:        "2026-06-01T04:19:05Z",
+					AppKind:            "nssm",
+					WindowsServiceName: "prs",
+					BinaryName:         "prs.exe",
+					EnvFile:            ".env",
+					HealthCheckURL:     "http://localhost:8080/health",
+				},
+			}}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(meta)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient("", server)
+	res, err := client.InspectRepository(context.Background(), "https://github.com/iweka-dev/people-function-backend", "latest")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if res.Source != "manifest" {
+		t.Fatalf("source = %q, want manifest", res.Source)
+	}
+	if res.MetadataURL != "https://github.com/iweka-dev/people-function-backend/releases/latest/download/version.json" {
+		t.Fatalf("metadata_url = %q", res.MetadataURL)
+	}
+	prs, ok := res.Services["prs"]
+	if !ok {
+		t.Fatalf("expected prs service, got keys: %v", keys(res.Services))
+	}
+	if prs.BinaryName != "prs.exe" || prs.AppKind != "nssm" || prs.HealthCheckURL == "" {
+		t.Fatalf("manifest hints not preserved: %+v", prs)
+	}
+}
+
+func TestInspectRepository_FallsBackToRepoAssetsWithoutManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/fanboykun/fktool/releases/latest" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		release := githubRelease{
+			TagName:     "v0.1.1",
+			PublishedAt: "2026-03-27T09:00:00Z",
+			Assets: []githubAsset{
+				{ID: 1, Name: "fktool-v0.1.1-windows-amd64.zip", BrowserDownloadURL: "https://github.com/fanboykun/fktool/releases/download/v0.1.1/fktool-v0.1.1-windows-amd64.zip"},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(release)
+	}))
+	defer server.Close()
+
+	client := newTestClient("", server)
+	res, err := client.InspectRepository(context.Background(), "https://github.com/fanboykun/fktool", "latest")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Source != "repo_assets" {
+		t.Fatalf("source = %q, want repo_assets", res.Source)
+	}
+	if _, ok := res.Services["fktool"]; !ok {
+		t.Fatalf("expected fktool service, got keys: %v", keys(res.Services))
+	}
+}
