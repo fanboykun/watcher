@@ -6,7 +6,9 @@
 
 param(
     [switch]$Silent,
-    [switch]$DebugMode
+    [switch]$DebugMode,
+    [string]$InstallConfigPath = "",
+    [string]$LogPathOverride = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,16 +32,43 @@ $Defaults = @{
 
 $UrlRewriteDll = "C:\Windows\System32\inetsrv\rewrite.dll"
 $ArrRouterDll  = "C:\Program Files\IIS\Application Request Routing\requestRouter.dll"
-$ScriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptPath    = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
+$ScriptDir     = Split-Path -Parent $ScriptPath
 $ParentDir     = Split-Path -Parent $ScriptDir
 $Script:IsServer = (Get-CimInstance Win32_OperatingSystem).ProductType -ne 1
-$Script:LogPath  = Join-Path $env:TEMP ("watcher-installer-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
+$Script:LogPath  = if (-not [string]::IsNullOrWhiteSpace($LogPathOverride)) { $LogPathOverride } else { Join-Path $env:TEMP ("watcher-installer-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log") }
 $Script:ProgressUi = $null
 $Script:WinFormsInitialized = $false
 
 # ==============================================================
 # LOGGING
 # ==============================================================
+function Invoke-ProgressUiUpdate {
+    param(
+        [scriptblock]$Action,
+        [switch]$Wait
+    )
+
+    if (-not ($Script:ProgressUi -and $Script:ProgressUi.Form -and -not $Script:ProgressUi.Form.IsDisposed)) {
+        return
+    }
+
+    $form = $Script:ProgressUi.Form
+    $actionCopy = $Action.GetNewClosure()
+    $callback = [System.Windows.Forms.MethodInvoker]{ & $actionCopy }
+
+    if ($form.InvokeRequired) {
+        if ($Wait) {
+            [void]$form.Invoke($callback)
+        } else {
+            [void]$form.BeginInvoke($callback)
+        }
+        return
+    }
+
+    & $actionCopy
+}
+
 function Write-InstallerLog {
     param(
         [string]$Level,
@@ -63,13 +92,13 @@ function Write-InstallerLog {
         }
     }
 
-    if ($Script:ProgressUi -and $Script:ProgressUi.Form -and -not $Script:ProgressUi.Form.IsDisposed) {
-        $Script:ProgressUi.LogBox.AppendText($line + [Environment]::NewLine)
+    $lineCopy = $line
+    Invoke-ProgressUiUpdate -Wait {
+        $Script:ProgressUi.LogBox.AppendText($lineCopy + [Environment]::NewLine)
         $Script:ProgressUi.LogBox.SelectionStart = $Script:ProgressUi.LogBox.TextLength
         $Script:ProgressUi.LogBox.ScrollToCaret()
-        $Script:ProgressUi.StatusLabel.Text = $line
+        $Script:ProgressUi.StatusLabel.Text = $lineCopy
         $Script:ProgressUi.Form.Refresh()
-        [System.Windows.Forms.Application]::DoEvents()
     }
 }
 
@@ -153,9 +182,9 @@ function Set-ProgressStep {
         [string]$Status
     )
 
-    if ($Script:ProgressUi -and $Script:ProgressUi.Form -and -not $Script:ProgressUi.Form.IsDisposed) {
-        $valueCopy = $Value
-        $statusCopy = $Status
+    $valueCopy = $Value
+    $statusCopy = $Status
+    Invoke-ProgressUiUpdate -Wait {
         if ($valueCopy -lt $Script:ProgressUi.ProgressBar.Minimum) {
             $valueCopy = $Script:ProgressUi.ProgressBar.Minimum
         }
@@ -165,15 +194,16 @@ function Set-ProgressStep {
         $Script:ProgressUi.ProgressBar.Value = $valueCopy
         $Script:ProgressUi.StatusLabel.Text = $statusCopy
         $Script:ProgressUi.Form.Refresh()
-        [System.Windows.Forms.Application]::DoEvents()
     }
 }
 
 function Get-IISFeatureList {
+    # Do not install the HTTP Redirect role service by default. Static IIS sites, URL Rewrite, and ARR
+    # do not require it, and Web-Http-Redirect can hang on some Windows Server IIS plugin loads.
     if ($Script:IsServer) {
         return @(
             "Web-Server","Web-WebServer","Web-Common-Http","Web-Default-Doc",
-            "Web-Static-Content","Web-Http-Errors","Web-Http-Redirect",
+            "Web-Static-Content","Web-Http-Errors",
             "Web-Health","Web-Http-Logging","Web-Request-Monitor","Web-Http-Tracing",
             "Web-Performance","Web-Stat-Compression","Web-Dyn-Compression",
             "Web-Security","Web-Filtering","Web-Mgmt-Tools","Web-Mgmt-Console",
@@ -184,7 +214,7 @@ function Get-IISFeatureList {
     return @(
         "IIS-WebServerRole","IIS-WebServer","IIS-CommonHttpFeatures",
         "IIS-DefaultDocument","IIS-StaticContent","IIS-HttpErrors",
-        "IIS-HttpRedirect","IIS-HealthAndDiagnostics","IIS-HttpLogging",
+        "IIS-HealthAndDiagnostics","IIS-HttpLogging",
         "IIS-RequestMonitor","IIS-HttpTracing","IIS-Performance",
         "IIS-HttpCompressionStatic","IIS-HttpCompressionDynamic",
         "IIS-Security","IIS-RequestFiltering","IIS-ManagementConsole",
@@ -1191,6 +1221,7 @@ function Show-ProgressWindow {
     $progressBar.Minimum = 0
     $progressBar.Maximum = 100
     $progressBar.Value = 0
+    $progressBar.Style = "Blocks"
     $form.Controls.Add($progressBar)
 
     $logBox = New-Object System.Windows.Forms.TextBox
@@ -1217,10 +1248,15 @@ function Show-ProgressWindow {
     $btnOpenLog.Size = New-Object System.Drawing.Size(120, 30)
     $btnOpenLog.FlatStyle = "Flat"
     $btnOpenLog.Add_Click({
-        if (Test-Path $Script:LogPath) {
-            Start-Process -FilePath "notepad.exe" -ArgumentList @($Script:LogPath)
-        } else {
+        if (-not (Test-Path $Script:LogPath)) {
             Show-Message -Text ("Debug log file not found:`r`n`r`n{0}" -f $Script:LogPath) -Icon Warning
+            return
+        }
+
+        try {
+            Start-Process -FilePath "notepad.exe" -ArgumentList @($Script:LogPath) -ErrorAction Stop
+        } catch {
+            Show-Message -Text ("Could not open debug log:`r`n`r`n{0}" -f $_.Exception.Message) -Icon Warning
         }
     })
     $form.Controls.Add($btnOpenLog)
@@ -1232,7 +1268,14 @@ function Show-ProgressWindow {
     $btnOpenDashboard.FlatStyle = "Flat"
     $btnOpenDashboard.Enabled = $false
     $btnOpenDashboard.Add_Click({
-        Start-Process ("http://localhost:{0}" -f $Config.APIPort) -ErrorAction SilentlyContinue
+        $dashboardUrl = "http://localhost:{0}" -f $Config.APIPort
+        try {
+            Start-Process -FilePath $dashboardUrl -ErrorAction Stop
+            $form.DialogResult = "OK"
+            $form.Close()
+        } catch {
+            Show-Message -Text ("Could not open dashboard:`r`n`r`n{0}`r`n`r`nURL: {1}" -f $_.Exception.Message, $dashboardUrl) -Icon Warning
+        }
     })
     $form.Controls.Add($btnOpenDashboard)
 
@@ -1258,32 +1301,85 @@ function Show-ProgressWindow {
         CloseButton    = $btnClose
     }
 
-    $form.Add_Shown({
-        try {
-            Invoke-Installation -Config $Config
-            $summary = Get-InstallSummary -Config $Config
-            $Script:ProgressUi.StatusLabel.Text = "Installation completed successfully."
-            $Script:ProgressUi.OpenDashButton.Enabled = $true
-            $Script:ProgressUi.CloseButton.Enabled = $true
-            $Script:ProgressUi.LogBox.AppendText([Environment]::NewLine + $summary + [Environment]::NewLine)
-        } catch {
-            $errorText = $_.Exception.Message
-            if ([string]::IsNullOrWhiteSpace($errorText)) {
-                $errorText = "Installation failed, but no error message was returned."
+    $progressConfigPath = Join-Path $env:TEMP ("watcher-installer-config-" + [guid]::NewGuid().ToString("N") + ".json")
+    $progressState = @{
+        Process = $null
+        LastLogLength = 0
+        InstallFinished = $false
+        ConfigPath = $progressConfigPath
+    }
+    $Config | ConvertTo-Json -Depth 4 | Set-Content -Path $progressState.ConfigPath -Encoding UTF8
+
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 500
+    $timer.Add_Tick({
+        if (Test-Path $Script:LogPath) {
+            try {
+                $content = Get-Content -Path $Script:LogPath -Raw -ErrorAction Stop
+                if ($content.Length -gt $progressState.LastLogLength) {
+                    $newText = $content.Substring($progressState.LastLogLength)
+                    $Script:ProgressUi.LogBox.AppendText($newText)
+                    $Script:ProgressUi.LogBox.SelectionStart = $Script:ProgressUi.LogBox.TextLength
+                    $Script:ProgressUi.LogBox.ScrollToCaret()
+                    $progressState.LastLogLength = $content.Length
+                }
+            } catch {}
+        }
+
+        $installProcess = $progressState.Process
+        if ($installProcess -and -not $progressState.InstallFinished -and $installProcess.HasExited) {
+            $progressState.InstallFinished = $true
+            $timer.Stop()
+            try { Remove-Item -Path $progressState.ConfigPath -Force -ErrorAction SilentlyContinue } catch {}
+
+            $Script:ProgressUi.ProgressBar.Style = "Blocks"
+            $Script:ProgressUi.ProgressBar.MarqueeAnimationSpeed = 0
+
+            if ($installProcess.ExitCode -eq 0) {
+                $Script:ProgressUi.ProgressBar.Value = 100
+                $Script:ProgressUi.StatusLabel.Text = "Installation completed successfully."
+                $Script:ProgressUi.OpenDashButton.Enabled = $true
+                $Script:ProgressUi.CloseButton.Text = "Finish"
+                $Script:ProgressUi.CloseButton.Enabled = $true
+                $summary = Get-InstallSummary -Config $Config
+                $Script:ProgressUi.LogBox.AppendText([Environment]::NewLine + $summary + [Environment]::NewLine)
+                return
             }
-            $detail = ($_ | Out-String).Trim()
-            Write-InstallerLog -Level "ERROR" -Message ("Installation failed in progress window: {0}" -f $errorText)
-            if (-not [string]::IsNullOrWhiteSpace($detail)) {
-                Write-InstallerLog -Level "ERROR" -Message $detail
-            }
+
             $Script:ProgressUi.ProgressBar.Value = 100
             $Script:ProgressUi.StatusLabel.Text = "Installation failed. Review the debug log for details."
-            $Script:ProgressUi.LogBox.AppendText([Environment]::NewLine + "ERROR: " + $errorText + [Environment]::NewLine)
-            if (-not [string]::IsNullOrWhiteSpace($detail)) {
-                $Script:ProgressUi.LogBox.AppendText($detail + [Environment]::NewLine)
-            }
             $Script:ProgressUi.CloseButton.Enabled = $true
-            Show-Message -Text ("Installation failed.`r`n`r`n{0}`r`n`r`nDebug log:`r`n{1}" -f $errorText, $Script:LogPath) -Icon Error
+            Show-Message -Text ("Installation failed with exit code {0}.`r`n`r`nDebug log:`r`n{1}" -f $installProcess.ExitCode, $Script:LogPath) -Icon Error
+        }
+    })
+
+    $form.Add_FormClosed({
+        $timer.Stop()
+        try { Remove-Item -Path $progressState.ConfigPath -Force -ErrorAction SilentlyContinue } catch {}
+    })
+
+    $form.Add_Shown({
+        try {
+            $Script:ProgressUi.StatusLabel.Text = "Installation is running. This can take several minutes."
+            $Script:ProgressUi.ProgressBar.Style = "Marquee"
+            $Script:ProgressUi.ProgressBar.MarqueeAnimationSpeed = 30
+
+            $powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
+            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $startInfo.FileName = $powershell
+            $startInfo.Arguments = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" -Silent -InstallConfigPath "{1}" -LogPathOverride "{2}"' -f $ScriptPath, $progressState.ConfigPath, $Script:LogPath)
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $progressState.Process = [System.Diagnostics.Process]::Start($startInfo)
+            $timer.Start()
+        } catch {
+            $Script:ProgressUi.ProgressBar.Style = "Blocks"
+            $Script:ProgressUi.ProgressBar.MarqueeAnimationSpeed = 0
+            $Script:ProgressUi.ProgressBar.Value = 100
+            $Script:ProgressUi.StatusLabel.Text = "Installation failed to start. Review the debug log for details."
+            $Script:ProgressUi.CloseButton.Enabled = $true
+            Write-InstallerLog -Level "ERROR" -Message ("Failed to start installer worker process: {0}" -f $_.Exception.Message)
+            Show-Message -Text ("Failed to start installer worker process.`r`n`r`n{0}" -f $_.Exception.Message) -Icon Error
         }
     })
 
@@ -1299,6 +1395,12 @@ function Show-ProgressWindow {
 try {
     if ($Silent) {
         $Config = $Defaults.Clone()
+        if (-not [string]::IsNullOrWhiteSpace($InstallConfigPath)) {
+            $configObject = Get-Content -Path $InstallConfigPath -Raw | ConvertFrom-Json
+            foreach ($prop in $configObject.PSObject.Properties) {
+                $Config[$prop.Name] = $prop.Value
+            }
+        }
     } else {
         $Config = Show-Wizard
         if (-not $Config) {
