@@ -216,6 +216,84 @@ func TestListAvailableVersions_DecodesStoredVersionNames(t *testing.T) {
 	}
 }
 
+func TestCurrentVersionFromCurrentDir_ReadsReleaseSymlink(t *testing.T) {
+	dir := t.TempDir()
+	releaseDir := filepath.Join(dir, "releases", releaseStorageName("v1.0.0"))
+	if err := os.MkdirAll(releaseDir, 0755); err != nil {
+		t.Fatalf("mkdir release dir: %v", err)
+	}
+
+	currentDir := filepath.Join(dir, "current")
+	if err := os.Symlink(releaseDir, currentDir); err != nil {
+		t.Fatalf("symlink current dir: %v", err)
+	}
+
+	got, err := currentVersionFromCurrentDir(dir)
+	if err != nil {
+		t.Fatalf("currentVersionFromCurrentDir returned error: %v", err)
+	}
+	if got != "v1.0.0" {
+		t.Fatalf("currentVersionFromCurrentDir = %q, want %q", got, "v1.0.0")
+	}
+}
+
+func TestResolveRollbackVersionFallsBackToCurrentDirWhenDBVersionMissing(t *testing.T) {
+	dir := t.TempDir()
+	releaseDir := filepath.Join(dir, "releases", releaseStorageName("v1.0.0"))
+	if err := os.MkdirAll(releaseDir, 0755); err != nil {
+		t.Fatalf("mkdir release dir: %v", err)
+	}
+
+	currentDir := filepath.Join(dir, "current")
+	if err := os.Symlink(releaseDir, currentDir); err != nil {
+		t.Fatalf("symlink current dir: %v", err)
+	}
+
+	d := NewDeployer(&WatcherConfig{InstallDir: dir}, "nssm.exe", newTestLogger(), func(string) {})
+	got := d.resolveRollbackVersion("v1.1.0", "")
+	if got != "v1.0.0" {
+		t.Fatalf("resolveRollbackVersion = %q, want %q", got, "v1.0.0")
+	}
+}
+
+func TestResolveRollbackVersionFallsBackToAvailableReleaseList(t *testing.T) {
+	dir := t.TempDir()
+	releasesDir := filepath.Join(dir, "releases")
+	if err := os.MkdirAll(releasesDir, 0755); err != nil {
+		t.Fatalf("mkdir releases dir: %v", err)
+	}
+
+	olderDir := filepath.Join(releasesDir, releaseStorageName("v1.0.0"))
+	if err := os.MkdirAll(olderDir, 0755); err != nil {
+		t.Fatalf("mkdir older release dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(olderDir, "app.exe"), []byte("older"), 0644); err != nil {
+		t.Fatalf("write older app: %v", err)
+	}
+	olderTime := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(olderDir, olderTime, olderTime); err != nil {
+		t.Fatalf("chtimes older release: %v", err)
+	}
+
+	newerDir := filepath.Join(releasesDir, releaseStorageName("v1.1.0"))
+	if err := os.MkdirAll(newerDir, 0755); err != nil {
+		t.Fatalf("mkdir newer release dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(newerDir, "app.exe"), []byte("newer"), 0644); err != nil {
+		t.Fatalf("write newer app: %v", err)
+	}
+	newerTime := time.Now().Add(-1 * time.Minute)
+	if err := os.Chtimes(newerDir, newerTime, newerTime); err != nil {
+		t.Fatalf("chtimes newer release: %v", err)
+	}
+
+	d := NewDeployer(&WatcherConfig{InstallDir: dir}, "nssm.exe", newTestLogger(), func(string) {})
+	got := d.resolveRollbackVersion("v1.2.0", "")
+	if got != "v1.1.0" {
+		t.Fatalf("resolveRollbackVersion = %q, want %q", got, "v1.1.0")
+	}
+}
+
 func TestIISBindingFromPublicURL(t *testing.T) {
 	tests := []struct {
 		name    string
