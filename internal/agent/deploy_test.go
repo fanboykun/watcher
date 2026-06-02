@@ -468,3 +468,31 @@ func TestEnsureIISServiceDefaultsAppPoolAndSiteFromServiceName(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteReleaseConfigFilesWritesOnlyReleaseDirTargets(t *testing.T) {
+	currentDir := t.TempDir()
+	d := NewDeployer(&WatcherConfig{Services: []ServiceConfig{
+		{
+			WindowsServiceName: "admin-fe",
+			ConfigFiles: []ConfigFile{
+				{FilePath: "web.config", Target: "release_dir", Content: "<configuration />"},
+				{FilePath: "settings/app.json", Target: "app_dir", Content: "{}"},
+			},
+		},
+	}}, "nssm.exe", newTestLogger(), func(string) {})
+
+	if err := d.writeReleaseConfigFiles(currentDir); err != nil {
+		t.Fatalf("writeReleaseConfigFiles returned error: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(currentDir, "web.config"))
+	if err != nil {
+		t.Fatalf("expected web.config in current dir: %v", err)
+	}
+	if string(got) != "<configuration />" {
+		t.Fatalf("web.config content = %q", string(got))
+	}
+	if _, err := os.Stat(filepath.Join(currentDir, "settings", "app.json")); !os.IsNotExist(err) {
+		t.Fatalf("app_dir config should not be written into current dir, stat err=%v", err)
+	}
+}

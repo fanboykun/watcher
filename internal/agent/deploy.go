@@ -117,6 +117,10 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 		return fmt.Errorf("swap current: %w", err)
 	}
 
+	if err := d.writeReleaseConfigFiles(currentDir); err != nil {
+		return d.tryRollback(ctx, previousVersion, err)
+	}
+
 	d.l("starting services")
 	for _, svc := range d.wcfg.Services {
 		if err := d.ensureServiceByType(svc, currentDir); err != nil {
@@ -252,6 +256,39 @@ func extractZipFile(f *zip.File, destDir string) error {
 
 	_, err = io.Copy(dst, src)
 	return err
+}
+
+func (d *Deployer) writeReleaseConfigFiles(currentDir string) error {
+	for _, svc := range d.wcfg.Services {
+		for _, file := range svc.ConfigFiles {
+			if strings.TrimSpace(file.FilePath) == "" || normalizeConfigFileTarget(file.Target) != "release_dir" {
+				continue
+			}
+			if err := writeManagedFile(currentDir, file.FilePath, file.Content); err != nil {
+				return fmt.Errorf("write release config %s for %s: %w", file.FilePath, svc.WindowsServiceName, err)
+			}
+		}
+	}
+	return nil
+}
+
+func normalizeConfigFileTarget(target string) string {
+	switch strings.TrimSpace(strings.ToLower(target)) {
+	case "", "app", "app_dir", "install_dir":
+		return "app_dir"
+	case "release", "release_dir", "current":
+		return "release_dir"
+	default:
+		return "app_dir"
+	}
+}
+
+func writeManagedFile(rootDir, relativePath, content string) error {
+	targetPath := filepath.Join(rootDir, relativePath)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(targetPath, []byte(content), 0600)
 }
 
 func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {

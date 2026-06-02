@@ -128,6 +128,17 @@ func defaultReleaseRef(ref string) string {
 	return ref
 }
 
+func normalizeConfigFileTarget(target string) string {
+	switch strings.TrimSpace(strings.ToLower(target)) {
+	case "", "app", "app_dir", "install_dir":
+		return "app_dir"
+	case "release", "release_dir", "current":
+		return "release_dir"
+	default:
+		return "app_dir"
+	}
+}
+
 // Handler holds dependencies for all API endpoints.
 type Handler struct {
 	db           *gorm.DB
@@ -571,6 +582,7 @@ func (h *Handler) CreateService(c *gin.Context) {
 			configFiles = append(configFiles, database.ServiceConfigFile{
 				ServiceID: svc.ID,
 				FilePath:  strings.TrimSpace(file.FilePath),
+				Target:    normalizeConfigFileTarget(file.Target),
 				Content:   file.Content,
 			})
 		}
@@ -718,6 +730,7 @@ func (h *Handler) UpdateService(c *gin.Context) {
 			configFiles = append(configFiles, database.ServiceConfigFile{
 				ServiceID: svc.ID,
 				FilePath:  strings.TrimSpace(file.FilePath),
+				Target:    normalizeConfigFileTarget(file.Target),
 				Content:   file.Content,
 			})
 		}
@@ -1168,7 +1181,7 @@ func (h *Handler) syncServiceFiles(svc *database.Service, installDir string) {
 		h.writeServiceFile(installDir, svc.EnvFile, svc.EnvContent)
 	}
 	for _, file := range svc.ConfigFiles {
-		if strings.TrimSpace(file.FilePath) == "" {
+		if strings.TrimSpace(file.FilePath) == "" || normalizeConfigFileTarget(file.Target) != "app_dir" {
 			continue
 		}
 		h.writeServiceFile(installDir, file.FilePath, file.Content)

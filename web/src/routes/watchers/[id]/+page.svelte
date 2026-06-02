@@ -336,7 +336,7 @@
 	}
 
 	function addSvcConfigFile() {
-		svcConfigFiles = [...svcConfigFiles, { file_path: '', content: '' }];
+		svcConfigFiles = [...svcConfigFiles, { file_path: '', target: 'app_dir' as const, content: '' }];
 	}
 
 	function removeSvcConfigFile(index: number) {
@@ -355,6 +355,7 @@
 			id: file.id,
 			service_id: file.service_id,
 			file_path: file.file_path,
+			target: file.target || 'app_dir',
 			content: file.content
 		}));
 		editSvcHealthURL = svc.health_check_url || '';
@@ -367,7 +368,7 @@
 	}
 
 	function addEditSvcConfigFile() {
-		editSvcConfigFiles = [...editSvcConfigFiles, { file_path: '', content: '' }];
+		editSvcConfigFiles = [...editSvcConfigFiles, { file_path: '', target: 'app_dir' as const, content: '' }];
 	}
 
 	function removeEditSvcConfigFile(index: number) {
@@ -1360,7 +1361,7 @@
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div>
 							<Label>Additional managed config files</Label>
-							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service.</p>
+							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service. Use <code>Current dir</code> for IIS files like <code>web.config</code>.</p>
 						</div>
 						<Button.Root variant="outline" size="sm" type="button" class="h-8 shrink-0" onclick={addSvcConfigFile}>
 							<Plus class="mr-1.5 h-3 w-3" /> Add file
@@ -1382,7 +1383,13 @@
 											<Trash2 class="h-3 w-3" />
 										</Button.Root>
 									</div>
-									<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
+									<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
+										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
+										<Select bind:value={file.target}>
+											<option value="app_dir">Service/app dir</option>
+											<option value="release_dir">Current dir</option>
+										</Select>
+									</div>
 									<Textarea
 										class="min-h-[140px] font-mono text-xs text-blue-300"
 										bind:value={file.content}
@@ -1526,7 +1533,7 @@
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div>
 							<Label>Additional managed config files</Label>
-							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service.</p>
+							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service. Use <code>Current dir</code> for IIS files like <code>web.config</code>.</p>
 						</div>
 						<Button.Root variant="outline" size="sm" type="button" class="h-8 shrink-0" onclick={addEditSvcConfigFile}>
 							<Plus class="mr-1.5 h-3 w-3" /> Add file
@@ -1548,7 +1555,13 @@
 											<Trash2 class="h-3 w-3" />
 										</Button.Root>
 									</div>
-									<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
+									<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
+										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
+										<Select bind:value={file.target}>
+											<option value="app_dir">Service/app dir</option>
+											<option value="release_dir">Current dir</option>
+										</Select>
+									</div>
 									<Textarea
 										class="min-h-[140px] font-mono text-xs text-blue-300"
 										bind:value={file.content}

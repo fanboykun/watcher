@@ -47,6 +47,7 @@ type UpdateWatcherRequest struct {
 
 type ConfigFileRequest struct {
 	FilePath string `json:"file_path"`
+	Target   string `json:"target"`
 	Content  string `json:"content"`
 }
 

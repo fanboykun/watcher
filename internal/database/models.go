@@ -84,6 +84,7 @@ type ServiceConfigFile struct {
 	ID        uint   `gorm:"primaryKey" json:"id"`
 	ServiceID uint   `gorm:"not null;index" json:"service_id"`
 	FilePath  string `gorm:"not null" json:"file_path"`
+	Target    string `gorm:"not null;default:'app_dir'" json:"target"` // app_dir or release_dir
 	Content   string `gorm:"type:text" json:"content"`
 
 	CreatedAt time.Time `json:"created_at"`
