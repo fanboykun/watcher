@@ -118,7 +118,7 @@
 		service = detail.service;
 		watcher = detail.watcher;
 		envContent = detail.service.env_content || '';
-		configFiles = [...(detail.service.config_files || []).map((file) => ({ ...file }))];
+		configFiles = [...(detail.service.config_files || []).map((file) => ({ ...file, target: file.target || 'app_dir' }))];
 	}
 
 	async function runAction(fn: () => Promise<{ message: string }>) {
@@ -142,7 +142,7 @@
 				config_files: configFiles.filter((file) => file.file_path.trim() !== '')
 			});
 			envContent = service.env_content || '';
-			configFiles = [...(service.config_files || []).map((file) => ({ ...file }))];
+			configFiles = [...(service.config_files || []).map((file) => ({ ...file, target: file.target || 'app_dir' }))];
 			actionMsg = 'Service files saved';
 			setTimeout(() => (actionMsg = ''), 4000);
 		} catch (e) {
@@ -153,7 +153,7 @@
 	}
 
 	function addConfigFile() {
-		configFiles = [...configFiles, { file_path: '', content: '' }];
+		configFiles = [...configFiles, { file_path: '', target: 'app_dir', content: '' }];
 	}
 
 	function removeConfigFile(index: number) {
@@ -174,12 +174,12 @@
 		editSvcIISSiteName = service.iis_site_name || '';
 		editSvcIISManagedRuntime = service.iis_managed_runtime || '';
 		editSvcPublicURL = service.public_url || '';
-		editSvcConfigFiles = [...(service.config_files || []).map((file) => ({ ...file }))];
+		editSvcConfigFiles = [...(service.config_files || []).map((file) => ({ ...file, target: file.target || 'app_dir' }))];
 		showEditService = true;
 	}
 
 	function addEditSvcConfigFile() {
-		editSvcConfigFiles = [...editSvcConfigFiles, { file_path: '', content: '' }];
+		editSvcConfigFiles = [...editSvcConfigFiles, { file_path: '', target: 'app_dir', content: '' }];
 	}
 
 	function removeEditSvcConfigFile(index: number) {
@@ -587,7 +587,7 @@
 							<div class="flex items-center justify-between">
 								<div>
 									<h3 class="text-sm font-medium">Additional managed config files</h3>
-									<p class="text-xs text-muted-foreground">Use this for files like <code>config.json</code>, <code>appsettings.json</code>, or any other dynamic config.</p>
+									<p class="text-xs text-muted-foreground">Use <code>Current dir</code> for IIS files like <code>web.config</code> that must sit beside deployed static assets.</p>
 								</div>
 								<Button.Root variant="outline" size="sm" onclick={addConfigFile}>
 									Add file
@@ -609,7 +609,13 @@
 														<XCircle class="h-4 w-4" />
 													</Button.Root>
 												</div>
-												<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
+												<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
+										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
+										<Select bind:value={file.target}>
+											<option value="app_dir">Service/app dir</option>
+											<option value="release_dir">Current dir</option>
+										</Select>
+									</div>
 												<Textarea
 													class="min-h-[180px] font-mono text-sm text-blue-300"
 													bind:value={file.content}
@@ -856,7 +862,7 @@
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div>
 							<Label>Additional managed config files</Label>
-							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service.</p>
+							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service. Use <code>Current dir</code> for IIS files like <code>web.config</code>.</p>
 						</div>
 						<Button.Root variant="outline" size="sm" type="button" class="h-8 shrink-0" onclick={addEditSvcConfigFile}>
 							<Plus class="mr-1.5 h-3 w-3" /> Add file
@@ -878,7 +884,13 @@
 											<XCircle class="h-4 w-4" />
 										</Button.Root>
 									</div>
-									<Input bind:value={file.file_path} placeholder="config.json or settings/appsettings.json" />
+									<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
+										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
+										<Select bind:value={file.target}>
+											<option value="app_dir">Service/app dir</option>
+											<option value="release_dir">Current dir</option>
+										</Select>
+									</div>
 									<Textarea
 										class="min-h-[140px] font-mono text-xs text-blue-300"
 										bind:value={file.content}

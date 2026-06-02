@@ -219,10 +219,13 @@ export interface Service {
 	updated_at: string;
 }
 
+export type ConfigFileTarget = 'app_dir' | 'release_dir';
+
 export interface ServiceConfigFile {
 	id?: number;
 	service_id?: number;
 	file_path: string;
+	target: ConfigFileTarget;
 	content: string;
 }
 

@@ -8,6 +8,7 @@
 		type IISAppKind,
 		type InspectRepoResponse,
 		type InspectServiceTarget,
+		type ConfigFileTarget,
 		type Service,
 		type Watcher
 	} from '$lib/api';
@@ -277,7 +278,7 @@
 	function addConfigFileDraft(serviceIndex: number) {
 		const next = [...formServices];
 		const svc = next[serviceIndex];
-		const configFiles = [...(svc.config_files || []), { file_path: '', content: '' }];
+		const configFiles = [...(svc.config_files || []), { file_path: '', target: 'app_dir' as ConfigFileTarget, content: '' }];
 		next[serviceIndex] = { ...svc, config_files: configFiles };
 		formServices = next;
 	}
@@ -737,7 +738,13 @@
 																<Trash2 class="h-3 w-3" />
 															</Button.Root>
 														</div>
-														<Input class="h-8 text-xs" bind:value={file.file_path} placeholder="config.json or config/appsettings.json" />
+														<div class="grid gap-2 sm:grid-cols-[1fr_150px]">
+															<Input class="h-8 text-xs" bind:value={file.file_path} placeholder="web.config or config/appsettings.json" />
+															<Select bind:value={file.target} class="h-8 text-xs">
+																<option value="app_dir">Service/app dir</option>
+																<option value="release_dir">Current dir</option>
+															</Select>
+														</div>
 														<Textarea
 															class="min-h-[120px] font-mono text-xs text-blue-300"
 															bind:value={file.content}
@@ -747,7 +754,7 @@
 												{/each}
 											</div>
 										{:else}
-											<p class="text-[11px] text-muted-foreground">Use this for files like <code>config.json</code>, <code>appsettings.json</code>, or other runtime config.</p>
+											<p class="text-[11px] text-muted-foreground">Use <code>Current dir</code> for IIS files like <code>web.config</code> that must sit beside deployed static assets.</p>
 										{/if}
 									</div>
 								</div>

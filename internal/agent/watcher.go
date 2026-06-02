@@ -53,6 +53,12 @@ type HealthCheckConfig struct {
 	TimeoutSec  int
 }
 
+type ConfigFile struct {
+	FilePath string
+	Target   string
+	Content  string
+}
+
 type ServiceConfig struct {
 	ServiceType        string // "nssm" or "iis"
 	WindowsServiceName string
@@ -65,6 +71,7 @@ type ServiceConfig struct {
 	IISSiteName        string
 	IISManagedRuntime  string
 	PublicURL          string
+	ConfigFiles        []ConfigFile
 }
 
 // WatcherConfigFromDB converts a database.Watcher into the in-memory WatcherConfig
@@ -96,7 +103,7 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 	}
 	for _, s := range w.Services {
 		svcType := normalizeServiceType(s.ServiceType)
-		cfg.Services = append(cfg.Services, ServiceConfig{
+		serviceConfig := ServiceConfig{
 			ServiceType:        svcType,
 			WindowsServiceName: s.WindowsServiceName,
 			BinaryName:         s.BinaryName,
@@ -108,7 +115,15 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 			IISSiteName:        s.IISSiteName,
 			IISManagedRuntime:  s.IISManagedRuntime,
 			PublicURL:          s.PublicURL,
-		})
+		}
+		for _, file := range s.ConfigFiles {
+			serviceConfig.ConfigFiles = append(serviceConfig.ConfigFiles, ConfigFile{
+				FilePath: file.FilePath,
+				Target:   file.Target,
+				Content:  file.Content,
+			})
+		}
+		cfg.Services = append(cfg.Services, serviceConfig)
 	}
 	return cfg
 }

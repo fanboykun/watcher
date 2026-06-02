@@ -100,6 +100,7 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 		{model: &DeployLog{}, column: "triggered_by", field: "TriggeredBy"},
 		{model: &Service{}, column: "env_content", field: "EnvContent"},
 		{model: &Service{}, column: "iis_app_kind", field: "IISAppKind"},
+		{model: &ServiceConfigFile{}, column: "target", field: "Target"},
 	}
 
 	for _, spec := range columns {

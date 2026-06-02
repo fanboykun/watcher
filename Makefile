@@ -17,11 +17,12 @@ $(error "go not found in PATH. Install Go or set GO=/path/to/go")
 endif
 
 # ── Project config ────────────────────────────────────────────
+APP_NAME ?= watcher
 MODULE      := $(shell $(GO) list -m 2>/dev/null)
 CMD_PATH    := ./cmd/watcher
-BINARY_NAME := watcher.exe
+BINARY_NAME := $(APP_NAME).exe
 INSTALLER_CMD_PATH := ./cmd/installer
-INSTALLER_BINARY_NAME := installer.exe
+INSTALLER_BINARY_NAME := $(APP_NAME)-installer.exe
 BIN_DIR     := bin
 TEST_PKG    := ./internal/...
 WEB_DIR     := web

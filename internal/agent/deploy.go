@@ -78,9 +78,40 @@ func restoreReleaseVersion(storage string) string {
 	return restored
 }
 
+func currentVersionFromCurrentDir(installDir string) (string, error) {
+	currentDir := filepath.Join(installDir, "current")
+	releasesDir := filepath.Join(installDir, "releases")
+
+	target, err := os.Readlink(currentDir)
+	if err != nil || strings.TrimSpace(target) == "" {
+		target, err = filepath.EvalSymlinks(currentDir)
+		if err != nil {
+			return "", nil
+		}
+	}
+
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(currentDir), target)
+	}
+	target = filepath.Clean(target)
+
+	rel, err := filepath.Rel(releasesDir, target)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", nil
+	}
+
+	parts := strings.Split(rel, string(os.PathSeparator))
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return "", nil
+	}
+
+	return restoreReleaseVersion(parts[0]), nil
+}
+
 func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion string) error {
 	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(version))
 	currentDir := filepath.Join(d.wcfg.InstallDir, "current")
+	rollbackVersion := d.resolveRollbackVersion(version, previousVersion)
 
 	d.l("deploying", "version", version, "release_dir", releaseDir)
 
@@ -117,15 +148,19 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 		return fmt.Errorf("swap current: %w", err)
 	}
 
+	if err := d.writeReleaseConfigFiles(currentDir); err != nil {
+		return d.tryRollback(ctx, rollbackVersion, err)
+	}
+
 	d.l("starting services")
 	for _, svc := range d.wcfg.Services {
 		if err := d.ensureServiceByType(svc, currentDir); err != nil {
-			return d.tryRollback(ctx, previousVersion,
+			return d.tryRollback(ctx, rollbackVersion,
 				fmt.Errorf("ensure service %s: %w", svc.WindowsServiceName, err))
 		}
 
 		if err := d.startServiceByType(svc); err != nil {
-			return d.tryRollback(ctx, previousVersion,
+			return d.tryRollback(ctx, rollbackVersion,
 				fmt.Errorf("start %s: %w", svc.WindowsServiceName, err))
 		}
 	}
@@ -140,7 +175,7 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 				continue
 			}
 			if err := d.healthCheck(ctx, svc.WindowsServiceName, url); err != nil {
-				return d.tryRollback(ctx, previousVersion,
+				return d.tryRollback(ctx, rollbackVersion,
 					fmt.Errorf("health check failed for %s: %w", svc.WindowsServiceName, err))
 			}
 		}
@@ -148,6 +183,37 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 
 	d.l("deploy successful", "version", version)
 	return nil
+}
+
+func (d *Deployer) resolveRollbackVersion(targetVersion, previousVersion string) string {
+	previousVersion = strings.TrimSpace(previousVersion)
+	if previousVersion != "" {
+		releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(previousVersion))
+		if _, err := os.Stat(releaseDir); err == nil {
+			return previousVersion
+		}
+		d.lWarn("configured previous version is unavailable on disk", "version", previousVersion, "path", releaseDir)
+	}
+
+	if currentVersion, err := currentVersionFromCurrentDir(d.wcfg.InstallDir); err == nil && currentVersion != "" && currentVersion != targetVersion {
+		d.l("resolved rollback version from current dir", "version", currentVersion)
+		return currentVersion
+	}
+
+	versions, err := ListAvailableVersions(d.wcfg.InstallDir)
+	if err != nil {
+		d.lWarn("failed to list releases while resolving rollback version", "error", err)
+		return ""
+	}
+	for _, version := range versions {
+		if strings.TrimSpace(version.Version) == "" || version.Version == targetVersion {
+			continue
+		}
+		d.l("resolved rollback version from releases dir", "version", version.Version)
+		return version.Version
+	}
+
+	return ""
 }
 
 func (d *Deployer) Rollback(ctx context.Context, version string) error {
@@ -252,6 +318,39 @@ func extractZipFile(f *zip.File, destDir string) error {
 
 	_, err = io.Copy(dst, src)
 	return err
+}
+
+func (d *Deployer) writeReleaseConfigFiles(currentDir string) error {
+	for _, svc := range d.wcfg.Services {
+		for _, file := range svc.ConfigFiles {
+			if strings.TrimSpace(file.FilePath) == "" || normalizeConfigFileTarget(file.Target) != "release_dir" {
+				continue
+			}
+			if err := writeManagedFile(currentDir, file.FilePath, file.Content); err != nil {
+				return fmt.Errorf("write release config %s for %s: %w", file.FilePath, svc.WindowsServiceName, err)
+			}
+		}
+	}
+	return nil
+}
+
+func normalizeConfigFileTarget(target string) string {
+	switch strings.TrimSpace(strings.ToLower(target)) {
+	case "", "app", "app_dir", "install_dir":
+		return "app_dir"
+	case "release", "release_dir", "current":
+		return "release_dir"
+	default:
+		return "app_dir"
+	}
+}
+
+func writeManagedFile(rootDir, relativePath, content string) error {
+	targetPath := filepath.Join(rootDir, relativePath)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(targetPath, []byte(content), 0600)
 }
 
 func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
