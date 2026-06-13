@@ -4,6 +4,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import * as Tabs from '$lib/components/ui/tabs';
+	import { Select } from '$lib/components/ui/select';
 	import { Activity, AlertCircle, RefreshCw } from '@lucide/svelte';
 
 	let agentLines = $state<string[]>([]);
@@ -34,8 +35,8 @@
 			<p class="text-sm text-muted-foreground">Agent log output</p>
 		</div>
 		<div class="flex items-center gap-2">
-			<select
-				class="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+			<Select
+				class="w-30 bg-card"
 				bind:value={lineCount}
 				onchange={() => loadLogs()}
 			>
@@ -43,7 +44,7 @@
 				<option value={100}>100 lines</option>
 				<option value={200}>200 lines</option>
 				<option value={500}>500 lines</option>
-			</select>
+			</Select>
 			<Button.Root variant="outline" size="sm" onclick={loadLogs} disabled={loading}>
 				<RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
 				Refresh
@@ -60,9 +61,12 @@
 	<Card.Root class="border-border bg-card">
 		<Card.Content class="p-0">
 			{#if agentLines.length > 0}
-				<div class="max-h-[600px] overflow-auto">
-					<pre class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">{#each agentLines as line}{line}
-{/each}</pre>
+				<div class="max-h-150 overflow-auto">
+					<pre class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">
+						{#each agentLines as line, i (`${i}-${line}`)}
+							{line}
+						{/each}
+					</pre>
 				</div>
 			{:else if !error}
 				<div class="flex flex-col items-center justify-center py-16 text-center">

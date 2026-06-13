@@ -14,14 +14,8 @@
 		type Watcher
 	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
-	import * as Table from '$lib/components/ui/table';
 	import * as Tabs from '$lib/components/ui/tabs';
-	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Button from '$lib/components/ui/button';
-	import { Input } from '$lib/components/ui/input';
-	import { Textarea } from '$lib/components/ui/textarea';
-	import { Select } from '$lib/components/ui/select';
-	import { Label } from '$lib/components/ui/label';
 	import {
 		ArrowLeft,
 		Play,
@@ -29,18 +23,17 @@
 		RefreshCw,
 		Heart,
 		AlertCircle,
-		CheckCircle2,
-		XCircle,
-		Activity,
-		FileText,
 		ExternalLink,
 		TerminalSquare,
-		Save,
-		Pencil,
-		Plus
+		Pencil
 	} from '@lucide/svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import HealthTab from './components/health-tab.svelte';
+	import DeploysTab from './components/deploys-tab.svelte';
+	import LogsTab from './components/logs-tab.svelte';
+	import EnvTab from './components/env-tab.svelte';
+	import EditServiceDialog from './components/edit-service-dialog.svelte';
 
 	let service = $state<Service | null>(null);
 	let watcher = $state<Watcher | null>(null);
@@ -60,26 +53,7 @@
 	let configFiles = $state<ServiceConfigFile[]>([]);
 	let savingEnv = $state(false);
 	let showEditService = $state(false);
-	let updatingService = $state(false);
-	let editSvcType = $state<'nssm' | 'iis'>('nssm');
-	let editSvcName = $state('');
-	let editSvcBinary = $state('');
-	let editSvcStartArguments = $state('');
-	let editSvcEnvFile = $state('');
-	let editSvcEnvContent = $state('');
-	let editSvcHealthURL = $state('');
-	let editSvcIISAppKind = $state<IISAppKind>('static');
-	let editSvcIISAppPool = $state('');
-	let editSvcIISSiteName = $state('');
-	let editSvcIISManagedRuntime = $state('');
-	let editSvcPublicURL = $state('');
-	let editSvcConfigFiles = $state<ServiceConfigFile[]>([]);
 
-	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
-		{ value: 'static', label: 'Static Site', hint: 'Frontend build or static files served directly by IIS.' },
-		{ value: 'php', label: 'PHP', hint: 'PHP app on IIS with FastCGI and PHP already installed.' },
-		{ value: 'aspnet_classic', label: 'ASP.NET Classic', hint: 'Classic ASP.NET app using the managed CLR app pool.' }
-	];
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
@@ -152,59 +126,14 @@
 		}
 	}
 
-	function addConfigFile() {
-		configFiles = [...configFiles, { file_path: '', target: 'app_dir', content: '' }];
-	}
-
-	function removeConfigFile(index: number) {
-		configFiles = configFiles.filter((_, i) => i !== index);
-	}
-
 	function openEditServiceDialog() {
-		if (!service) return;
-		editSvcType = isIISService(service.service_type) ? 'iis' : 'nssm';
-		editSvcName = service.windows_service_name || '';
-		editSvcBinary = service.binary_name || '';
-		editSvcStartArguments = service.start_arguments || '';
-		editSvcEnvFile = service.env_file || '';
-		editSvcEnvContent = service.env_content || '';
-		editSvcHealthURL = service.health_check_url || '';
-		editSvcIISAppKind = service.iis_app_kind || 'static';
-		editSvcIISAppPool = service.iis_app_pool || '';
-		editSvcIISSiteName = service.iis_site_name || '';
-		editSvcIISManagedRuntime = service.iis_managed_runtime || '';
-		editSvcPublicURL = service.public_url || '';
-		editSvcConfigFiles = [...(service.config_files || []).map((file) => ({ ...file, target: file.target || 'app_dir' }))];
 		showEditService = true;
 	}
 
-	function addEditSvcConfigFile() {
-		editSvcConfigFiles = [...editSvcConfigFiles, { file_path: '', target: 'app_dir', content: '' }];
-	}
-
-	function removeEditSvcConfigFile(index: number) {
-		editSvcConfigFiles = editSvcConfigFiles.filter((_, i) => i !== index);
-	}
-
-	async function saveServiceEdit() {
+	async function saveServiceEdit(data: any) {
 		if (!service || !watcher) return;
-		updatingService = true;
 		try {
-			service = await api.updateService(watcher.id, service.id, {
-				service_type: editSvcType,
-				windows_service_name: editSvcName,
-				binary_name: editSvcBinary,
-				start_arguments: editSvcStartArguments,
-				env_file: editSvcEnvFile,
-				env_content: editSvcEnvContent,
-				config_files: editSvcConfigFiles.filter((file) => file.file_path.trim() !== ''),
-				health_check_url: editSvcHealthURL,
-				iis_app_kind: editSvcIISAppKind,
-				iis_app_pool: editSvcIISAppPool,
-				iis_site_name: editSvcIISSiteName,
-				iis_managed_runtime: editSvcIISManagedRuntime,
-				public_url: editSvcPublicURL
-			});
+			service = await api.updateService(watcher.id, service.id, data);
 			showEditService = false;
 			await refreshServiceDetail();
 			actionMsg = 'Service updated';
@@ -212,8 +141,6 @@
 		} catch (e) {
 			actionMsg = e instanceof Error ? e.message : 'Failed to update service';
 			setTimeout(() => (actionMsg = ''), 5000);
-		} finally {
-			updatingService = false;
 		}
 	}
 
@@ -227,59 +154,12 @@
 			actionMsg = e instanceof Error ? e.message : 'Health check failed';
 		}
 	}
-
-	function healthColor(s: string) {
-		switch (s) {
-			case 'healthy':
-				return 'text-emerald-400';
-			case 'unhealthy':
-				return 'text-red-400';
-			default:
-				return 'text-amber-400';
-		}
-	}
-
-	function healthBadgeColor(s: string) {
-		switch (s) {
-			case 'healthy':
-				return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
-			case 'unhealthy':
-				return 'bg-red-500/15 text-red-400 border-red-500/30';
-			default:
-				return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
-		}
-	}
-
-	function statusColor(s: string) {
-		switch (s) {
-			case 'healthy':
-				return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
-			case 'deploying':
-				return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
-			case 'failed':
-				return 'bg-red-500/15 text-red-400 border-red-500/30';
-			default:
-				return 'bg-muted text-muted-foreground border-border';
-		}
-	}
-
-	function formatDate(ts: string | null): string {
-		if (!ts) return '—';
-		return new Date(ts).toLocaleString();
-	}
-
-	function formatDuration(ms: number): string {
-		if (!ms) return '—';
-		if (ms < 1000) return `${ms}ms`;
-		return `${(ms / 1000).toFixed(1)}s`;
-	}
 </script>
 
 <div class="space-y-6">
 	<!-- Header -->
 	<div class="flex items-center gap-4">
-		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-		<a href="/services">
+		<a href={resolve('/services')}>
 			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
 				<ArrowLeft class="h-4 w-4" />
 			</Button.Root>
@@ -290,8 +170,7 @@
 			</h1>
 			{#if watcher}
 				<p class="text-sm text-muted-foreground">
-					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-					Watcher: <a href="/watchers/{watcher.id}" class="hover:underline">{watcher.name}</a>
+					Watcher: <a href={resolve(`/watchers/${watcher.id}`)} class="hover:underline">{watcher.name}</a>
 				</p>
 			{/if}
 		</div>
@@ -435,485 +314,46 @@
 
 			<!-- Health History -->
 			<Tabs.Content value="health" class="mt-4">
-				{#if healthHistory.length > 0}
-					<Card.Root class="border-border bg-card">
-						<Table.Root>
-							<Table.Header>
-								<Table.Row class="border-border hover:bg-transparent">
-									<Table.Head>Status</Table.Head>
-									<Table.Head>HTTP</Table.Head>
-									<Table.Head>Error</Table.Head>
-									<Table.Head>Checked At</Table.Head>
-								</Table.Row>
-							</Table.Header>
-							<Table.Body>
-								{#each healthHistory as h (h.id)}
-									<Table.Row class="border-border">
-										<Table.Cell>
-											<span
-												class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize {healthBadgeColor(
-													h.status
-												)}"
-											>
-												{#if h.status === 'healthy'}<CheckCircle2 class="h-3 w-3" />{:else}<XCircle
-														class="h-3 w-3"
-													/>{/if}
-												{h.status}
-											</span>
-										</Table.Cell>
-										<Table.Cell class="font-mono text-sm text-muted-foreground"
-											>{h.http_status || '—'}</Table.Cell
-										>
-										<Table.Cell class="max-w-[250px] truncate text-xs text-red-400"
-											>{h.error || ''}</Table.Cell
-										>
-										<Table.Cell class="text-muted-foreground">{formatDate(h.checked_at)}</Table.Cell
-										>
-									</Table.Row>
-								{/each}
-							</Table.Body>
-						</Table.Root>
-					</Card.Root>
-				{:else}
-					<Card.Root class="border-dashed border-border bg-card">
-						<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
-							<Heart class="mb-3 h-8 w-8 text-muted-foreground/40" />
-							<p class="text-sm text-muted-foreground">No health checks recorded</p>
-							<p class="mt-1 text-xs text-muted-foreground/60">Click "Health" to run a check</p>
-						</Card.Content>
-					</Card.Root>
-				{/if}
+				<HealthTab {healthHistory} />
 			</Tabs.Content>
 
 			<!-- Logs -->
 			<Tabs.Content value="logs" class="mt-4">
-				<div class="mb-3 flex items-center gap-2">
-					<Select
-						class="w-auto min-w-[120px] text-sm"
-						bind:value={logType}
-						onchange={() => loadLogs()}
-					>
-						<option value="out">stdout</option>
-						<option value="err">stderr</option>
-					</Select>
-					<Select
-						class="w-auto min-w-[120px] text-sm"
-						bind:value={logCount}
-						onchange={() => loadLogs()}
-					>
-						<option value={50}>50 lines</option>
-						<option value={100}>100 lines</option>
-						<option value={200}>200 lines</option>
-						<option value={500}>500 lines</option>
-					</Select>
-					<Button.Root variant="outline" size="sm" onclick={loadLogs}>
-						<RefreshCw class="mr-2 h-4 w-4" /> Refresh
-					</Button.Root>
-				</div>
-
-				{#if logError}
-					<div
-						class="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-400"
-					>
-						{logError}
-					</div>
-				{/if}
-
-				<Card.Root class="border-border bg-card">
-					<Card.Content class="p-0">
-						{#if logLines.length > 0}
-							<div class="max-h-[500px] overflow-auto">
-								<pre
-									class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">{#each logLines as line, i (i)}{line}
-									{/each}</pre>
-							</div>
-						{:else if !logError}
-							<div class="flex flex-col items-center justify-center py-12 text-center">
-								<FileText class="mb-3 h-8 w-8 text-muted-foreground/40" />
-								<p class="text-sm text-muted-foreground">No log output</p>
-							</div>
-						{/if}
-					</Card.Content>
-				</Card.Root>
+				<LogsTab bind:logLines bind:logError bind:logType bind:logCount onLoadLogs={loadLogs} />
 			</Tabs.Content>
 
 			<!-- Environment -->
 			<Tabs.Content value="env" class="mt-4">
-				<Card.Root class="border-border bg-card">
-					<Card.Header class="pb-3">
-						<div class="flex items-center justify-between">
-							<div class="space-y-1">
-								<Card.Title class="text-lg">Service Files</Card.Title>
-								<Card.Description
-									>Manage <code>{service.env_file || '.env'}</code> and any additional runtime config files for this service.</Card.Description
-								>
-							</div>
-							<div class="flex items-center gap-2">
-								<Button.Root variant="outline" size="sm" onclick={saveEnv} disabled={savingEnv}>
-									{#if savingEnv}<RefreshCw class="mr-2 h-4 w-4 animate-spin" />{:else}<Save
-											class="mr-2 h-4 w-4"
-										/>{/if}
-									Save
-								</Button.Root>
-								<Button.Root
-									variant="default"
-									size="sm"
-									onclick={() => {
-										saveEnv().then(() => runAction(() => api.restartService(id)));
-									}}
-									disabled={savingEnv}
-									class="bg-amber-600 text-white hover:bg-amber-700"
-								>
-									<RefreshCw class="mr-2 h-4 w-4" /> Save & Restart
-								</Button.Root>
-							</div>
-						</div>
-					</Card.Header>
-					<Card.Content class="space-y-4">
-						<div class="space-y-2">
-							<p class="text-sm text-muted-foreground">Primary env file</p>
-							<Input value={service.env_file || '.env'} disabled />
-						</div>
-						<Textarea
-							bind:value={envContent}
-							class="min-h-[280px] font-mono text-sm text-blue-300"
-							placeholder="KEY=VALUE"
-						/>
-						<p class="mt-2 text-xs text-muted-foreground italic">
-							Note: Environment variables are written to <code>{service.env_file}</code> in the service's
-							installation directory.
-						</p>
-						<div class="space-y-3 border-t border-border pt-4">
-							<div class="flex items-center justify-between">
-								<div>
-									<h3 class="text-sm font-medium">Additional managed config files</h3>
-									<p class="text-xs text-muted-foreground">Use <code>Current dir</code> for IIS files like <code>web.config</code> that must sit beside deployed static assets.</p>
-								</div>
-								<Button.Root variant="outline" size="sm" onclick={addConfigFile}>
-									Add file
-								</Button.Root>
-							</div>
-							{#if configFiles.length > 0}
-								<div class="space-y-3">
-									{#each configFiles as file, index (index)}
-										<Card.Root class="border-border/70 bg-background/60">
-											<Card.Content class="space-y-3 p-4">
-												<div class="flex items-center justify-between">
-													<p class="text-sm font-medium">Config file #{index + 1}</p>
-													<Button.Root
-														variant="ghost"
-														size="icon"
-														class="h-8 w-8 text-red-400 hover:text-red-300"
-														onclick={() => removeConfigFile(index)}
-													>
-														<XCircle class="h-4 w-4" />
-													</Button.Root>
-												</div>
-												<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
-										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
-										<Select bind:value={file.target}>
-											<option value="app_dir">Service/app dir</option>
-											<option value="release_dir">Current dir</option>
-										</Select>
-									</div>
-												<Textarea
-													class="min-h-[180px] font-mono text-sm text-blue-300"
-													bind:value={file.content}
-													placeholder={'{\n  "featureFlag": true\n}'}
-												/>
-											</Card.Content>
-										</Card.Root>
-									{/each}
-								</div>
-							{:else}
-								<div class="rounded-md border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
-									No extra config files yet.
-								</div>
-							{/if}
-						</div>
-					</Card.Content>
-				</Card.Root>
+				<EnvTab
+					{service}
+					bind:envContent
+					bind:configFiles
+					bind:savingEnv
+					onSaveEnv={saveEnv}
+					onSaveAndRestart={async () => {
+						await saveEnv();
+						await runAction(() => api.restartService(id));
+					}}
+				/>
 			</Tabs.Content>
 
 			<!-- Deploys -->
 			<Tabs.Content value="deploys" class="mt-4">
-				<div class="mb-3 flex items-center justify-between gap-2">
-					<div class="text-xs text-muted-foreground">Showing {(deploys.length === 0 ? 0 : ((deployPage - 1) * deployPageSize + 1))} - {Math.min(deployPage * deployPageSize, deployTotal)} of {deployTotal}</div>
-					<div class="flex items-center gap-2">
-						<Select
-							class="w-auto min-w-[110px] text-xs"
-							bind:value={deployPageSize}
-							onchange={async () => {
-								deployPage = 1;
-								await loadDeploys();
-							}}
-						>
-							<option value={10}>10 / page</option>
-							<option value={25}>25 / page</option>
-							<option value={50}>50 / page</option>
-						</Select>
-						<Button.Root
-							variant="outline"
-							size="sm"
-							disabled={deployPage <= 1}
-							onclick={async () => {
-								if (deployPage <= 1) return;
-								deployPage -= 1;
-								await loadDeploys();
-							}}
-						>
-							Prev
-						</Button.Root>
-						<Button.Root
-							variant="outline"
-							size="sm"
-							disabled={deployPage * deployPageSize >= deployTotal}
-							onclick={async () => {
-								if (deployPage * deployPageSize >= deployTotal) return;
-								deployPage += 1;
-								await loadDeploys();
-							}}
-						>
-							Next
-						</Button.Root>
-					</div>
-				</div>
-				{#if deploys.length > 0}
-					<Card.Root class="border-border bg-card">
-						<Table.Root>
-							<Table.Header>
-								<Table.Row class="border-border hover:bg-transparent">
-									<Table.Head>Status</Table.Head>
-									<Table.Head>Triggered By</Table.Head>
-									<Table.Head>Version</Table.Head>
-									<Table.Head>From</Table.Head>
-									<Table.Head>Duration</Table.Head>
-									<Table.Head>Started</Table.Head>
-									<Table.Head>Error</Table.Head>
-									<Table.Head class="text-right">Action</Table.Head>
-								</Table.Row>
-							</Table.Header>
-							<Table.Body>
-								{#each deploys as d (d.id)}
-									<Table.Row class="border-border">
-										<Table.Cell>
-											<span
-												class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize {statusColor(
-													d.status
-												)}"
-											>
-												{d.status}
-											</span>
-										</Table.Cell>
-										<Table.Cell class="text-xs capitalize text-muted-foreground">{d.triggered_by || 'agent'}</Table.Cell>
-										<Table.Cell class="font-mono text-sm">{d.version}</Table.Cell>
-										<Table.Cell class="font-mono text-xs text-muted-foreground"
-											>{d.from_version || '—'}</Table.Cell
-										>
-										<Table.Cell class="text-muted-foreground"
-											>{formatDuration(d.duration_ms)}</Table.Cell
-										>
-										<Table.Cell class="text-muted-foreground">{formatDate(d.started_at)}</Table.Cell
-										>
-										<Table.Cell class="max-w-[250px] truncate text-xs text-red-400">{d.error || ''}</Table.Cell>
-										<Table.Cell class="text-right">
-											<div class="flex items-center justify-end gap-2">
-												{#if d.github_deployment_id > 0}
-													<span title="Reported to GitHub" class="inline-flex items-center rounded border border-muted-foreground/20 bg-muted/30 px-1 py-0.5 text-[10px] text-muted-foreground/70">
-														<svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-														GitHub
-													</span>
-												{/if}
-												{#if watcher}
-													<a
-														href={resolve(`/watchers/${watcher.id}/logs/${d.id}`)}
-														class="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
-													>
-														Logs <ExternalLink class="ml-1.5 h-3 w-3 text-muted-foreground" />
-													</a>
-												{/if}
-											</div>
-										</Table.Cell>
-									</Table.Row>
-								{/each}
-							</Table.Body>
-						</Table.Root>
-					</Card.Root>
-				{:else}
-					<Card.Root class="border-dashed border-border bg-card">
-						<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
-							<Activity class="mb-3 h-8 w-8 text-muted-foreground/40" />
-							<p class="text-sm text-muted-foreground">No deployments</p>
-						</Card.Content>
-					</Card.Root>
-				{/if}
+				<DeploysTab
+					bind:deploys
+					bind:deployPage
+					bind:deployPageSize
+					{deployTotal}
+					{watcher}
+					onLoadDeploys={loadDeploys}
+				/>
 			</Tabs.Content>
 		</Tabs.Root>
 	{/if}
 </div>
 
-<Dialog.Root bind:open={showEditService}>
-	<Dialog.Content class="max-h-[90vh] w-[min(96vw,56rem)] overflow-hidden p-0 sm:max-w-3xl">
-		<form
-			class="flex max-h-[calc(90vh-5.5rem)] flex-col"
-			onsubmit={(e) => {
-				e.preventDefault();
-				saveServiceEdit();
-			}}
-		>
-		<Dialog.Header class="shrink-0 border-b border-border/70 px-6 pt-6 pb-4">
-			<Dialog.Title>Edit Service</Dialog.Title>
-			<Dialog.Description>Update how this watcher manages this service</Dialog.Description>
-		</Dialog.Header>
-			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-				<div class="grid gap-4 md:grid-cols-2">
-					<div class="space-y-2">
-						<Label for="editSvcType">Hosting Mode</Label>
-						<Select id="editSvcType" bind:value={editSvcType}>
-							<option value="nssm">Binary (NSSM)</option>
-							<option value="iis">IIS Site</option>
-						</Select>
-					</div>
-					<div class="space-y-2">
-						<Label for="editSvcName">{editSvcType === 'iis' ? 'Service Identifier' : 'Windows Service Name'}</Label>
-						<Input
-							id="editSvcName"
-							placeholder={editSvcType === 'iis' ? 'marketing-site' : 'my-app-web-1'}
-							bind:value={editSvcName}
-							required
-						/>
-					</div>
-
-					{#if editSvcType === 'nssm'}
-						<div class="space-y-2">
-							<Label for="editSvcBinary">Binary Name</Label>
-							<Input id="editSvcBinary" placeholder="my-app.exe" bind:value={editSvcBinary} required />
-						</div>
-						<div class="space-y-2">
-							<Label for="editSvcStartArguments">Start Arguments (optional)</Label>
-							<Input id="editSvcStartArguments" placeholder="serve --port 8080" bind:value={editSvcStartArguments} />
-						</div>
-						<div class="space-y-2 md:col-span-2">
-							<Label for="editSvcEnvFile">Env File (optional)</Label>
-							<Input id="editSvcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={editSvcEnvFile} />
-						</div>
-						<div class="space-y-2 md:col-span-2">
-							<Label for="editSvcEnvContent">Env Content (optional)</Label>
-							<Textarea
-								id="editSvcEnvContent"
-								class="min-h-[180px] font-mono text-xs text-blue-300"
-								bind:value={editSvcEnvContent}
-								placeholder="KEY=VALUE&#10;API_URL=https://example.com"
-							/>
-							<p class="text-xs text-muted-foreground">
-								If set, watcher writes this content into <code>{editSvcEnvFile || '.env'}</code> during service sync/deploy.
-							</p>
-						</div>
-					{:else}
-						<div class="space-y-2 md:col-span-2">
-							<Label for="editSvcIISAppKind">IIS App Kind</Label>
-							<Select id="editSvcIISAppKind" bind:value={editSvcIISAppKind}>
-								{#each iisAppKinds as kind (kind.value)}
-									<option value={kind.value}>{kind.label}</option>
-								{/each}
-							</Select>
-							<p class="text-xs text-muted-foreground">
-								{iisAppKinds.find((kind) => kind.value === editSvcIISAppKind)?.hint}
-							</p>
-						</div>
-						<div class="space-y-2">
-							<Label for="editSvcIISAppPool">IIS App Pool Name</Label>
-							<Input id="editSvcIISAppPool" placeholder="my-frontend" bind:value={editSvcIISAppPool} />
-						</div>
-						<div class="space-y-2">
-							<Label for="editSvcIISSiteName">IIS Site Name</Label>
-							<Input id="editSvcIISSiteName" placeholder="my-frontend" bind:value={editSvcIISSiteName} />
-						</div>
-						<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
-							<span class="font-medium text-foreground/90">Bootstrap profile:</span>
-							{' '}{iisAppKindLabel(editSvcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
-						</div>
-					{/if}
-
-					<div class="space-y-2">
-						<Label for="editSvcHealthURL">Health Check URL (optional)</Label>
-						<Input
-							id="editSvcHealthURL"
-							placeholder="http://localhost:3000/health"
-							bind:value={editSvcHealthURL}
-						/>
-					</div>
-					<div class="space-y-2">
-						<Label for="editSvcPublicURL">Public URL</Label>
-						<Input
-							id="editSvcPublicURL"
-							placeholder="https://my-app.example.com"
-							bind:value={editSvcPublicURL}
-						/>
-						{#if editSvcType === 'iis'}
-							<p class="text-xs text-muted-foreground">
-								Needed when Watcher must create the IIS site and binding automatically.
-							</p>
-						{/if}
-					</div>
-				</div>
-
-				<div class="space-y-3">
-					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-						<div>
-							<Label>Additional managed config files</Label>
-							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service. Use <code>Current dir</code> for IIS files like <code>web.config</code>.</p>
-						</div>
-						<Button.Root variant="outline" size="sm" type="button" class="h-8 shrink-0" onclick={addEditSvcConfigFile}>
-							<Plus class="mr-1.5 h-3 w-3" /> Add file
-						</Button.Root>
-					</div>
-					{#if editSvcConfigFiles.length > 0}
-						<div class="space-y-3 rounded-md border border-border/70 bg-background/50 p-3">
-							{#each editSvcConfigFiles as file, fileIndex (fileIndex)}
-								<div class="space-y-2 rounded-md border border-border/60 bg-card/60 p-3">
-									<div class="flex items-center justify-between">
-										<Label>Config file #{fileIndex + 1}</Label>
-										<Button.Root
-											variant="ghost"
-											size="icon"
-											type="button"
-											class="h-7 w-7 text-red-400 hover:text-red-300"
-											onclick={() => removeEditSvcConfigFile(fileIndex)}
-										>
-											<XCircle class="h-4 w-4" />
-										</Button.Root>
-									</div>
-									<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
-										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
-										<Select bind:value={file.target}>
-											<option value="app_dir">Service/app dir</option>
-											<option value="release_dir">Current dir</option>
-										</Select>
-									</div>
-									<Textarea
-										class="min-h-[140px] font-mono text-xs text-blue-300"
-										bind:value={file.content}
-										placeholder={'{\n  "featureFlag": true\n}'}
-									/>
-								</div>
-							{/each}
-						</div>
-					{:else}
-						<p class="text-xs text-muted-foreground">
-							Use this for runtime files like <code>config.json</code>, <code>appsettings.json</code>, or other generated config.
-						</p>
-					{/if}
-				</div>
-			</div>
-			<Dialog.Footer class="shrink-0 border-t border-border/70 px-6 pt-4 pb-4">
-				<Button.Root variant="outline" type="button" onclick={() => (showEditService = false)}>
-					Cancel
-				</Button.Root>
-				<Button.Root type="submit" disabled={updatingService}>
-					{updatingService ? 'Saving...' : 'Save Service'}
-				</Button.Root>
-			</Dialog.Footer>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
+<EditServiceDialog
+	bind:open={showEditService}
+	service={service}
+	onSave={saveServiceEdit}
+/>

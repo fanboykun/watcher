@@ -11,6 +11,7 @@
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { Download, Info, RotateCcw, AlertTriangle, CheckCircle2, Copy, LockKeyhole } from '@lucide/svelte';
 
 	let versionInfo = $state<SelfVersionResponse | null>(null);
@@ -267,9 +268,9 @@
 						<label class="text-sm text-muted-foreground" for="cfg-environment">Environment</label>
 						<Input id="cfg-environment" bind:value={cfgEnvironment} />
 					</div>
-					<div class="space-y-2">
-						<label class="text-sm text-muted-foreground inline-flex items-center gap-2" for="cfg-github-deploy-enabled">
-							<input id="cfg-github-deploy-enabled" type="checkbox" bind:checked={cfgGithubDeployEnabled} />
+					<div class="flex items-center gap-2 py-2">
+						<Checkbox id="cfg-github-deploy-enabled" bind:checked={cfgGithubDeployEnabled} />
+						<label class="text-sm text-muted-foreground select-none" for="cfg-github-deploy-enabled">
 							Enable GitHub Deployment API
 						</label>
 					</div>
@@ -280,10 +281,12 @@
 					<div class="space-y-2 md:col-span-2">
 						<label class="text-sm text-muted-foreground" for="cfg-github-token">GitHub Token (leave blank to keep current)</label>
 						<Input id="cfg-github-token" type="password" placeholder={agentConfig.github_token_masked || 'not set'} bind:value={githubTokenInput} />
-						<label class="text-xs text-muted-foreground inline-flex items-center gap-2">
-							<input type="checkbox" bind:checked={clearGitHubToken} />
-							Clear existing GitHub token
-						</label>
+						<div class="flex items-center gap-2 mt-2">
+							<Checkbox id="clear-github-token" bind:checked={clearGitHubToken} />
+							<label class="text-xs text-muted-foreground select-none" for="clear-github-token">
+								Clear existing GitHub token
+							</label>
+						</div>
 						<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
 							<p class="font-medium text-foreground/90">GitHub token requirements</p>
 							<p>Public repos: token optional. Private repos: token required.</p>
@@ -391,7 +394,7 @@
 						</div>
 					{:else}
 						<div class="flex items-center gap-2 text-emerald-500 text-sm font-medium">
-							<CheckCircle2 class="w-4 h-4" /> Waiter is up to date (running the latest version: {updateInfo.latest_version}).
+							<CheckCircle2 class="w-4 h-4" /> Watcher is up to date (running the latest version: {updateInfo.latest_version}).
 						</div>
 					{/if}
 				</div>
@@ -427,7 +430,7 @@
 </div>
 
 <Dialog.Root bind:open={showRestartDialog}>
-	<Dialog.Content class="sm:max-w-[460px]">
+	<Dialog.Content class="sm:max-w-115">
 		<Dialog.Header>
 			<Dialog.Title>Restart Watcher Service</Dialog.Title>
 			<Dialog.Description>
@@ -446,7 +449,7 @@
 </Dialog.Root>
 
 <Dialog.Root bind:open={showUpdateDialog}>
-	<Dialog.Content class="sm:max-w-[460px]">
+	<Dialog.Content class="sm:max-w-115">
 		<Dialog.Header>
 			<Dialog.Title>Update Watcher</Dialog.Title>
 			<Dialog.Description>

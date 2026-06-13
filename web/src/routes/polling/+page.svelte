@@ -7,7 +7,8 @@
 	import { Clock, Pause, Play, RefreshCw, Search, AlertCircle, CheckCircle } from '@lucide/svelte';
 	import { timeAgo } from '$lib/utils';
 	import { onDestroy, onMount } from 'svelte';
-	import { invalidate } from '$app/navigation';
+	import { invalidate, goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 
 	let { data } = $props();
 	let watchers = $derived(data.watchers);
@@ -35,8 +36,8 @@
 			w.paused = newPaused;
 			showSuccess(`Watcher ${w.name} ${newPaused ? 'paused' : 'resumed'}`);
 			invalidate('app:watchers');
-		} catch (e: any) {
-			showError(`Failed to toggle pause: ${e.message}`);
+		} catch (e: unknown) {
+			showError(`Failed to toggle pause: ${(e as {message: string}).message}`);
 		}
 	}
 
@@ -134,7 +135,7 @@
 					{#each filteredWatchers as w (w.id)}
 						<Table.Row
 							class="cursor-pointer hover:bg-muted/50 transition-colors"
-							onclick={() => (window.location.href = `/watchers/${w.id}?tab=polling`)}
+							onclick={() => goto(resolve(`/watchers/${w.id}?tab=polling`))}
 						>
 							<Table.Cell class="font-medium">{w.name}</Table.Cell>
 							<Table.Cell>{w.service_name}</Table.Cell>
@@ -168,11 +169,11 @@
 							<Table.Cell class="text-right">
 								<div class="flex justify-end gap-2" role="group" aria-label="Actions">
 									{#if w.paused}
-										<Button.Root size="sm" variant="outline" onclick={() => togglePause(w)}>
+										<Button.Root size="sm" variant="outline" onclick={(e) => { e.stopPropagation(); togglePause(w); }}>
 											<Play class="mr-1 h-3.5 w-3.5" /> Resume
 										</Button.Root>
 									{:else}
-										<Button.Root size="sm" variant="outline" onclick={() => togglePause(w)}>
+										<Button.Root size="sm" variant="outline" onclick={(e) => { e.stopPropagation(); togglePause(w); }}>
 											<Pause class="mr-1 h-3.5 w-3.5" /> Pause
 										</Button.Root>
 									{/if}
