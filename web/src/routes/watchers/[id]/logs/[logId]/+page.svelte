@@ -13,7 +13,7 @@
 		Copy
 	} from '@lucide/svelte';
 	import { resolve } from '$app/paths';
-	import { timeAgo } from '$lib/utils';
+	import { timeAgo, formatDate, formatDuration, statusColor } from '$lib/utils';
 	import { onMount } from 'svelte';
 
 	const id = Number(page.params.id);
@@ -69,31 +69,7 @@
 		};
 	});
 
-	function formatDate(ts: string | null): string {
-		if (!ts) return '—';
-		return new Date(ts).toLocaleString();
-	}
 
-	function formatDuration(ms: number): string {
-		if (!ms) return '—';
-		if (ms < 1000) return `${ms}ms`;
-		return `${(ms / 1000).toFixed(1)}s`;
-	}
-
-	function statusColor(s: string) {
-		switch (s) {
-			case 'healthy':
-				return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
-			case 'deploying':
-				return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
-			case 'failed':
-				return 'bg-red-500/15 text-red-400 border-red-500/30';
-			case 'rollback':
-				return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
-			default:
-				return 'bg-muted text-muted-foreground border-border';
-		}
-	}
 
 	function deployIcon(s: string) {
 		switch (s) {

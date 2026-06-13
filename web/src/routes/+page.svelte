@@ -5,6 +5,7 @@
 	import Badge from '$lib/components/ui/badge/badge.svelte';
 	import { Activity, Clock, Eye, Server, Rocket, AlertCircle } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
+	import { statusColor, timeAgo } from '$lib/utils';
 
 	let status = $state<SystemStatus | null>(null);
 	let watchers = $state<Watcher[]>([]);
@@ -18,31 +19,7 @@
 		}
 	});
 
-	function statusColor(s: string) {
-		switch (s) {
-			case 'healthy':
-				return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
-			case 'deploying':
-				return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
-			case 'failed':
-				return 'bg-red-500/15 text-red-400 border-red-500/30';
-			case 'rollback':
-				return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
-			default:
-				return 'bg-muted text-muted-foreground border-border';
-		}
-	}
 
-	function timeAgo(ts: string | null): string {
-		if (!ts) return 'never';
-		const diff = Date.now() - new Date(ts).getTime();
-		const mins = Math.floor(diff / 60000);
-		if (mins < 1) return 'just now';
-		if (mins < 60) return `${mins}m ago`;
-		const hrs = Math.floor(mins / 60);
-		if (hrs < 24) return `${hrs}h ago`;
-		return `${Math.floor(hrs / 24)}d ago`;
-	}
 </script>
 
 <div class="space-y-8">
@@ -142,7 +119,7 @@
 									</div>
 									<div class="flex items-center gap-1.5 text-muted-foreground">
 										<Clock class="h-3.5 w-3.5" />
-										<span>{timeAgo(w.last_checked)}</span>
+										<span>{w.last_checked ? timeAgo(w.last_checked) : 'never'}</span>
 									</div>
 								</div>
 								{#if w.last_error}

@@ -199,11 +199,12 @@ jobs:
             git push origin "$NEW_TAG"
           fi
 
-          CHANGELOG_ESCAPED="${CHANGELOG//$'\n'/'%0A'}"
           echo "should_release=true"          >> $GITHUB_OUTPUT
           echo "new_tag=$NEW_TAG"             >> $GITHUB_OUTPUT
           echo "bump_type=$BUMP"              >> $GITHUB_OUTPUT
-          echo "changelog=$CHANGELOG_ESCAPED" >> $GITHUB_OUTPUT
+          echo "changelog<<EOF"               >> $GITHUB_OUTPUT
+          echo -e "$CHANGELOG"                >> $GITHUB_OUTPUT
+          echo "EOF"                          >> $GITHUB_OUTPUT
 
   # ============================================================
   # JOB 2 -- BUILD & PACKAGE RELEASE
