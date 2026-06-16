@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/fanboykun/watcher/internal/database"
+	"github.com/fanboykun/watcher/internal/webhook"
 	"gorm.io/gorm"
 )
 
@@ -24,10 +25,11 @@ type StateManager struct {
 	watcherID uint
 	log       *Logger
 	events    *WatcherEventBus
+	webhooks  *webhook.Service
 }
 
-func NewStateManager(db *gorm.DB, watcherID uint, log *Logger, events *WatcherEventBus) *StateManager {
-	return &StateManager{db: db, watcherID: watcherID, log: log, events: events}
+func NewStateManager(db *gorm.DB, watcherID uint, log *Logger, events *WatcherEventBus, webhooks *webhook.Service) *StateManager {
+	return &StateManager{db: db, watcherID: watcherID, log: log, events: events, webhooks: webhooks}
 }
 
 func (s *StateManager) ReadVersion() (string, string, error) {
@@ -74,11 +76,13 @@ func (s *StateManager) SetDeploying(version, fromVersion string) (uint, error) {
 	var dlog database.DeployLog
 	if err := s.db.Where("watcher_id = ? AND completed_at IS NULL", s.watcherID).Order("id desc").First(&dlog).Error; err == nil {
 		if err := s.db.Model(&dlog).Updates(map[string]any{
-			"status":       string(StatusDeploying),
+			"status":       "in_progress",
 			"version":      version,
 			"from_version": fromVersion,
 			"started_at":   &now,
 			"error":        "",
+			"kind":         "deploy",
+			"reason":       "manual_redeploy",
 		}).Error; err != nil {
 			return 0, err
 		}
@@ -86,14 +90,18 @@ func (s *StateManager) SetDeploying(version, fromVersion string) (uint, error) {
 		dlog = database.DeployLog{
 			WatcherID:   s.watcherID,
 			TriggeredBy: "agent",
+			Kind:        "deploy",
+			Reason:      "new_version",
 			Version:     version,
 			FromVersion: fromVersion,
-			Status:      string(StatusDeploying),
+			Status:      "in_progress",
 			StartedAt:   &now,
 		}
 		if err := s.db.Create(&dlog).Error; err != nil {
 			return 0, err
 		}
+		_ = s.db.Model(&dlog).Update("root_attempt_id", dlog.ID).Error
+		dlog.RootAttemptID = &dlog.ID
 	}
 	s.publish(EventDeployStarted, map[string]any{
 		"deploy_log_id": dlog.ID,
@@ -132,21 +140,29 @@ func (s *StateManager) SetHealthy(version string) error {
 			durationMs = now.Sub(*log.StartedAt).Milliseconds()
 		}
 		s.db.Model(&log).Updates(map[string]any{
-			"status":       string(StatusHealthy),
+			"status":       "succeeded",
 			"completed_at": &now,
 			"duration_ms":  durationMs,
 		})
+		log.Status = "succeeded"
+		log.CompletedAt = &now
+		log.DurationMs = durationMs
 		s.publish(EventDeployFinished, map[string]any{
 			"deploy_log_id": log.ID,
-			"status":        string(StatusHealthy),
+			"status":        "succeeded",
 			"version":       version,
 		})
+		s.emitAttemptWebhook(&log)
 	}
 	s.publish(EventStatusChanged, map[string]any{"status": string(StatusHealthy)})
 	return nil
 }
 
 func (s *StateManager) SetFailed(errMsg string) error {
+	return s.SetFailedWithPhase(errMsg, "")
+}
+
+func (s *StateManager) SetFailedWithPhase(errMsg, phase string) error {
 	now := time.Now().UTC()
 	// Update watcher state
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
@@ -167,16 +183,23 @@ func (s *StateManager) SetFailed(errMsg string) error {
 			durationMs = now.Sub(*log.StartedAt).Milliseconds()
 		}
 		s.db.Model(&log).Updates(map[string]any{
-			"status":       string(StatusFailed),
-			"error":        errMsg,
-			"completed_at": &now,
-			"duration_ms":  durationMs,
+			"status":        "failed",
+			"error":         errMsg,
+			"failure_phase": phase,
+			"completed_at":  &now,
+			"duration_ms":   durationMs,
 		})
+		log.Status = "failed"
+		log.Error = errMsg
+		log.FailurePhase = phase
+		log.CompletedAt = &now
+		log.DurationMs = durationMs
 		s.publish(EventDeployFinished, map[string]any{
 			"deploy_log_id": log.ID,
-			"status":        string(StatusFailed),
+			"status":        "failed",
 			"error":         errMsg,
 		})
+		s.emitAttemptWebhook(&log)
 	}
 	s.publish(EventStatusChanged, map[string]any{"status": string(StatusFailed), "error": errMsg})
 	return nil
@@ -186,22 +209,29 @@ func (s *StateManager) SetRolledBack(version string) error {
 	now := time.Now().UTC()
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
 		UpdateColumns(map[string]any{
-			"status":          string(StatusRollback),
+			"status":          string(StatusHealthy),
 			"current_version": version,
 			"last_deployed":   &now,
+			"last_error":      "",
 		}).Error
 	if err != nil {
 		return err
 	}
 
 	err = s.db.Model(&database.DeployLog{}).
-		Where("watcher_id = ? AND completed_at IS NULL", s.watcherID).
+		Where("watcher_id = ? AND kind = ? AND completed_at IS NULL", s.watcherID, "rollback").
 		Updates(map[string]any{
-			"status":       string(StatusRollback),
+			"status":       "succeeded",
 			"completed_at": &now,
 		}).Error
 	if err == nil {
-		s.publish(EventStatusChanged, map[string]any{"status": string(StatusRollback), "version": version})
+		var log database.DeployLog
+		if err := s.db.Where("watcher_id = ? AND kind = ? AND completed_at = ?", s.watcherID, "rollback", &now).Order("id desc").First(&log).Error; err == nil {
+			log.Status = "succeeded"
+			log.CompletedAt = &now
+			s.emitAttemptWebhook(&log)
+		}
+		s.publish(EventStatusChanged, map[string]any{"status": string(StatusHealthy), "version": version})
 		s.publish(EventVersionChanged, map[string]any{"version": version})
 	}
 	return err
@@ -259,7 +289,7 @@ func (s *StateManager) publish(eventType string, data map[string]any) {
 func (s *StateManager) ConsecutiveFailuresForVersion(version string) int {
 	var count int64
 	s.db.Model(&database.DeployLog{}).
-		Where("watcher_id = ? AND version = ? AND status = ?", s.watcherID, version, string(StatusFailed)).
+		Where("watcher_id = ? AND version = ? AND kind = ? AND status = ?", s.watcherID, version, "deploy", "failed").
 		Count(&count)
 	return int(count)
 }
@@ -267,7 +297,111 @@ func (s *StateManager) ConsecutiveFailuresForVersion(version string) int {
 func (s *StateManager) HasPendingManualDeploy() bool {
 	var count int64
 	s.db.Model(&database.DeployLog{}).
-		Where("watcher_id = ? AND completed_at IS NULL AND triggered_by = ?", s.watcherID, "manual").
+		Where("watcher_id = ? AND kind = ? AND completed_at IS NULL AND triggered_by = ?", s.watcherID, "deploy", "manual").
 		Count(&count)
 	return count > 0
+}
+
+func (s *StateManager) StartRollbackAttempt(version, fromVersion, failedTargetVersion, reason, triggeredBy string, parentAttemptID, rootAttemptID *uint) (uint, error) {
+	now := time.Now().UTC()
+	attempt := database.DeployLog{
+		WatcherID:           s.watcherID,
+		TriggeredBy:         triggeredBy,
+		Kind:                "rollback",
+		Reason:              reason,
+		Version:             version,
+		FromVersion:         fromVersion,
+		FailedTargetVersion: failedTargetVersion,
+		Status:              "in_progress",
+		ParentAttemptID:     parentAttemptID,
+		RootAttemptID:       rootAttemptID,
+		StartedAt:           &now,
+	}
+	if err := s.db.Create(&attempt).Error; err != nil {
+		return 0, err
+	}
+	if attempt.RootAttemptID == nil {
+		_ = s.db.Model(&attempt).Update("root_attempt_id", attempt.ID).Error
+	}
+	return attempt.ID, nil
+}
+
+func (s *StateManager) CompleteRollbackAttempt(attemptID uint, version string, maxIgnoredVersion string) error {
+	now := time.Now().UTC()
+	var attempt database.DeployLog
+	if err := s.db.First(&attempt, attemptID).Error; err != nil {
+		return err
+	}
+	durationMs := int64(0)
+	if attempt.StartedAt != nil {
+		durationMs = now.Sub(*attempt.StartedAt).Milliseconds()
+	}
+	if err := s.db.Model(&attempt).Updates(map[string]any{
+		"status":       "succeeded",
+		"completed_at": &now,
+		"duration_ms":  durationMs,
+	}).Error; err != nil {
+		return err
+	}
+	attempt.Status = "succeeded"
+	attempt.CompletedAt = &now
+	attempt.DurationMs = durationMs
+
+	if err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).Updates(map[string]any{
+		"status":              string(StatusHealthy),
+		"current_version":     version,
+		"max_ignored_version": maxIgnoredVersion,
+		"last_deployed":       &now,
+		"last_error":          "",
+	}).Error; err != nil {
+		return err
+	}
+	s.publish(EventStatusChanged, map[string]any{"status": string(StatusHealthy), "version": version})
+	s.publish(EventVersionChanged, map[string]any{"version": version})
+	s.emitAttemptWebhook(&attempt)
+	return nil
+}
+
+func (s *StateManager) FailRollbackAttempt(attemptID uint, errMsg string) error {
+	now := time.Now().UTC()
+	var attempt database.DeployLog
+	if err := s.db.First(&attempt, attemptID).Error; err != nil {
+		return err
+	}
+	durationMs := int64(0)
+	if attempt.StartedAt != nil {
+		durationMs = now.Sub(*attempt.StartedAt).Milliseconds()
+	}
+	if err := s.db.Model(&attempt).Updates(map[string]any{
+		"status":       "failed",
+		"error":        errMsg,
+		"completed_at": &now,
+		"duration_ms":  durationMs,
+	}).Error; err != nil {
+		return err
+	}
+	attempt.Status = "failed"
+	attempt.Error = errMsg
+	attempt.CompletedAt = &now
+	attempt.DurationMs = durationMs
+	if err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).Updates(map[string]any{
+		"status":     string(StatusFailed),
+		"last_error": errMsg,
+	}).Error; err != nil {
+		return err
+	}
+	s.publish(EventStatusChanged, map[string]any{"status": string(StatusFailed), "error": errMsg})
+	s.emitAttemptWebhook(&attempt)
+	return nil
+}
+
+func (s *StateManager) emitAttemptWebhook(log *database.DeployLog) {
+	if s.webhooks == nil || log == nil {
+		return
+	}
+	var watcher database.Watcher
+	if err := s.db.First(&watcher, s.watcherID).Error; err != nil {
+		return
+	}
+	_ = s.webhooks.EmitAttemptEventTx(s.db, &watcher, log)
 }

@@ -6,18 +6,19 @@ import (
 
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/config"
+	"github.com/fanboykun/watcher/internal/webhook"
 	"github.com/fanboykun/watcher/web"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 // NewRouter creates a Gin engine with all API routes and embedded SPA.
-func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}) *gin.Engine {
+func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	h := NewHandler(db, nssmPath, logDir, version, githubToken, envPath, appCfg, events, checkTrigger, syncTrigger)
+	h := NewHandler(db, nssmPath, logDir, version, githubToken, envPath, appCfg, events, checkTrigger, syncTrigger, webhookService, webhookTrigger)
 
 	apiGroup := r.Group("/api")
 	{
@@ -76,6 +77,11 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath stri
 			watchers.GET("/:id/versions", h.ListAvailableVersions)
 			watchers.POST("/:id/rollback", h.RollbackWatcher)
 			watchers.POST("/:id/resume", h.ResumeWatcherUpdates)
+			watchers.GET("/:id/webhook-events", h.ListWebhookEvents)
+			watchers.GET("/:id/webhook-deliveries", h.ListWebhookDeliveries)
+			watchers.GET("/:id/webhook-deliveries/:deliveryId", h.GetWebhookDelivery)
+			watchers.POST("/:id/webhook/test", h.SendWatcherWebhookTest)
+			watchers.POST("/:id/webhook/resume", h.ResumeWatcherWebhook)
 			watchers.DELETE("/:id/versions/:version", h.DeleteWatcherVersion)
 		}
 

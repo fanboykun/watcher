@@ -10,6 +10,7 @@
 		type DeployLog,
 		type IISAppKind,
 		type Service,
+		type WebhookDelivery,
 		type Watcher
 	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
@@ -41,6 +42,7 @@
 	import DeploysTab from './components/deploys-tab.svelte';
 	import VersionsTab from './components/versions-tab.svelte';
 	import PollingTab from './components/polling-tab.svelte';
+	import WebhooksTab from './components/webhooks-tab.svelte';
 	import AddServiceDialog from './components/add-service-dialog.svelte';
 	import EditServiceDialog from './components/edit-service-dialog.svelte';
 
@@ -48,9 +50,13 @@
 	let deploys = $state<DeployLog[]>([]);
 	let polls = $state<import('$lib/api').PollEvent[]>([]);
 	let versions = $state<import('$lib/api').ReleaseInfo[]>([]);
+	let webhookDeliveries = $state<WebhookDelivery[]>([]);
 	let deployPage = $state(1);
 	let deployPageSize = $state(10);
 	let deployTotal = $state(0);
+	let deliveryPage = $state(1);
+	let deliveryPageSize = $state(20);
+	let deliveryTotal = $state(0);
 	let pollPage = $state(1);
 	let pollPageSize = $state(10);
 	let pollStatus = $state('all');
@@ -86,6 +92,16 @@
 	let editDeploymentEnvironment = $state('');
 	let editGitHubToken = $state('');
 	let editUseGlobalToken = $state(false);
+	let editWebhookEnabled = $state(false);
+	let editWebhookURL = $state('');
+	let editWebhookBearerToken = $state('');
+	let editUseGlobalWebhookToken = $state(false);
+	let editNotifyVersionFound = $state(false);
+	let editNotifyDeploymentSucceeded = $state(false);
+	let editNotifyDeploymentFailed = $state(false);
+	let editNotifyRollbackSucceeded = $state(false);
+	let editNotifyRollbackFailed = $state(false);
+	let editNotifyServiceHealthChanged = $state(false);
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'overview');
 
@@ -116,6 +132,12 @@
 		deployTotal = res.total;
 	};
 
+	const loadWebhookDeliveries = async () => {
+		const res = await api.watcherWebhookDeliveries(id, deliveryPage, deliveryPageSize);
+		webhookDeliveries = res.data;
+		deliveryTotal = res.total;
+	};
+
 	function scheduleRefresh(includeVersions = false, includePolls = false) {
 		if (refreshTimer) return;
 		refreshTimer = setTimeout(async () => {
@@ -130,6 +152,9 @@
 				}
 				if (includePolls || activeTab === 'polling') {
 					tasks.push(loadPolls());
+				}
+				if (activeTab === 'webhooks') {
+					tasks.push(loadWebhookDeliveries());
 				}
 				await Promise.all(tasks);
 			} catch {
@@ -152,7 +177,8 @@
 					api.watcherVersions(id).then((v) => {
 						versions = v;
 					}),
-					loadPolls()
+					loadPolls(),
+					loadWebhookDeliveries()
 				]).then((results) => {
 					if (results[0]?.status === 'rejected') {
 						deploys = [];
@@ -223,6 +249,16 @@
 		editDeploymentEnvironment = watcher.deployment_environment || '';
 		editGitHubToken = '';
 		editUseGlobalToken = !watcher.has_github_token;
+		editWebhookEnabled = watcher.webhook_enabled;
+		editWebhookURL = watcher.webhook_url || '';
+		editWebhookBearerToken = '';
+		editUseGlobalWebhookToken = !watcher.has_webhook_bearer_token;
+		editNotifyVersionFound = watcher.notify_version_found;
+		editNotifyDeploymentSucceeded = watcher.notify_deployment_succeeded;
+		editNotifyDeploymentFailed = watcher.notify_deployment_failed;
+		editNotifyRollbackSucceeded = watcher.notify_rollback_succeeded;
+		editNotifyRollbackFailed = watcher.notify_rollback_failed;
+		editNotifyServiceHealthChanged = watcher.notify_service_health_changed;
 	}
 
 	async function saveEdit() {
@@ -234,6 +270,15 @@
 				release_ref: editReleaseRef.trim() || 'latest',
 				deployment_environment: editDeploymentEnvironment,
 				github_token: editUseGlobalToken ? '' : (editGitHubToken.trim() !== '' ? editGitHubToken : undefined),
+				webhook_enabled: editWebhookEnabled,
+				webhook_url: editWebhookURL,
+				webhook_bearer_token: editUseGlobalWebhookToken ? '' : (editWebhookBearerToken.trim() !== '' ? editWebhookBearerToken : undefined),
+				notify_version_found: editNotifyVersionFound,
+				notify_deployment_succeeded: editNotifyDeploymentSucceeded,
+				notify_deployment_failed: editNotifyDeploymentFailed,
+				notify_rollback_succeeded: editNotifyRollbackSucceeded,
+				notify_rollback_failed: editNotifyRollbackFailed,
+				notify_service_health_changed: editNotifyServiceHealthChanged,
 				install_dir: editInstallDir,
 				hc_enabled: editHcEnabled,
 				hc_url: editHcURL,
@@ -404,6 +449,27 @@
 		}
 	}
 
+	async function sendWebhookTest() {
+		try {
+			const res = await api.sendWatcherWebhookTest(id);
+			triggerMsg = res.message;
+			await loadWebhookDeliveries();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to send webhook test';
+		}
+	}
+
+	async function resumeWebhook(replaySuppressed = false) {
+		try {
+			const res = await api.resumeWatcherWebhook(id, replaySuppressed);
+			triggerMsg = res.message;
+			watcher = await api.getWatcher(id);
+			await loadWebhookDeliveries();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to resume webhook delivery';
+		}
+	}
+
 
 
 	function hasActiveRollbackPin(w: Watcher | null): boolean {
@@ -559,6 +625,36 @@
 								<p class="text-xs text-muted-foreground mt-1">Current: {watcher.has_github_token ? (watcher.github_token_masked || 'set') : 'using global token'}</p>
 							</div>
 						</div>
+						<div class="rounded-lg border border-border/60 p-4 space-y-4">
+							<div class="flex items-center gap-2">
+								<Checkbox id="editWebhookEnabled" bind:checked={editWebhookEnabled} />
+								<Label for="editWebhookEnabled">Enable webhook delivery for this watcher</Label>
+							</div>
+							<div class="grid gap-4 sm:grid-cols-2">
+								<div class="space-y-2">
+									<Label for="editWebhookURL">Webhook URL</Label>
+									<Input id="editWebhookURL" bind:value={editWebhookURL} placeholder="https://example.com/hooks/watcher" />
+									<p class="text-xs text-muted-foreground">Leave empty to inherit the global default URL.</p>
+								</div>
+								<div class="space-y-2">
+									<Label for="editWebhookBearerToken">Webhook Bearer Token Override</Label>
+									<Input id="editWebhookBearerToken" type="password" bind:value={editWebhookBearerToken} placeholder="Paste new token to replace override" disabled={editUseGlobalWebhookToken} />
+									<div class="flex items-center gap-2 mt-2">
+										<Checkbox id="editUseGlobalWebhookToken" bind:checked={editUseGlobalWebhookToken} />
+										<Label for="editUseGlobalWebhookToken">Use global default bearer token</Label>
+									</div>
+									<p class="text-xs text-muted-foreground mt-1">Current: {watcher.has_webhook_bearer_token ? (watcher.webhook_bearer_token_masked || 'set') : 'using global webhook token'}</p>
+								</div>
+							</div>
+							<div class="grid gap-2 sm:grid-cols-2 text-sm">
+								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyVersionFound} /> Version found</label>
+								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyDeploymentSucceeded} /> Deployment succeeded</label>
+								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyDeploymentFailed} /> Deployment failed</label>
+								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyRollbackSucceeded} /> Rollback succeeded</label>
+								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyRollbackFailed} /> Rollback failed</label>
+								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyServiceHealthChanged} /> Service health changed</label>
+							</div>
+						</div>
 						<div class="flex items-center gap-2 py-2">
 							<Checkbox id="editHcEnabled" bind:checked={editHcEnabled} />
 							<Label for="editHcEnabled">Enable health checks</Label>
@@ -592,6 +688,7 @@
 				<Tabs.Trigger value="deploys">Deploy History ({deployTotal})</Tabs.Trigger>
 				<Tabs.Trigger value="versions">Versions ({versions.length})</Tabs.Trigger>
 				<Tabs.Trigger value="polling">Polling History</Tabs.Trigger>
+				<Tabs.Trigger value="webhooks">Webhooks ({deliveryTotal})</Tabs.Trigger>
 			</Tabs.List>
 
 			<Tabs.Content value="overview" class="mt-4">
@@ -650,6 +747,28 @@
 						pollPage = 1;
 						await loadPolls();
 					}}
+				/>
+			</Tabs.Content>
+
+			<Tabs.Content value="webhooks" class="mt-4">
+				<WebhooksTab
+					{watcher}
+					deliveries={webhookDeliveries}
+					bind:deliveryPage
+					bind:deliveryPageSize
+					deliveryTotal={deliveryTotal}
+					onPageChange={async (p) => {
+						deliveryPage = p;
+						await loadWebhookDeliveries();
+					}}
+					onPageSizeChange={async (size) => {
+						deliveryPageSize = size;
+						deliveryPage = 1;
+						await loadWebhookDeliveries();
+					}}
+					onSendTest={sendWebhookTest}
+					onResume={() => resumeWebhook(false)}
+					onResumeReplay={() => resumeWebhook(true)}
 				/>
 			</Tabs.Content>
 		</Tabs.Root>

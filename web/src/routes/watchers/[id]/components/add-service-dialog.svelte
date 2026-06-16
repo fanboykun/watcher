@@ -3,7 +3,7 @@
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { Select } from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Plus, Trash2 } from '@lucide/svelte';
 	import { iisAppKindLabel, type ServiceConfigFile, type IISAppKind } from '$lib/api';
@@ -132,10 +132,13 @@
 				<div class="grid gap-4 md:grid-cols-2">
 					<div class="space-y-2">
 						<Label for="svcType">Hosting Mode</Label>
-						<Select id="svcType" bind:value={svcType}>
-							<option value="nssm">Binary (NSSM)</option>
-							<option value="iis">IIS Site</option>
-						</Select>
+						<Select.Root type="single" bind:value={svcType}>
+							<Select.Trigger id="svcType" />
+							<Select.Content>
+								<Select.Item value="nssm">Binary (NSSM)</Select.Item>
+								<Select.Item value="iis">IIS Site</Select.Item>
+							</Select.Content>
+						</Select.Root>
 					</div>
 					<div class="space-y-2">
 						<Label for="svcName">
@@ -177,11 +180,14 @@
 					{:else}
 						<div class="space-y-2 md:col-span-2">
 							<Label for="svcIISAppKind">IIS App Kind</Label>
-							<Select id="svcIISAppKind" bind:value={svcIISAppKind}>
-								{#each iisAppKinds as kind (kind.value)}
-									<option value={kind.value}>{kind.label}</option>
-								{/each}
-							</Select>
+							<Select.Root type="single" bind:value={svcIISAppKind}>
+								<Select.Trigger id="svcIISAppKind" />
+								<Select.Content>
+									{#each iisAppKinds as kind (kind.value)}
+										<Select.Item value={kind.value}>{kind.label}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
 							<p class="text-xs text-muted-foreground">
 								{iisAppKinds.find((kind) => kind.value === svcIISAppKind)?.hint}
 							</p>
@@ -251,10 +257,13 @@
 									</div>
 									<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
 										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
-										<Select bind:value={file.target}>
-											<option value="app_dir">Service/app dir</option>
-											<option value="release_dir">Current dir</option>
-										</Select>
+										<Select.Root type="single" bind:value={file.target}>
+											<Select.Trigger />
+											<Select.Content>
+												<Select.Item value="app_dir">Service/app dir</Select.Item>
+												<Select.Item value="release_dir">Current dir</Select.Item>
+											</Select.Content>
+										</Select.Root>
 									</div>
 									<Textarea
 										class="min-h-35 font-mono text-xs text-blue-300"

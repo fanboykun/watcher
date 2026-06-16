@@ -3,7 +3,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
-	import { Select } from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select';
 	import { Activity, ExternalLink } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { statusColor, formatDate, formatDuration } from '$lib/utils';
@@ -35,18 +35,24 @@
 		)} of {deployTotal}
 	</div>
 	<div class="flex items-center gap-2">
-		<Select
-			class="w-auto min-w-[110px] text-xs"
-			bind:value={deployPageSize}
-			onchange={async () => {
-				deployPage = 1;
-				await onLoadDeploys();
+		<Select.Root
+			type="single"
+			value={String(deployPageSize)}
+			onValueChange={async (v) => {
+				if (v) {
+					deployPageSize = Number(v);
+					deployPage = 1;
+					await onLoadDeploys();
+				}
 			}}
 		>
-			<option value={10}>10 / page</option>
-			<option value={25}>25 / page</option>
-			<option value={50}>50 / page</option>
-		</Select>
+			<Select.Trigger class="w-[120px] text-xs" />
+			<Select.Content>
+				<Select.Item value="10">10 / page</Select.Item>
+				<Select.Item value="25">25 / page</Select.Item>
+				<Select.Item value="50">50 / page</Select.Item>
+			</Select.Content>
+		</Select.Root>
 		<Button.Root
 			variant="outline"
 			size="sm"
@@ -97,7 +103,7 @@
 									d.status
 								)}"
 							>
-								{d.status}
+								{d.kind}: {d.status}
 							</span>
 						</Table.Cell>
 						<Table.Cell class="text-xs capitalize text-muted-foreground"

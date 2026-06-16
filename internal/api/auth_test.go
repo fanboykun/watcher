@@ -113,7 +113,7 @@ func newTestAuthRouter(t *testing.T) http.Handler {
 		t.Fatalf("new db: %v", err)
 	}
 	cfg := &config.AppConfig{APIPort: "8080", LogDir: t.TempDir()}
-	return NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, nil, make(chan uint, 1), make(chan struct{}, 1))
+	return NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, nil, make(chan uint, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
 }
 
 func authRequest(handler http.Handler, method, path, body, password string) *httptest.ResponseRecorder {

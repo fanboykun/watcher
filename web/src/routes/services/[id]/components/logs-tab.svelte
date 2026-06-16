@@ -1,7 +1,7 @@
 <script lang="ts">
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
-	import { Select } from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select';
 	import { RefreshCw, FileText } from '@lucide/svelte';
 
 	let {
@@ -20,24 +20,40 @@
 </script>
 
 <div class="mb-3 flex items-center gap-2">
-	<Select
-		class="w-auto min-w-[120px] text-sm"
-		bind:value={logType}
-		onchange={() => onLoadLogs()}
+	<Select.Root
+		type="single"
+		value={logType}
+		onValueChange={(v) => {
+			if (v === 'out' || v === 'err') {
+				logType = v;
+				onLoadLogs();
+			}
+		}}
 	>
-		<option value="out">stdout</option>
-		<option value="err">stderr</option>
-	</Select>
-	<Select
-		class="w-auto min-w-[120px] text-sm"
-		bind:value={logCount}
-		onchange={() => onLoadLogs()}
+		<Select.Trigger class="w-[120px] text-sm" />
+		<Select.Content>
+			<Select.Item value="out">stdout</Select.Item>
+			<Select.Item value="err">stderr</Select.Item>
+		</Select.Content>
+	</Select.Root>
+	<Select.Root
+		type="single"
+		value={String(logCount)}
+		onValueChange={(v) => {
+			if (v) {
+				logCount = Number(v);
+				onLoadLogs();
+			}
+		}}
 	>
-		<option value={50}>50 lines</option>
-		<option value={100}>100 lines</option>
-		<option value={200}>200 lines</option>
-		<option value={500}>500 lines</option>
-	</Select>
+		<Select.Trigger class="w-[120px] text-sm" />
+		<Select.Content>
+			<Select.Item value="50">50 lines</Select.Item>
+			<Select.Item value="100">100 lines</Select.Item>
+			<Select.Item value="200">200 lines</Select.Item>
+			<Select.Item value="500">500 lines</Select.Item>
+		</Select.Content>
+	</Select.Root>
 	<Button.Root variant="outline" size="sm" onclick={onLoadLogs}>
 		<RefreshCw class="mr-2 h-4 w-4" /> Refresh
 	</Button.Root>

@@ -17,6 +17,7 @@ import (
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
+	"github.com/fanboykun/watcher/internal/webhook"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -141,33 +142,37 @@ func normalizeConfigFileTarget(target string) string {
 
 // Handler holds dependencies for all API endpoints.
 type Handler struct {
-	db           *gorm.DB
-	nssmPath     string
-	logDir       string
-	version      string
-	githubToken  string
-	envPath      string
-	appCfg       *config.AppConfig
-	events       *agent.WatcherEventBus
-	startTime    time.Time
-	checkTrigger chan uint     // send watcher ID for immediate poll
-	syncTrigger  chan struct{} // trigger background agent to sync DB
+	db             *gorm.DB
+	nssmPath       string
+	logDir         string
+	version        string
+	githubToken    string
+	envPath        string
+	appCfg         *config.AppConfig
+	events         *agent.WatcherEventBus
+	startTime      time.Time
+	checkTrigger   chan uint     // send watcher ID for immediate poll
+	syncTrigger    chan struct{} // trigger background agent to sync DB
+	webhooks       *webhook.Service
+	webhookTrigger chan struct{}
 }
 
 // NewHandler creates a new Handler with the given dependencies.
-func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}) *Handler {
+func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *Handler {
 	return &Handler{
-		db:           db,
-		nssmPath:     nssmPath,
-		logDir:       logDir,
-		version:      version,
-		githubToken:  githubToken,
-		envPath:      envPath,
-		appCfg:       appCfg,
-		events:       events,
-		startTime:    time.Now(),
-		checkTrigger: checkTrigger,
-		syncTrigger:  syncTrigger,
+		db:             db,
+		nssmPath:       nssmPath,
+		logDir:         logDir,
+		version:        version,
+		githubToken:    githubToken,
+		envPath:        envPath,
+		appCfg:         appCfg,
+		events:         events,
+		startTime:      time.Now(),
+		checkTrigger:   checkTrigger,
+		syncTrigger:    syncTrigger,
+		webhooks:       webhookService,
+		webhookTrigger: webhookTrigger,
 	}
 }
 
@@ -252,23 +257,34 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 	}
 
 	watcher := database.Watcher{
-		Name:                  req.Name,
-		ServiceName:           req.ServiceName,
-		MetadataURL:           req.MetadataURL,
-		ReleaseRef:            defaultReleaseRef(req.ReleaseRef),
-		DeploymentEnvironment: strings.TrimSpace(req.DeploymentEnvironment),
-		GitHubToken:           strings.TrimSpace(req.GitHubToken),
-		CheckIntervalSec:      withDefault(req.CheckIntervalSec, 60),
-		DownloadRetries:       withDefault(req.DownloadRetries, 3),
-		InstallDir:            req.InstallDir,
-		HcEnabled:             req.HcEnabled,
-		HcURL:                 req.HcURL,
-		HcRetries:             withDefault(req.HcRetries, 10),
-		HcIntervalSec:         withDefault(req.HcIntervalSec, 3),
-		HcTimeoutSec:          withDefault(req.HcTimeoutSec, 5),
-		Paused:                req.Paused,
-		MaxKeptVersions:       withDefault(req.MaxKeptVersions, 3),
-		Status:                "unknown",
+		Name:                            req.Name,
+		ServiceName:                     req.ServiceName,
+		MetadataURL:                     req.MetadataURL,
+		ReleaseRef:                      defaultReleaseRef(req.ReleaseRef),
+		DeploymentEnvironment:           strings.TrimSpace(req.DeploymentEnvironment),
+		GitHubToken:                     strings.TrimSpace(req.GitHubToken),
+		CheckIntervalSec:                withDefault(req.CheckIntervalSec, 60),
+		DownloadRetries:                 withDefault(req.DownloadRetries, 3),
+		InstallDir:                      req.InstallDir,
+		HcEnabled:                       req.HcEnabled,
+		HcURL:                           req.HcURL,
+		HcRetries:                       withDefault(req.HcRetries, 10),
+		HcIntervalSec:                   withDefault(req.HcIntervalSec, 3),
+		HcTimeoutSec:                    withDefault(req.HcTimeoutSec, 5),
+		Paused:                          req.Paused,
+		MaxKeptVersions:                 withDefault(req.MaxKeptVersions, 3),
+		WebhookEnabled:                  req.WebhookEnabled,
+		WebhookURL:                      strings.TrimSpace(req.WebhookURL),
+		WebhookBearerToken:              strings.TrimSpace(req.WebhookBearerToken),
+		WebhookAutoPauseEnabledOverride: req.WebhookAutoPauseEnabledOverride,
+		WebhookAutoPauseAfterFailures:   req.WebhookAutoPauseAfterFailures,
+		NotifyVersionFound:              req.NotifyVersionFound,
+		NotifyDeploymentSucceeded:       req.NotifyDeploymentSucceeded,
+		NotifyDeploymentFailed:          req.NotifyDeploymentFailed,
+		NotifyRollbackSucceeded:         req.NotifyRollbackSucceeded,
+		NotifyRollbackFailed:            req.NotifyRollbackFailed,
+		NotifyServiceHealthChanged:      req.NotifyServiceHealthChanged,
+		Status:                          "unknown",
 	}
 
 	// Create watcher
@@ -371,8 +387,38 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	if req.MaxKeptVersions != nil {
 		updates["max_kept_versions"] = *req.MaxKeptVersions
 	}
-	if req.MaxKeptVersions != nil {
-		updates["max_kept_versions"] = *req.MaxKeptVersions
+	if req.WebhookEnabled != nil {
+		updates["webhook_enabled"] = *req.WebhookEnabled
+	}
+	if req.WebhookURL != nil {
+		updates["webhook_url"] = strings.TrimSpace(*req.WebhookURL)
+	}
+	if req.WebhookBearerToken != nil {
+		updates["webhook_bearer_token"] = strings.TrimSpace(*req.WebhookBearerToken)
+	}
+	if req.WebhookAutoPauseEnabledOverride != nil {
+		updates["webhook_auto_pause_enabled_override"] = *req.WebhookAutoPauseEnabledOverride
+	}
+	if req.WebhookAutoPauseAfterFailures != nil {
+		updates["webhook_auto_pause_after_failures"] = *req.WebhookAutoPauseAfterFailures
+	}
+	if req.NotifyVersionFound != nil {
+		updates["notify_version_found"] = *req.NotifyVersionFound
+	}
+	if req.NotifyDeploymentSucceeded != nil {
+		updates["notify_deployment_succeeded"] = *req.NotifyDeploymentSucceeded
+	}
+	if req.NotifyDeploymentFailed != nil {
+		updates["notify_deployment_failed"] = *req.NotifyDeploymentFailed
+	}
+	if req.NotifyRollbackSucceeded != nil {
+		updates["notify_rollback_succeeded"] = *req.NotifyRollbackSucceeded
+	}
+	if req.NotifyRollbackFailed != nil {
+		updates["notify_rollback_failed"] = *req.NotifyRollbackFailed
+	}
+	if req.NotifyServiceHealthChanged != nil {
+		updates["notify_service_health_changed"] = *req.NotifyServiceHealthChanged
 	}
 
 	if len(updates) > 0 {
@@ -809,9 +855,11 @@ func (h *Handler) RedeployWatcher(c *gin.Context) {
 	dlog := database.DeployLog{
 		WatcherID:   watcher.ID,
 		TriggeredBy: "manual",
+		Kind:        "deploy",
+		Reason:      "manual_redeploy",
 		Version:     queuedVersion,
 		FromVersion: watcher.CurrentVersion,
-		Status:      string(agent.StatusDeploying),
+		Status:      "in_progress",
 		StartedAt:   &now,
 		Logs:        "redeploy: queued manual redeploy request",
 	}
@@ -819,6 +867,7 @@ func (h *Handler) RedeployWatcher(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	_ = h.db.Model(&dlog).Update("root_attempt_id", dlog.ID).Error
 	if h.events != nil {
 		h.events.Publish(watcher.ID, agent.WatcherEvent{
 			Type: agent.EventDeployStarted,
@@ -1098,6 +1147,9 @@ func enrichWatcherSecrets(w *database.Watcher) {
 	token := strings.TrimSpace(w.GitHubToken)
 	w.HasGitHubToken = token != ""
 	w.GitHubTokenMasked = maskToken(token)
+	webhookToken := strings.TrimSpace(w.WebhookBearerToken)
+	w.HasWebhookBearerToken = webhookToken != ""
+	w.WebhookBearerTokenMasked = maskToken(webhookToken)
 }
 
 // timeNow returns a pointer to the current UTC time.
@@ -1279,17 +1331,21 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 
 	now := time.Now().UTC()
 	dlog := database.DeployLog{
-		WatcherID:   watcher.ID,
-		TriggeredBy: "manual",
-		Version:     req.Version,
-		FromVersion: watcher.CurrentVersion,
-		Status:      "rollback",
-		StartedAt:   &now,
+		WatcherID:           watcher.ID,
+		TriggeredBy:         "manual",
+		Kind:                "rollback",
+		Reason:              "manual_rollback",
+		Version:             req.Version,
+		FromVersion:         watcher.CurrentVersion,
+		FailedTargetVersion: watcher.CurrentVersion,
+		Status:              "in_progress",
+		StartedAt:           &now,
 	}
 	if err := h.db.Create(&dlog).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	_ = h.db.Model(&dlog).Update("root_attempt_id", dlog.ID).Error
 	if h.events != nil {
 		h.events.Publish(watcher.ID, agent.WatcherEvent{
 			Type: agent.EventDeployStarted,
@@ -1311,7 +1367,7 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 	}
 
 	_ = h.db.Model(watcher).Updates(map[string]any{
-		"status": "rollback",
+		"status": "deploying",
 	})
 
 	h.triggerSync()
@@ -1364,6 +1420,10 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 				},
 			})
 		}
+		var failedAttempt database.DeployLog
+		if errFind := h.db.First(&failedAttempt, deployLogID).Error; errFind == nil && h.webhooks != nil {
+			_ = h.webhooks.EmitAttemptEventTx(h.db, watcher, &failedAttempt)
+		}
 		h.triggerSync()
 		return
 	}
@@ -1375,7 +1435,7 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 		maxIgnored = previousVersion
 	}
 	_ = h.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).Updates(map[string]any{
-		"status":       "healthy",
+		"status":       "succeeded",
 		"completed_at": &completed,
 		"duration_ms":  durationMs,
 	}).Error
@@ -1391,7 +1451,7 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 			Type: agent.EventDeployFinished,
 			Data: map[string]any{
 				"deploy_log_id": deployLogID,
-				"status":        "healthy",
+				"status":        "succeeded",
 				"version":       targetVersion,
 			},
 		})
@@ -1401,6 +1461,10 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 				"version": targetVersion,
 			},
 		})
+	}
+	var succeededAttempt database.DeployLog
+	if errFind := h.db.First(&succeededAttempt, deployLogID).Error; errFind == nil && h.webhooks != nil {
+		_ = h.webhooks.EmitAttemptEventTx(h.db, watcher, &succeededAttempt)
 	}
 
 	if reportGitHub {

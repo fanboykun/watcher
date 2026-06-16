@@ -41,6 +41,15 @@
 	let cfgAPIBaseURL = $state('');
 	let cfgWatcherRepoURL = $state('');
 	let cfgWatcherServiceName = $state('');
+	let cfgWebhookDefaultURL = $state('');
+	let cfgWebhookTimeoutSec = $state(10);
+	let cfgWebhookRetryScheduleSec = $state('0,10,60,300');
+	let cfgWebhookAutoPauseEnabled = $state(true);
+	let cfgWebhookAutoPauseAfterFailures = $state(5);
+	let cfgWebhookEventRetentionDays = $state(90);
+	let cfgWebhookDeliveryRetentionDays = $state(30);
+	let webhookDefaultBearerTokenInput = $state('');
+	let clearWebhookDefaultBearerToken = $state(false);
 	let showRestartDialog = $state(false);
 	let showUpdateDialog = $state(false);
 
@@ -71,6 +80,13 @@
 		cfgAPIBaseURL = agentConfig.api_base_url;
 		cfgWatcherRepoURL = agentConfig.watcher_repo_url;
 		cfgWatcherServiceName = agentConfig.watcher_service_name;
+		cfgWebhookDefaultURL = agentConfig.webhook_default_url;
+		cfgWebhookTimeoutSec = agentConfig.webhook_timeout_sec;
+		cfgWebhookRetryScheduleSec = agentConfig.webhook_retry_schedule_sec;
+		cfgWebhookAutoPauseEnabled = agentConfig.webhook_auto_pause_enabled;
+		cfgWebhookAutoPauseAfterFailures = agentConfig.webhook_auto_pause_after_failures;
+		cfgWebhookEventRetentionDays = agentConfig.webhook_event_retention_days;
+		cfgWebhookDeliveryRetentionDays = agentConfig.webhook_delivery_retention_days;
 	}
 
 	async function saveAgentConfig() {
@@ -87,7 +103,14 @@
 				api_port: cfgAPIPort,
 				api_base_url: cfgAPIBaseURL,
 				watcher_repo_url: cfgWatcherRepoURL,
-				watcher_service_name: cfgWatcherServiceName
+				watcher_service_name: cfgWatcherServiceName,
+				webhook_default_url: cfgWebhookDefaultURL,
+				webhook_timeout_sec: cfgWebhookTimeoutSec,
+				webhook_retry_schedule_sec: cfgWebhookRetryScheduleSec,
+				webhook_auto_pause_enabled: cfgWebhookAutoPauseEnabled,
+				webhook_auto_pause_after_failures: cfgWebhookAutoPauseAfterFailures,
+				webhook_event_retention_days: cfgWebhookEventRetentionDays,
+				webhook_delivery_retention_days: cfgWebhookDeliveryRetentionDays
 			};
 
 			if (clearGitHubToken) {
@@ -95,12 +118,19 @@
 			} else if (githubTokenInput.trim()) {
 				payload.github_token = githubTokenInput.trim();
 			}
+			if (clearWebhookDefaultBearerToken) {
+				payload.webhook_default_bearer_token = '';
+			} else if (webhookDefaultBearerTokenInput.trim()) {
+				payload.webhook_default_bearer_token = webhookDefaultBearerTokenInput.trim();
+			}
 
 			const res = await api.updateSelfConfig(payload);
 			agentConfig = res.config;
 			syncConfigForm();
 			githubTokenInput = '';
 			clearGitHubToken = false;
+			webhookDefaultBearerTokenInput = '';
+			clearWebhookDefaultBearerToken = false;
 			success = res.message;
 			setTimeout(() => (success = ''), 4000);
 		} catch (e) {
@@ -300,6 +330,48 @@
 					<div class="space-y-2 md:col-span-2">
 						<label class="text-sm text-muted-foreground" for="cfg-api-base-url">API Base URL</label>
 						<Input id="cfg-api-base-url" bind:value={cfgAPIBaseURL} placeholder="http://192.168.1.100:8080" />
+					</div>
+					<div class="space-y-2 md:col-span-2">
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-url">Default Webhook URL</label>
+						<Input id="cfg-webhook-default-url" bind:value={cfgWebhookDefaultURL} placeholder="https://example.com/hooks/watcher" />
+					</div>
+					<div class="space-y-2 md:col-span-2">
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-bearer-token">Default Webhook Bearer Token (leave blank to keep current)</label>
+						<Input id="cfg-webhook-default-bearer-token" type="password" placeholder={agentConfig.webhook_default_bearer_token_masked || 'not set'} bind:value={webhookDefaultBearerTokenInput} />
+						<div class="flex items-center gap-2 mt-2">
+							<Checkbox id="clear-webhook-default-bearer-token" bind:checked={clearWebhookDefaultBearerToken} />
+							<label class="text-xs text-muted-foreground select-none" for="clear-webhook-default-bearer-token">
+								Clear existing default webhook bearer token
+							</label>
+						</div>
+					</div>
+					<div class="grid gap-4 md:grid-cols-2 md:col-span-2">
+						<div class="space-y-2">
+							<label class="text-sm text-muted-foreground" for="cfg-webhook-timeout-sec">Webhook Timeout (s)</label>
+							<Input id="cfg-webhook-timeout-sec" type="number" min="1" bind:value={cfgWebhookTimeoutSec} />
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm text-muted-foreground" for="cfg-webhook-retry-schedule-sec">Webhook Retry Schedule (seconds CSV)</label>
+							<Input id="cfg-webhook-retry-schedule-sec" bind:value={cfgWebhookRetryScheduleSec} placeholder="0,10,60,300" />
+						</div>
+						<div class="flex items-center gap-2 py-2">
+							<Checkbox id="cfg-webhook-auto-pause-enabled" bind:checked={cfgWebhookAutoPauseEnabled} />
+							<label class="text-sm text-muted-foreground select-none" for="cfg-webhook-auto-pause-enabled">
+								Enable webhook auto-pause
+							</label>
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm text-muted-foreground" for="cfg-webhook-auto-pause-after-failures">Auto-pause after failures</label>
+							<Input id="cfg-webhook-auto-pause-after-failures" type="number" min="1" bind:value={cfgWebhookAutoPauseAfterFailures} />
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm text-muted-foreground" for="cfg-webhook-event-retention-days">Webhook Event Retention (days)</label>
+							<Input id="cfg-webhook-event-retention-days" type="number" min="1" bind:value={cfgWebhookEventRetentionDays} />
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm text-muted-foreground" for="cfg-webhook-delivery-retention-days">Webhook Delivery Retention (days)</label>
+							<Input id="cfg-webhook-delivery-retention-days" type="number" min="1" bind:value={cfgWebhookDeliveryRetentionDays} />
+						</div>
 					</div>
 					<div class="space-y-2 md:col-span-2">
 						<label class="text-sm text-muted-foreground" for="cfg-watcher-repo-url">Watcher Repo URL</label>

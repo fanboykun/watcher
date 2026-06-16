@@ -13,6 +13,7 @@ import (
 	"github.com/fanboykun/watcher/internal/api"
 	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
+	"github.com/fanboykun/watcher/internal/webhook"
 )
 
 var Version = "dev"
@@ -62,9 +63,11 @@ func main() {
 
 	// In-memory watcher event bus for UI real-time updates.
 	events := agent.NewWatcherEventBus()
+	webhookTrigger := make(chan struct{}, 32)
+	webhookService := webhook.NewService(db, cfg, webhookTrigger)
 
 	// Start API server in background
-	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, *envPath, cfg, events, checkTrigger, syncTrigger)
+	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, *envPath, cfg, events, checkTrigger, syncTrigger, webhookService, webhookTrigger)
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.APIPort),
 		Handler: router,
@@ -77,8 +80,10 @@ func main() {
 		}
 	}()
 
+	go webhook.NewDispatcher(db, cfg, log.WithComponent("webhook-dispatcher"), webhookService, webhookTrigger).Run(ctx)
+
 	// Start watcher agent (blocks until ctx cancelled)
-	a := agent.NewAgent(db, cfg, log, events, checkTrigger, syncTrigger)
+	a := agent.NewAgent(db, cfg, log, events, checkTrigger, syncTrigger, webhookService)
 	a.Run(ctx)
 
 	// Graceful shutdown of API server
