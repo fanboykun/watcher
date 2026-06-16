@@ -6,7 +6,7 @@
 	import * as Select from '$lib/components/ui/select';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Plus, Trash2 } from '@lucide/svelte';
-	import { isIISService, iisAppKindLabel, type Service, type ServiceConfigFile, type IISAppKind } from '$lib/api';
+	import { isIISService, iisAppKindLabel, type Service, type ServiceConfigFile, type IISAppKind, type ServiceWritePayload } from '$lib/api';
 
 	let {
 		open = $bindable(false),
@@ -15,7 +15,7 @@
 	}: {
 		open: boolean;
 		service: Service | null;
-		onServiceUpdated: (svcId: number, data: any) => Promise<void> | void;
+		onServiceUpdated: (svcId: number, data: ServiceWritePayload) => Promise<void> | void;
 	} = $props();
 
 	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [

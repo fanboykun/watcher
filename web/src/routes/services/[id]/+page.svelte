@@ -11,7 +11,8 @@
 		type IISAppKind,
 		type Service,
 		type ServiceConfigFile,
-		type Watcher
+		type Watcher,
+		type ServiceWritePayload
 	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Tabs from '$lib/components/ui/tabs';
@@ -130,7 +131,7 @@
 		showEditService = true;
 	}
 
-	async function saveServiceEdit(data: any) {
+	async function saveServiceEdit(data: ServiceWritePayload) {
 		if (!service || !watcher) return;
 		try {
 			service = await api.updateService(watcher.id, service.id, data);

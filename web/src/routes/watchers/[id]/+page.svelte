@@ -11,7 +11,8 @@
 		type IISAppKind,
 		type Service,
 		type WebhookDelivery,
-		type Watcher
+		type Watcher,
+		type ServiceWritePayload
 	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Tabs from '$lib/components/ui/tabs';
@@ -143,7 +144,7 @@
 		refreshTimer = setTimeout(async () => {
 			refreshTimer = null;
 			try {
-				const tasks: Promise<unknown>[] = [
+				const tasks: Array<Promise<unknown>> = [
 					api.getWatcher(id).then((w) => (watcher = w)),
 					loadDeploys()
 				];
@@ -292,12 +293,12 @@
 		}
 	}
 
-	async function handleServiceAdded(data: any) {
+	async function handleServiceAdded(data: ServiceWritePayload) {
 		await api.createService(id, data);
 		watcher = await api.getWatcher(id);
 	}
 
-	async function handleServiceUpdated(svcId: number, data: any) {
+	async function handleServiceUpdated(svcId: number, data: ServiceWritePayload) {
 		await api.updateService(id, svcId, data);
 		watcher = await api.getWatcher(id);
 	}

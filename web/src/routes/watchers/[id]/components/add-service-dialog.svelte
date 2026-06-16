@@ -6,11 +6,11 @@
 	import * as Select from '$lib/components/ui/select';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Plus, Trash2 } from '@lucide/svelte';
-	import { iisAppKindLabel, type ServiceConfigFile, type IISAppKind } from '$lib/api';
+	import { iisAppKindLabel, type ServiceConfigFile, type IISAppKind, type ServiceWritePayload } from '$lib/api';
 
 	interface Props {
 		open: boolean;
-		onServiceAdded: (data: unknown) => Promise<void> | void;
+		onServiceAdded: (data: ServiceWritePayload) => Promise<void> | void;
 	}
 
 	let {

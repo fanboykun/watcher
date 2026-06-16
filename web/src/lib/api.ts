@@ -373,6 +373,30 @@ export interface WebhookDelivery {
 	updated_at: string;
 }
 
+export interface WebhookDeliveryDetails {
+	delivery: WebhookDelivery;
+	event: {
+		id: number;
+		event_id: string;
+		event_type: string;
+		schema_version: string;
+		status: string;
+		summary: string;
+		occurred_at: string;
+		payload: unknown;
+	};
+	request: {
+		url: string;
+		auth_type: string;
+		token_source: string;
+		headers: {
+			content_type: string;
+			x_watcher_event: string;
+			x_watcher_delivery_id: string;
+		};
+	};
+}
+
 export interface PollEvent {
 	id: number;
 	watcher_id: number;
@@ -549,8 +573,7 @@ export const api = {
 	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') => request<{ data: PollEvent[], total: number, page: number, pageSize: number }>(`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`),
 	watcherWebhookEvents: (id: number) => request<WebhookEvent[]>(`/watchers/${id}/webhook-events`),
 	watcherWebhookDeliveries: (id: number, page = 1, pageSize = 20) => request<PaginatedResponse<WebhookDelivery>>(`/watchers/${id}/webhook-deliveries?page=${page}&pageSize=${pageSize}`),
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	watcherWebhookDelivery: (id: number, deliveryId: number) => request<any>(`/watchers/${id}/webhook-deliveries/${deliveryId}`),
+	watcherWebhookDelivery: (id: number, deliveryId: number) => request<WebhookDeliveryDetails>(`/watchers/${id}/webhook-deliveries/${deliveryId}`),
 	sendWatcherWebhookTest: (id: number) => request<{ message: string }>(`/watchers/${id}/webhook/test`, { method: 'POST' }),
 	resumeWatcherWebhook: (id: number, replaySuppressed = false) => request<{ message: string; replay_suppressed: boolean }>(`/watchers/${id}/webhook/resume`, { method: 'POST', body: JSON.stringify({ replay_suppressed: replaySuppressed }) }),
 	streamWatcherEvents: (id: number, onMessage: (data: string) => void | Promise<void>, onError?: (error: unknown) => void) =>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { isIISService, iisAppKindLabel, type Service, type ServiceConfigFile, type IISAppKind } from '$lib/api';
+	import { isIISService, iisAppKindLabel, type Service, type ServiceConfigFile, type IISAppKind, type ServiceWritePayload } from '$lib/api';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -15,7 +15,7 @@
 	}: {
 		open: boolean;
 		service: Service | null;
-		onSave: (data: any) => Promise<void> | void;
+		onSave: (data: ServiceWritePayload) => Promise<void> | void;
 	} = $props();
 
 	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
