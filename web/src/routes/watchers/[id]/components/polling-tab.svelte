@@ -2,7 +2,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
-	import * as Select from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Clock } from '@lucide/svelte';
 	import { timeAgo } from '$lib/utils';
 
@@ -75,12 +75,20 @@
 						}
 					}}
 				>
-					<Select.Trigger class="h-8 w-32 text-xs" />
+					<Select.Trigger class="h-8 w-32 text-xs">
+						{pollStatus === 'new_release'
+							? 'New Release'
+							: pollStatus === 'up_to_date'
+								? 'Up To Date'
+								: pollStatus === 'error'
+									? 'Error'
+									: 'All'}
+					</Select.Trigger>
 					<Select.Content>
-						<Select.Item value="all">All</Select.Item>
-						<Select.Item value="new_release">New Release</Select.Item>
-						<Select.Item value="up_to_date">Up To Date</Select.Item>
-						<Select.Item value="error">Error</Select.Item>
+						<Select.Item value="all" label="All">All</Select.Item>
+						<Select.Item value="new_release" label="New Release">New Release</Select.Item>
+						<Select.Item value="up_to_date" label="Up To Date">Up To Date</Select.Item>
+						<Select.Item value="error" label="Error">Error</Select.Item>
 					</Select.Content>
 				</Select.Root>
 			</div>

@@ -4,7 +4,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import * as Tabs from '$lib/components/ui/tabs';
-	import * as Select from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Activity, AlertCircle, RefreshCw } from '@lucide/svelte';
 
 	let agentLines = $state<string[]>([]);
@@ -36,12 +36,14 @@
 		</div>
 		<div class="flex items-center gap-2">
 			<Select.Root type="single" bind:value={lineCount} onValueChange={() => loadLogs()}>
-				<Select.Trigger class="w-36 bg-card" />
+				<Select.Trigger class="w-36 bg-card">
+					{lineCount} lines
+				</Select.Trigger>
 				<Select.Content>
-					<Select.Item value="50">50 lines</Select.Item>
-					<Select.Item value="100">100 lines</Select.Item>
-					<Select.Item value="200">200 lines</Select.Item>
-					<Select.Item value="500">500 lines</Select.Item>
+					<Select.Item value="50" label="50 lines">50 lines</Select.Item>
+					<Select.Item value="100" label="100 lines">100 lines</Select.Item>
+					<Select.Item value="200" label="200 lines">200 lines</Select.Item>
+					<Select.Item value="500" label="500 lines">500 lines</Select.Item>
 				</Select.Content>
 			</Select.Root>
 			<Button.Root variant="outline" size="sm" onclick={loadLogs} disabled={loading}>

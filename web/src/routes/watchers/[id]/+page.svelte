@@ -3,22 +3,14 @@
 	import { page } from '$app/state';
 	import {
 		api,
-		iisAppKindLabel,
-		isIISService,
-		serviceTypeLabel,
 		type AuthenticatedEventStream,
 		type DeployLog,
-		type IISAppKind,
-		type Service,
 		type WebhookDelivery,
-		type Watcher,
-		type ServiceWritePayload
+		type Watcher
 	} from '$lib/api';
-	import * as Card from '$lib/components/ui/card';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
-	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import {
@@ -29,9 +21,7 @@
 		Pause,
 		RefreshCw,
 		RotateCcw,
-		Pencil,
-		X,
-		Save
+		Pencil
 	} from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
@@ -44,8 +34,6 @@
 	import VersionsTab from './components/versions-tab.svelte';
 	import PollingTab from './components/polling-tab.svelte';
 	import WebhooksTab from './components/webhooks-tab.svelte';
-	import AddServiceDialog from './components/add-service-dialog.svelte';
-	import EditServiceDialog from './components/edit-service-dialog.svelte';
 
 	let watcher = $state<Watcher | null>(null);
 	let deploys = $state<DeployLog[]>([]);
@@ -65,13 +53,9 @@
 	let error = $state('');
 	let triggerMsg = $state('');
 
-	let showAddService = $state(false);
-	let showEditService = $state(false);
 	let showRollbackDialog = $state(false);
 	let showConfirmDialog = $state(false);
 	let confirming = $state(false);
-	let editing = $state(false);
-	let saving = $state(false);
 	let rollbackTargetVersion = $state('');
 	let rollbackReportGitHub = $state(true);
 	let confirmTitle = $state('');
@@ -80,40 +64,10 @@
 	let confirmActionClass = $state('');
 	let confirmAction: (() => Promise<void> | void) | null = null;
 
-	let editSvc = $state<Service | null>(null);
-
-	// Edit form
-	let editInterval = $state(60);
-	let editMetadataURL = $state('');
-	let editInstallDir = $state('');
-	let editReleaseRef = $state('latest');
-	let editHcEnabled = $state(false);
-	let editHcURL = $state('');
-	let editMaxKeptVersions = $state(3);
-	let editDeploymentEnvironment = $state('');
-	let editGitHubToken = $state('');
-	let editUseGlobalToken = $state(false);
-	let editWebhookEnabled = $state(false);
-	let editWebhookURL = $state('');
-	let editWebhookBearerToken = $state('');
-	let editUseGlobalWebhookToken = $state(false);
-	let editNotifyVersionFound = $state(false);
-	let editNotifyDeploymentSucceeded = $state(false);
-	let editNotifyDeploymentFailed = $state(false);
-	let editNotifyRollbackSucceeded = $state(false);
-	let editNotifyRollbackFailed = $state(false);
-	let editNotifyServiceHealthChanged = $state(false);
-
 	let activeTab = $state(page.url.searchParams.get('tab') || 'overview');
 
 	let watcherEventSource: AuthenticatedEventStream | null = null;
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-
-	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
-		{ value: 'static', label: 'Static Site', hint: 'Frontend build or static files served directly by IIS.' },
-		{ value: 'php', label: 'PHP', hint: 'PHP app on IIS with FastCGI and PHP already installed.' },
-		{ value: 'aspnet_classic', label: 'ASP.NET Classic', hint: 'Classic ASP.NET app using the managed CLR app pool.' }
-	];
 
 	const id = Number(page.params.id);
 
@@ -168,7 +122,6 @@
 		const init = async () => {
 			try {
 				watcher = await api.getWatcher(id);
-				syncEditForm();
 
 				void Promise.allSettled([
 					api.watcherDeploys(id, deployPage, deployPageSize).then((res) => {
@@ -237,76 +190,6 @@
 			}
 		};
 	});
-
-	function syncEditForm() {
-		if (!watcher) return;
-		editInterval = watcher.check_interval_sec;
-		editMetadataURL = watcher.metadata_url;
-		editInstallDir = watcher.install_dir;
-		editReleaseRef = watcher.release_ref || 'latest';
-		editHcEnabled = watcher.hc_enabled;
-		editHcURL = watcher.hc_url;
-		editMaxKeptVersions = watcher.max_kept_versions;
-		editDeploymentEnvironment = watcher.deployment_environment || '';
-		editGitHubToken = '';
-		editUseGlobalToken = !watcher.has_github_token;
-		editWebhookEnabled = watcher.webhook_enabled;
-		editWebhookURL = watcher.webhook_url || '';
-		editWebhookBearerToken = '';
-		editUseGlobalWebhookToken = !watcher.has_webhook_bearer_token;
-		editNotifyVersionFound = watcher.notify_version_found;
-		editNotifyDeploymentSucceeded = watcher.notify_deployment_succeeded;
-		editNotifyDeploymentFailed = watcher.notify_deployment_failed;
-		editNotifyRollbackSucceeded = watcher.notify_rollback_succeeded;
-		editNotifyRollbackFailed = watcher.notify_rollback_failed;
-		editNotifyServiceHealthChanged = watcher.notify_service_health_changed;
-	}
-
-	async function saveEdit() {
-		saving = true;
-		try {
-			watcher = await api.updateWatcher(id, {
-				check_interval_sec: editInterval,
-				metadata_url: editMetadataURL,
-				release_ref: editReleaseRef.trim() || 'latest',
-				deployment_environment: editDeploymentEnvironment,
-				github_token: editUseGlobalToken ? '' : (editGitHubToken.trim() !== '' ? editGitHubToken : undefined),
-				webhook_enabled: editWebhookEnabled,
-				webhook_url: editWebhookURL,
-				webhook_bearer_token: editUseGlobalWebhookToken ? '' : (editWebhookBearerToken.trim() !== '' ? editWebhookBearerToken : undefined),
-				notify_version_found: editNotifyVersionFound,
-				notify_deployment_succeeded: editNotifyDeploymentSucceeded,
-				notify_deployment_failed: editNotifyDeploymentFailed,
-				notify_rollback_succeeded: editNotifyRollbackSucceeded,
-				notify_rollback_failed: editNotifyRollbackFailed,
-				notify_service_health_changed: editNotifyServiceHealthChanged,
-				install_dir: editInstallDir,
-				hc_enabled: editHcEnabled,
-				hc_url: editHcURL,
-				max_kept_versions: editMaxKeptVersions
-			});
-			editing = false;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Save failed';
-		} finally {
-			saving = false;
-		}
-	}
-
-	async function handleServiceAdded(data: ServiceWritePayload) {
-		await api.createService(id, data);
-		watcher = await api.getWatcher(id);
-	}
-
-	async function handleServiceUpdated(svcId: number, data: ServiceWritePayload) {
-		await api.updateService(id, svcId, data);
-		watcher = await api.getWatcher(id);
-	}
-
-	function openEditServiceDialog(svc: Service) {
-		editSvc = svc;
-		showEditService = true;
-	}
 
 	function openConfirmDialog(opts: {
 		title: string;
@@ -503,16 +386,11 @@
 			>
 				{watcher.status}
 			</span>
-			<Button.Root
-				variant="outline"
-				size="sm"
-				onclick={() => {
-					editing = !editing;
-					if (editing) syncEditForm();
-				}}
-			>
-				{#if editing}<X class="mr-2 h-4 w-4" /> Cancel{:else}<Pencil class="mr-2 h-4 w-4" /> Edit{/if}
-			</Button.Root>
+			<a href={resolve(`/watchers/${id}/edit`)}>
+				<Button.Root variant="outline" size="sm">
+					<Pencil class="mr-2 h-4 w-4" /> Edit Settings
+				</Button.Root>
+			</a>
 
 			{#if watcher.paused}
 				<Button.Root variant="outline" size="sm" onclick={togglePause}>
@@ -569,108 +447,6 @@
 			</div>
 		{/if}
 
-		<!-- Inline Edit Form -->
-		{#if editing}
-			<Card.Root class="border-blue-500/30 bg-card">
-				<Card.Header class="pb-3">
-					<Card.Title class="text-sm font-medium">Edit Watcher Configuration</Card.Title>
-				</Card.Header>
-				<Card.Content>
-					<form
-						class="space-y-4"
-						onsubmit={(e) => {
-							e.preventDefault();
-							saveEdit();
-						}}
-					>
-						<div class="space-y-2">
-							<Label for="editMetadataURL">Metadata URL</Label>
-							<Input id="editMetadataURL" bind:value={editMetadataURL} />
-						</div>
-						<div class="space-y-2">
-							<Label for="editReleaseRef">Release Ref</Label>
-							<Input id="editReleaseRef" bind:value={editReleaseRef} placeholder="latest or v1.2.3" />
-							<p class="text-xs text-muted-foreground">Use <code>latest</code> to follow new releases, or pin this watcher to a specific release tag.</p>
-						</div>
-						<div class="grid gap-4 sm:grid-cols-3">
-							<div class="space-y-2">
-								<Label for="editInstallDir">Install Directory</Label>
-								<Input id="editInstallDir" bind:value={editInstallDir} />
-							</div>
-							<div class="space-y-2">
-								<Label for="editInterval">Check Interval (s)</Label>
-								<Input id="editInterval" type="number" min="10" bind:value={editInterval} />
-							</div>
-							<div class="space-y-2">
-								<Label for="editHcURL">Health Check URL</Label>
-								<Input id="editHcURL" bind:value={editHcURL} />
-							</div>
-							<div class="space-y-2">
-								<Label for="editMaxKeptVersions">Max Kept Versions</Label>
-								<Input id="editMaxKeptVersions" type="number" min="1" max="10" bind:value={editMaxKeptVersions} />
-							</div>
-						</div>
-						<div class="grid gap-4 sm:grid-cols-2">
-							<div class="space-y-2">
-								<Label for="editDeploymentEnvironment">Deployment Environment (GitHub)</Label>
-								<Input id="editDeploymentEnvironment" bind:value={editDeploymentEnvironment} placeholder="production" />
-								<p class="text-xs text-muted-foreground">Optional. Falls back to global `ENVIRONMENT` if empty.</p>
-							</div>
-							<div class="space-y-2">
-								<Label for="editGitHubToken">GitHub Access Token Override</Label>
-								<Input id="editGitHubToken" type="password" bind:value={editGitHubToken} placeholder="Paste new token to replace override" disabled={editUseGlobalToken} />
-								<div class="flex items-center gap-2 mt-2">
-									<Checkbox id="editUseGlobalToken" bind:checked={editUseGlobalToken} />
-									<Label for="editUseGlobalToken">Use global `GITHUB_TOKEN`</Label>
-								</div>
-								<p class="text-xs text-muted-foreground mt-1">Current: {watcher.has_github_token ? (watcher.github_token_masked || 'set') : 'using global token'}</p>
-							</div>
-						</div>
-						<div class="rounded-lg border border-border/60 p-4 space-y-4">
-							<div class="flex items-center gap-2">
-								<Checkbox id="editWebhookEnabled" bind:checked={editWebhookEnabled} />
-								<Label for="editWebhookEnabled">Enable webhook delivery for this watcher</Label>
-							</div>
-							<div class="grid gap-4 sm:grid-cols-2">
-								<div class="space-y-2">
-									<Label for="editWebhookURL">Webhook URL</Label>
-									<Input id="editWebhookURL" bind:value={editWebhookURL} placeholder="https://example.com/hooks/watcher" />
-									<p class="text-xs text-muted-foreground">Leave empty to inherit the global default URL.</p>
-								</div>
-								<div class="space-y-2">
-									<Label for="editWebhookBearerToken">Webhook Bearer Token Override</Label>
-									<Input id="editWebhookBearerToken" type="password" bind:value={editWebhookBearerToken} placeholder="Paste new token to replace override" disabled={editUseGlobalWebhookToken} />
-									<div class="flex items-center gap-2 mt-2">
-										<Checkbox id="editUseGlobalWebhookToken" bind:checked={editUseGlobalWebhookToken} />
-										<Label for="editUseGlobalWebhookToken">Use global default bearer token</Label>
-									</div>
-									<p class="text-xs text-muted-foreground mt-1">Current: {watcher.has_webhook_bearer_token ? (watcher.webhook_bearer_token_masked || 'set') : 'using global webhook token'}</p>
-								</div>
-							</div>
-							<div class="grid gap-2 sm:grid-cols-2 text-sm">
-								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyVersionFound} /> Version found</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyDeploymentSucceeded} /> Deployment succeeded</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyDeploymentFailed} /> Deployment failed</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyRollbackSucceeded} /> Rollback succeeded</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyRollbackFailed} /> Rollback failed</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={editNotifyServiceHealthChanged} /> Service health changed</label>
-							</div>
-						</div>
-						<div class="flex items-center gap-2 py-2">
-							<Checkbox id="editHcEnabled" bind:checked={editHcEnabled} />
-							<Label for="editHcEnabled">Enable health checks</Label>
-						</div>
-						<div class="flex justify-end">
-							<Button.Root type="submit" disabled={saving}>
-								<Save class="mr-2 h-4 w-4" />
-								{saving ? 'Saving...' : 'Save Changes'}
-							</Button.Root>
-						</div>
-					</form>
-				</Card.Content>
-			</Card.Root>
-		{/if}
-
 		<Tabs.Root
 			bind:value={activeTab}
 			onValueChange={(v) => {
@@ -699,9 +475,8 @@
 			<Tabs.Content value="services" class="mt-4">
 				<ServicesTab
 					{watcher}
-					onAddService={() => (showAddService = true)}
-					onEditService={openEditServiceDialog}
-					onDeleteService={deleteService}
+					readonly={true}
+					manageHref={resolve(`/watchers/${id}/edit#services`)}
 				/>
 			</Tabs.Content>
 
@@ -775,17 +550,6 @@
 		</Tabs.Root>
 	{/if}
 </div>
-
-<AddServiceDialog
-	bind:open={showAddService}
-	onServiceAdded={handleServiceAdded}
-/>
-
-<EditServiceDialog
-	bind:open={showEditService}
-	service={editSvc}
-	onServiceUpdated={handleServiceUpdated}
-/>
 
 <!-- Rollback Dialog -->
 <Dialog.Root bind:open={showRollbackDialog}>

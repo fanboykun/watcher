@@ -2,7 +2,8 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
-	import * as Select from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
+	import WebhookEventReference from '$lib/components/webhook-event-reference.svelte';
 	import type { Watcher, WebhookDelivery } from '$lib/api';
 	import { formatDate } from '$lib/utils';
 
@@ -68,6 +69,11 @@
 		</Card.Content>
 	</Card.Root>
 
+	<WebhookEventReference
+		title="Webhook Contract"
+		description="Reference for the event names, trigger rules, and payload structure used by this watcher."
+	/>
+
 	<div class="mb-3 flex items-center justify-between gap-2">
 		<div class="text-xs text-muted-foreground">
 			Showing {deliveries.length === 0 ? 0 : (deliveryPage - 1) * deliveryPageSize + 1} - {Math.min(deliveryPage * deliveryPageSize, deliveryTotal)} of {deliveryTotal}
@@ -82,11 +88,13 @@
 					}
 				}}
 			>
-				<Select.Trigger class="h-8 w-28 text-xs bg-card" />
+				<Select.Trigger class="h-8 w-28 text-xs bg-card">
+					{deliveryPageSize} / page
+				</Select.Trigger>
 				<Select.Content>
-					<Select.Item value="20">20 / page</Select.Item>
-					<Select.Item value="50">50 / page</Select.Item>
-					<Select.Item value="100">100 / page</Select.Item>
+					<Select.Item value="20" label="20 / page">20 / page</Select.Item>
+					<Select.Item value="50" label="50 / page">50 / page</Select.Item>
+					<Select.Item value="100" label="100 / page">100 / page</Select.Item>
 				</Select.Content>
 			</Select.Root>
 			<Button.Root variant="outline" size="sm" disabled={deliveryPage <= 1} onclick={() => onPageChange(deliveryPage - 1)}>Prev</Button.Root>

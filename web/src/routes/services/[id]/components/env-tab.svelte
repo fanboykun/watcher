@@ -4,7 +4,7 @@
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Textarea } from '$lib/components/ui/textarea';
-	import * as Select from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { RefreshCw, Save, XCircle } from '@lucide/svelte';
 
 	let {
@@ -108,10 +108,12 @@
 										placeholder="web.config or settings/appsettings.json"
 									/>
 									<Select.Root type="single" bind:value={file.target}>
-										<Select.Trigger />
+										<Select.Trigger>
+											{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
+										</Select.Trigger>
 										<Select.Content>
-											<Select.Item value="app_dir">Service/app dir</Select.Item>
-											<Select.Item value="release_dir">Current dir</Select.Item>
+											<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
+											<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
 										</Select.Content>
 									</Select.Root>
 								</div>

@@ -288,8 +288,10 @@
 
 	<Card.Root class="bg-card">
 		<Card.Header>
-			<Card.Title>Agent Configuration (.env)</Card.Title>
-			<Card.Description>Edit runtime configuration values from the dashboard.</Card.Description>
+			<Card.Title>Deploy Agent Configuration</Card.Title>
+			<Card.Description>
+				Runtime values for polling, deployment reporting, storage, and the Watcher service itself.
+			</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-4">
 			{#if agentConfig}
@@ -332,48 +334,6 @@
 						<Input id="cfg-api-base-url" bind:value={cfgAPIBaseURL} placeholder="http://192.168.1.100:8080" />
 					</div>
 					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-url">Default Webhook URL</label>
-						<Input id="cfg-webhook-default-url" bind:value={cfgWebhookDefaultURL} placeholder="https://example.com/hooks/watcher" />
-					</div>
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-bearer-token">Default Webhook Bearer Token (leave blank to keep current)</label>
-						<Input id="cfg-webhook-default-bearer-token" type="password" placeholder={agentConfig.webhook_default_bearer_token_masked || 'not set'} bind:value={webhookDefaultBearerTokenInput} />
-						<div class="flex items-center gap-2 mt-2">
-							<Checkbox id="clear-webhook-default-bearer-token" bind:checked={clearWebhookDefaultBearerToken} />
-							<label class="text-xs text-muted-foreground select-none" for="clear-webhook-default-bearer-token">
-								Clear existing default webhook bearer token
-							</label>
-						</div>
-					</div>
-					<div class="grid gap-4 md:grid-cols-2 md:col-span-2">
-						<div class="space-y-2">
-							<label class="text-sm text-muted-foreground" for="cfg-webhook-timeout-sec">Webhook Timeout (s)</label>
-							<Input id="cfg-webhook-timeout-sec" type="number" min="1" bind:value={cfgWebhookTimeoutSec} />
-						</div>
-						<div class="space-y-2">
-							<label class="text-sm text-muted-foreground" for="cfg-webhook-retry-schedule-sec">Webhook Retry Schedule (seconds CSV)</label>
-							<Input id="cfg-webhook-retry-schedule-sec" bind:value={cfgWebhookRetryScheduleSec} placeholder="0,10,60,300" />
-						</div>
-						<div class="flex items-center gap-2 py-2">
-							<Checkbox id="cfg-webhook-auto-pause-enabled" bind:checked={cfgWebhookAutoPauseEnabled} />
-							<label class="text-sm text-muted-foreground select-none" for="cfg-webhook-auto-pause-enabled">
-								Enable webhook auto-pause
-							</label>
-						</div>
-						<div class="space-y-2">
-							<label class="text-sm text-muted-foreground" for="cfg-webhook-auto-pause-after-failures">Auto-pause after failures</label>
-							<Input id="cfg-webhook-auto-pause-after-failures" type="number" min="1" bind:value={cfgWebhookAutoPauseAfterFailures} />
-						</div>
-						<div class="space-y-2">
-							<label class="text-sm text-muted-foreground" for="cfg-webhook-event-retention-days">Webhook Event Retention (days)</label>
-							<Input id="cfg-webhook-event-retention-days" type="number" min="1" bind:value={cfgWebhookEventRetentionDays} />
-						</div>
-						<div class="space-y-2">
-							<label class="text-sm text-muted-foreground" for="cfg-webhook-delivery-retention-days">Webhook Delivery Retention (days)</label>
-							<Input id="cfg-webhook-delivery-retention-days" type="number" min="1" bind:value={cfgWebhookDeliveryRetentionDays} />
-						</div>
-					</div>
-					<div class="space-y-2 md:col-span-2">
 						<label class="text-sm text-muted-foreground" for="cfg-watcher-repo-url">Watcher Repo URL</label>
 						<Input id="cfg-watcher-repo-url" bind:value={cfgWatcherRepoURL} />
 					</div>
@@ -401,10 +361,121 @@
 
 				<div class="flex gap-2">
 					<Button.Root onclick={saveAgentConfig} disabled={isSavingConfig}>
-						{isSavingConfig ? 'Saving...' : 'Save Agent Config'}
+						{isSavingConfig ? 'Saving...' : 'Save Deploy Agent Config'}
 					</Button.Root>
 					<Button.Root variant="outline" onclick={() => (showRestartDialog = true)}>
 						Restart Watcher Service
+					</Button.Root>
+				</div>
+			{:else}
+				<div class="animate-pulse bg-muted/50 h-20 rounded"></div>
+			{/if}
+		</Card.Content>
+	</Card.Root>
+
+	<Card.Root class="bg-card">
+		<Card.Header>
+			<Card.Title>Webhook Defaults</Card.Title>
+			<Card.Description>
+				Global webhook routing, authentication, retry, and retention defaults used across watchers.
+			</Card.Description>
+		</Card.Header>
+		<Card.Content class="space-y-4">
+			{#if agentConfig}
+				<div class="grid gap-4 md:grid-cols-2">
+					<div class="space-y-2 md:col-span-2">
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-url">Default Webhook URL</label>
+						<Input
+							id="cfg-webhook-default-url"
+							bind:value={cfgWebhookDefaultURL}
+							placeholder="https://example.com/hooks/watcher"
+						/>
+						<p class="text-xs text-muted-foreground">
+							Watchers can override this, but leaving watcher URL blank will inherit this default.
+						</p>
+					</div>
+					<div class="space-y-2 md:col-span-2">
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-bearer-token">
+							Default Webhook Bearer Token (leave blank to keep current)
+						</label>
+						<Input
+							id="cfg-webhook-default-bearer-token"
+							type="password"
+							placeholder={agentConfig.webhook_default_bearer_token_masked || 'not set'}
+							bind:value={webhookDefaultBearerTokenInput}
+						/>
+						<div class="mt-2 flex items-center gap-2">
+							<Checkbox
+								id="clear-webhook-default-bearer-token"
+								bind:checked={clearWebhookDefaultBearerToken}
+							/>
+							<label class="text-xs text-muted-foreground select-none" for="clear-webhook-default-bearer-token">
+								Clear existing default webhook bearer token
+							</label>
+						</div>
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-timeout-sec">Webhook Timeout (s)</label>
+						<Input id="cfg-webhook-timeout-sec" type="number" min="1" bind:value={cfgWebhookTimeoutSec} />
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-retry-schedule-sec">
+							Webhook Retry Schedule (seconds CSV)
+						</label>
+						<Input
+							id="cfg-webhook-retry-schedule-sec"
+							bind:value={cfgWebhookRetryScheduleSec}
+							placeholder="0,10,60,300"
+						/>
+					</div>
+					<div class="flex items-center gap-2 py-2">
+						<Checkbox id="cfg-webhook-auto-pause-enabled" bind:checked={cfgWebhookAutoPauseEnabled} />
+						<label class="text-sm text-muted-foreground select-none" for="cfg-webhook-auto-pause-enabled">
+							Enable webhook auto-pause
+						</label>
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-auto-pause-after-failures">
+							Auto-pause after failures
+						</label>
+						<Input
+							id="cfg-webhook-auto-pause-after-failures"
+							type="number"
+							min="1"
+							bind:value={cfgWebhookAutoPauseAfterFailures}
+						/>
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-event-retention-days">
+							Webhook Event Retention (days)
+						</label>
+						<Input
+							id="cfg-webhook-event-retention-days"
+							type="number"
+							min="1"
+							bind:value={cfgWebhookEventRetentionDays}
+						/>
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-delivery-retention-days">
+							Webhook Delivery Retention (days)
+						</label>
+						<Input
+							id="cfg-webhook-delivery-retention-days"
+							type="number"
+							min="1"
+							bind:value={cfgWebhookDeliveryRetentionDays}
+						/>
+					</div>
+				</div>
+
+				<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+					These values act as global defaults. Watchers can still override URL, bearer token, and subscriptions individually.
+				</div>
+
+				<div class="flex gap-2">
+					<Button.Root onclick={saveAgentConfig} disabled={isSavingConfig}>
+						{isSavingConfig ? 'Saving...' : 'Save Webhook Defaults'}
 					</Button.Root>
 				</div>
 			{:else}

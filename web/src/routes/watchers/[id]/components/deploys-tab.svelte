@@ -2,7 +2,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
-	import * as Select from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import {
 		ExternalLink,
 		Rocket,
@@ -65,11 +65,13 @@
 				}
 			}}
 		>
-			<Select.Trigger class="h-8 w-28 text-xs bg-card" />
+			<Select.Trigger class="h-8 w-28 text-xs bg-card">
+				{deployPageSize} / page
+			</Select.Trigger>
 			<Select.Content>
-				<Select.Item value="10">10 / page</Select.Item>
-				<Select.Item value="25">25 / page</Select.Item>
-				<Select.Item value="50">50 / page</Select.Item>
+				<Select.Item value="10" label="10 / page">10 / page</Select.Item>
+				<Select.Item value="25" label="25 / page">25 / page</Select.Item>
+				<Select.Item value="50" label="50 / page">50 / page</Select.Item>
 			</Select.Content>
 		</Select.Root>
 		<Button.Root

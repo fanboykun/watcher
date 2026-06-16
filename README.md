@@ -43,6 +43,7 @@ Full installation guide: [INSTALL.md](INSTALL.md)
 - Per-watcher GitHub override settings:
   - `deployment_environment` (fallback: global `ENVIRONMENT`)
   - `github_token` (fallback: global `GITHUB_TOKEN`)
+- Per-watcher outbound webhooks with durable delivery history
 - Self-management endpoints (version, update-check, update, uninstall script)
 - Embedded Svelte SPA dashboard served by the same Go process
 
@@ -185,6 +186,11 @@ Base path: `/api`
 - `POST /watchers/:id/rollback`
 - `POST /watchers/:id/resume`
 - `DELETE /watchers/:id/versions/:version`
+- `GET /watchers/:id/webhook-events`
+- `GET /watchers/:id/webhook-deliveries`
+- `GET /watchers/:id/webhook-deliveries/:deliveryId`
+- `POST /watchers/:id/webhook/test`
+- `POST /watchers/:id/webhook/resume`
 
 ### Services (flat)
 - `GET /services`
@@ -246,6 +252,33 @@ Notes:
   - `deployment_environment` -> used first for GitHub Deployments environment
   - `github_token` -> used first for GitHub metadata/artifact/deployment API calls
   - if empty, watcher falls back to global `.env` values.
+
+## Webhooks
+
+Watcher can emit durable outbound webhook events for:
+
+- `watcher.version_found`
+- `watcher.deployment_succeeded`
+- `watcher.deployment_failed`
+- `watcher.rollback_succeeded`
+- `watcher.rollback_failed`
+- `service.health_changed`
+- `watcher.webhook_test`
+- `webhook.delivery_exhausted`
+
+Important behavior:
+
+- Delivery is at-least-once. Deduplicate on `event_id`.
+- Each HTTP attempt gets its own `delivery_id`.
+- Any `2xx` counts as success.
+- Network errors, `429`, and `5xx` retry.
+- Other `4xx` responses are recorded as final failures.
+- Watcher preserves FIFO delivery order per watcher.
+- Paused webhook delivery suppresses new events instead of dropping them.
+
+Detailed contract, event payload fields, and trigger rules:
+
+- [docs/webhooks.md](docs/webhooks.md)
 
 ---
 

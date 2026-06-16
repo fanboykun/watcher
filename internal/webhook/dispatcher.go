@@ -106,7 +106,7 @@ func (d *Dispatcher) dispatchWatcher(ctx context.Context, watcher *database.Watc
 	defer cancel()
 	now := time.Now().UTC()
 	delivery.LastAttemptAt = &now
-	statusCode, respBody, sendErr := d.send(reqCtx, resolved, &event)
+	statusCode, respBody, sendErr := d.send(reqCtx, resolved, &event, delivery.DeliveryID)
 
 	update := map[string]any{
 		"last_attempt_at":      &now,
@@ -171,14 +171,14 @@ func (d *Dispatcher) dispatchWatcher(ctx context.Context, watcher *database.Watc
 	})
 }
 
-func (d *Dispatcher) send(ctx context.Context, cfg ResolvedConfig, event *database.WebhookEvent) (int, string, error) {
+func (d *Dispatcher) send(ctx context.Context, cfg ResolvedConfig, event *database.WebhookEvent, deliveryID string) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewBufferString(event.Payload))
 	if err != nil {
 		return 0, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Watcher-Event", event.EventType)
-	req.Header.Set("X-Watcher-Delivery-ID", event.EventID)
+	req.Header.Set("X-Watcher-Delivery-ID", deliveryID)
 	if strings.TrimSpace(cfg.BearerToken) != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.BearerToken)
 	}

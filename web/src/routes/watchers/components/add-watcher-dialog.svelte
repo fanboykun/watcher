@@ -3,9 +3,10 @@
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import * as Select from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Checkbox } from '$lib/components/ui/checkbox';
+	import WebhookEventReference from '$lib/components/webhook-event-reference.svelte';
 	import { Trash2, Plus, ArrowRight, Check } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
@@ -20,6 +21,7 @@
 		type ConfigFileTarget,
 		type Service
 	} from '$lib/api';
+	import type { WebhookSelectionState } from '$lib/webhooks';
 
 	let {
 		open = $bindable(false),
@@ -49,12 +51,14 @@
 	let formWebhookURL = $state('');
 	let formWebhookBearerToken = $state('');
 	let useCustomWebhookBearerToken = $state(false);
-	let formNotifyVersionFound = $state(false);
-	let formNotifyDeploymentSucceeded = $state(false);
-	let formNotifyDeploymentFailed = $state(false);
-	let formNotifyRollbackSucceeded = $state(false);
-	let formNotifyRollbackFailed = $state(false);
-	let formNotifyServiceHealthChanged = $state(false);
+	let webhookSelections = $state<WebhookSelectionState>({
+		notify_version_found: false,
+		notify_deployment_succeeded: false,
+		notify_deployment_failed: false,
+		notify_rollback_succeeded: false,
+		notify_rollback_failed: false,
+		notify_service_health_changed: false
+	});
 	let formServices = $state<Partial<Service>[]>([]);
 
 	let inspecting = $state(false);
@@ -214,12 +218,12 @@
 				webhook_enabled: formWebhookEnabled,
 				webhook_url: formWebhookURL,
 				webhook_bearer_token: useCustomWebhookBearerToken ? formWebhookBearerToken.trim() : '',
-				notify_version_found: formNotifyVersionFound,
-				notify_deployment_succeeded: formNotifyDeploymentSucceeded,
-				notify_deployment_failed: formNotifyDeploymentFailed,
-				notify_rollback_succeeded: formNotifyRollbackSucceeded,
-				notify_rollback_failed: formNotifyRollbackFailed,
-				notify_service_health_changed: formNotifyServiceHealthChanged,
+				notify_version_found: webhookSelections.notify_version_found,
+				notify_deployment_succeeded: webhookSelections.notify_deployment_succeeded,
+				notify_deployment_failed: webhookSelections.notify_deployment_failed,
+				notify_rollback_succeeded: webhookSelections.notify_rollback_succeeded,
+				notify_rollback_failed: webhookSelections.notify_rollback_failed,
+				notify_service_health_changed: webhookSelections.notify_service_health_changed,
 				install_dir: formInstallDir,
 				check_interval_sec: formInterval,
 				hc_enabled: formHcEnabled,
@@ -264,12 +268,14 @@
 		formWebhookURL = '';
 		formWebhookBearerToken = '';
 		useCustomWebhookBearerToken = false;
-		formNotifyVersionFound = false;
-		formNotifyDeploymentSucceeded = false;
-		formNotifyDeploymentFailed = false;
-		formNotifyRollbackSucceeded = false;
-		formNotifyRollbackFailed = false;
-		formNotifyServiceHealthChanged = false;
+		webhookSelections = {
+			notify_version_found: false,
+			notify_deployment_succeeded: false,
+			notify_deployment_failed: false,
+			notify_rollback_succeeded: false,
+			notify_rollback_failed: false,
+			notify_service_health_changed: false
+		};
 		formServices = [];
 		inspectResult = null;
 		selectedInspectService = '';
@@ -515,14 +521,12 @@
 									</div>
 								</div>
 							</div>
-							<div class="grid gap-2 sm:grid-cols-2 text-sm">
-								<label class="flex items-center gap-2"><Checkbox bind:checked={formNotifyVersionFound} /> Version found</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={formNotifyDeploymentSucceeded} /> Deployment succeeded</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={formNotifyDeploymentFailed} /> Deployment failed</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={formNotifyRollbackSucceeded} /> Rollback succeeded</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={formNotifyRollbackFailed} /> Rollback failed</label>
-								<label class="flex items-center gap-2"><Checkbox bind:checked={formNotifyServiceHealthChanged} /> Service health changed</label>
-							</div>
+							<WebhookEventReference
+								title="Webhook Event Subscriptions"
+								description="Choose which watcher events should be delivered. Each event entry explains when it fires and what payload fields receivers should expect."
+								bind:selections={webhookSelections}
+								showSelection={true}
+							/>
 						</div>
 
 						<div class="flex items-center gap-2 mt-4">
@@ -543,10 +547,12 @@
 									<div class="space-y-1">
 										<Label class="text-xs">Hosting Mode</Label>
 										<Select.Root type="single" bind:value={svc.service_type}>
-											<Select.Trigger class="h-8 text-xs" />
+											<Select.Trigger class="h-8 text-xs">
+												{isIISService(svc.service_type || 'nssm') ? 'IIS Site' : 'NSSM Native Windows'}
+											</Select.Trigger>
 											<Select.Content>
-												<Select.Item value="nssm">NSSM Native Windows</Select.Item>
-												<Select.Item value="iis">IIS Site</Select.Item>
+												<Select.Item value="nssm" label="NSSM Native Windows">NSSM Native Windows</Select.Item>
+												<Select.Item value="iis" label="IIS Site">IIS Site</Select.Item>
 											</Select.Content>
 										</Select.Root>
 									</div>
@@ -582,10 +588,12 @@
 										<div class="space-y-1 sm:col-span-2">
 											<Label class="text-xs">IIS App Kind</Label>
 											<Select.Root type="single" bind:value={svc.iis_app_kind}>
-												<Select.Trigger class="h-8 text-xs" />
+												<Select.Trigger class="h-8 text-xs">
+													{iisAppKinds.find((kind) => kind.value === (svc.iis_app_kind || 'static'))?.label || 'Select kind'}
+												</Select.Trigger>
 												<Select.Content>
 													{#each iisAppKinds as kind (kind.value)}
-														<Select.Item value={kind.value}>{kind.label}</Select.Item>
+														<Select.Item value={kind.value} label={kind.label}>{kind.label}</Select.Item>
 													{/each}
 												</Select.Content>
 											</Select.Root>
@@ -636,10 +644,12 @@
 														<div class="grid gap-2 sm:grid-cols-[1fr_150px]">
 															<Input class="h-8 text-xs" bind:value={file.file_path} placeholder="web.config or config/appsettings.json" />
 															<Select.Root type="single" bind:value={file.target}>
-																<Select.Trigger class="h-8 text-xs" />
+																<Select.Trigger class="h-8 text-xs">
+																	{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
+																</Select.Trigger>
 																<Select.Content>
-																	<Select.Item value="app_dir">Service/app dir</Select.Item>
-																	<Select.Item value="release_dir">Current dir</Select.Item>
+																	<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
+																	<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
 																</Select.Content>
 															</Select.Root>
 														</div>

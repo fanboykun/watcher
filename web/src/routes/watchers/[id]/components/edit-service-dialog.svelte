@@ -3,7 +3,7 @@
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import * as Select from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Plus, Trash2 } from '@lucide/svelte';
 	import { isIISService, iisAppKindLabel, type Service, type ServiceConfigFile, type IISAppKind, type ServiceWritePayload } from '$lib/api';
@@ -139,10 +139,12 @@
 					<div class="space-y-2">
 						<Label for="editSvcType">Hosting Mode</Label>
 						<Select.Root type="single" bind:value={editSvcType}>
-							<Select.Trigger id="editSvcType" />
+							<Select.Trigger id="editSvcType">
+								{editSvcType === 'iis' ? 'IIS Site' : 'Binary (NSSM)'}
+							</Select.Trigger>
 							<Select.Content>
-								<Select.Item value="nssm">Binary (NSSM)</Select.Item>
-								<Select.Item value="iis">IIS Site</Select.Item>
+								<Select.Item value="nssm" label="Binary (NSSM)">Binary (NSSM)</Select.Item>
+								<Select.Item value="iis" label="IIS Site">IIS Site</Select.Item>
 							</Select.Content>
 						</Select.Root>
 					</div>
@@ -187,10 +189,12 @@
 						<div class="space-y-2 md:col-span-2">
 							<Label for="editSvcIISAppKind">IIS App Kind</Label>
 							<Select.Root type="single" bind:value={editSvcIISAppKind}>
-								<Select.Trigger id="editSvcIISAppKind" />
+								<Select.Trigger id="editSvcIISAppKind">
+									{iisAppKinds.find((kind) => kind.value === editSvcIISAppKind)?.label || 'Select kind'}
+								</Select.Trigger>
 								<Select.Content>
 									{#each iisAppKinds as kind (kind.value)}
-										<Select.Item value={kind.value}>{kind.label}</Select.Item>
+										<Select.Item value={kind.value} label={kind.label}>{kind.label}</Select.Item>
 									{/each}
 								</Select.Content>
 							</Select.Root>
@@ -264,10 +268,12 @@
 									<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
 										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
 										<Select.Root type="single" bind:value={file.target}>
-											<Select.Trigger />
+											<Select.Trigger>
+												{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
+											</Select.Trigger>
 											<Select.Content>
-												<Select.Item value="app_dir">Service/app dir</Select.Item>
-												<Select.Item value="release_dir">Current dir</Select.Item>
+												<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
+												<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
 											</Select.Content>
 										</Select.Root>
 									</div>
