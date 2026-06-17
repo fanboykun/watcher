@@ -470,18 +470,7 @@ func (h *Handler) cleanupWatcherServices(watcher *database.Watcher) error {
 	}
 
 	for _, svc := range watcher.Services {
-		if normalizeServiceType(svc.ServiceType) != "nssm" {
-			continue
-		}
-		name := strings.TrimSpace(svc.WindowsServiceName)
-		if name == "" {
-			continue
-		}
-
-		if err := h.stopNSSMService(name); err != nil {
-			return err
-		}
-		if err := h.removeNSSMService(name); err != nil {
+		if err := h.cleanupServiceRuntime(&svc); err != nil {
 			return err
 		}
 	}
@@ -517,11 +506,33 @@ func (h *Handler) removeWatcherInstallDir(watcher *database.Watcher) error {
 }
 
 func (h *Handler) stopNSSMService(name string) error {
+	const (
+		gracefulTimeout = 45 * time.Second
+		forceTimeout    = 20 * time.Second
+		pollInterval    = 2 * time.Second
+	)
+
 	out, err := exec.Command(h.nssmPath, "stop", name, "confirm").CombinedOutput()
-	if err == nil || isServiceMissingOutput(string(out)) || isServiceStoppedOutput(string(out)) {
+	if err != nil && !isServiceMissingOutput(string(out)) && !isServiceStoppedOutput(string(out)) {
+		return fmt.Errorf("failed to stop service %s before watcher deletion: %s", name, strings.TrimSpace(string(out)))
+	}
+
+	state, waitErr := h.waitForNSSMServiceState(name, []string{"SERVICE_STOPPED", "SERVICE_MISSING"}, gracefulTimeout, pollInterval)
+	if waitErr == nil {
 		return nil
 	}
-	return fmt.Errorf("failed to stop service %s before watcher deletion: %s", name, strings.TrimSpace(string(out)))
+
+	killOut, killErr := exec.Command("taskkill", "/F", "/FI", fmt.Sprintf("SERVICES eq %s", name)).CombinedOutput()
+	if killErr != nil && !strings.Contains(strings.ToUpper(string(killOut)), "NO TASKS ARE RUNNING") {
+		return fmt.Errorf("failed to force-stop service %s before watcher deletion: %s", name, strings.TrimSpace(string(killOut)))
+	}
+
+	if _, waitErr = h.waitForNSSMServiceState(name, []string{"SERVICE_STOPPED", "SERVICE_MISSING"}, forceTimeout, pollInterval); waitErr != nil {
+		return fmt.Errorf("failed to stop service %s before watcher deletion: %w", name, waitErr)
+	}
+
+	_ = state
+	return nil
 }
 
 func (h *Handler) removeNSSMService(name string) error {
@@ -543,6 +554,61 @@ func isServiceStoppedOutput(out string) bool {
 	normalized := strings.ToUpper(strings.TrimSpace(out))
 	return strings.Contains(normalized, "SERVICE_STOPPED") ||
 		strings.Contains(normalized, "SERVICE_NOT_ACTIVE")
+}
+
+func (h *Handler) cleanupServiceRuntime(svc *database.Service) error {
+	if svc == nil || runtime.GOOS != "windows" {
+		return nil
+	}
+	if normalizeServiceType(svc.ServiceType) != "nssm" {
+		return nil
+	}
+
+	name := strings.TrimSpace(svc.WindowsServiceName)
+	if name == "" {
+		return nil
+	}
+
+	if err := h.stopNSSMService(name); err != nil {
+		return err
+	}
+	if err := h.removeNSSMService(name); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *Handler) waitForNSSMServiceState(name string, expected []string, timeout, interval time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	expectedUpper := make([]string, 0, len(expected))
+	for _, value := range expected {
+		expectedUpper = append(expectedUpper, strings.ToUpper(strings.TrimSpace(value)))
+	}
+
+	for {
+		out, err := exec.Command(h.nssmPath, "status", name).CombinedOutput()
+		text := strings.TrimSpace(strings.ToUpper(string(out)))
+		if isServiceMissingOutput(text) {
+			text = "SERVICE_MISSING"
+			err = nil
+		}
+		if err == nil {
+			for _, candidate := range expectedUpper {
+				if text == candidate {
+					return text, nil
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			if text == "" {
+				text = "unknown"
+			}
+			return text, fmt.Errorf("timed out waiting for service %s to reach %v (last status: %s)", name, expectedUpper, text)
+		}
+
+		time.Sleep(interval)
+	}
 }
 
 // ── Service CRUD (nested under watcher) ───────────────────────
@@ -802,6 +868,11 @@ func (h *Handler) UpdateService(c *gin.Context) {
 func (h *Handler) DeleteService(c *gin.Context) {
 	svc, err := h.findService(c)
 	if err != nil {
+		return
+	}
+
+	if err := h.cleanupServiceRuntime(svc); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
 
@@ -1067,7 +1138,8 @@ func (h *Handler) findWatcher(c *gin.Context) (*database.Watcher, error) {
 
 func (h *Handler) findService(c *gin.Context) (*database.Service, error) {
 	// Verify watcher exists
-	if _, err := h.findWatcher(c); err != nil {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1078,7 +1150,7 @@ func (h *Handler) findService(c *gin.Context) (*database.Service, error) {
 	}
 
 	var svc database.Service
-	if err := h.db.Preload("ConfigFiles").First(&svc, sid).Error; err != nil {
+	if err := h.db.Preload("ConfigFiles").Where("id = ? AND watcher_id = ?", sid, watcher.ID).First(&svc).Error; err != nil {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "service not found"})
 		return nil, err
 	}
@@ -1093,27 +1165,31 @@ func withDefault(val, def int) int {
 }
 
 func compareSemver(a, b string) int {
-	parse := func(v string) [3]int {
-		var out [3]int
-		v = strings.TrimSpace(strings.TrimPrefix(v, "v"))
-		parts := strings.Split(v, ".")
-		for i := 0; i < 3 && i < len(parts); i++ {
-			fmt.Sscanf(parts[i], "%d", &out[i])
+	cmp, ok := agent.CompareVersions(a, b)
+	if !ok {
+		parse := func(v string) [3]int {
+			var out [3]int
+			v = strings.TrimSpace(strings.TrimPrefix(v, "v"))
+			parts := strings.Split(v, ".")
+			for i := 0; i < 3 && i < len(parts); i++ {
+				fmt.Sscanf(parts[i], "%d", &out[i])
+			}
+			return out
 		}
-		return out
-	}
 
-	pa := parse(a)
-	pb := parse(b)
-	for i := 0; i < 3; i++ {
-		if pa[i] > pb[i] {
-			return 1
+		pa := parse(a)
+		pb := parse(b)
+		for i := 0; i < 3; i++ {
+			if pa[i] > pb[i] {
+				return 1
+			}
+			if pa[i] < pb[i] {
+				return -1
+			}
 		}
-		if pa[i] < pb[i] {
-			return -1
-		}
+		return 0
 	}
-	return 0
+	return cmp
 }
 
 func buildWatcherLogURL(apiBaseURL string, watcherID, deployLogID uint) string {
@@ -1430,10 +1506,7 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 
 	completed := time.Now().UTC()
 	durationMs := completed.Sub(startedAt).Milliseconds()
-	maxIgnored := ""
-	if compareSemver(targetVersion, previousVersion) < 0 {
-		maxIgnored = previousVersion
-	}
+	maxIgnored := agent.RollbackHighWatermark(targetVersion, previousVersion)
 	_ = h.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).Updates(map[string]any{
 		"status":       "succeeded",
 		"completed_at": &completed,

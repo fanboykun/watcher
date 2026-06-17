@@ -218,7 +218,7 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 		return nil
 	}
 
-	if maxIgnoredVersion != "" && !isNewer(targetVersion, maxIgnoredVersion) {
+	if IsVersionBlockedByRollback(targetVersion, maxIgnoredVersion) {
 		r.log.Info("update skipped due to rollback high-watermark", "target", targetVersion, "ignored_upto", maxIgnoredVersion)
 		r.state.RecordPollEvent("skipped", targetVersion, fmt.Sprintf("skipped (<= %s) because of manual rollback", maxIgnoredVersion))
 		return nil
@@ -525,7 +525,7 @@ func (a *Agent) Run(ctx context.Context) {
 
 func (a *Agent) syncWatchers(ctx context.Context) {
 	var dbWatchers []database.Watcher
-	if err := a.db.Preload("Services").Find(&dbWatchers).Error; err != nil {
+	if err := a.db.Preload("Services").Preload("Services.ConfigFiles").Find(&dbWatchers).Error; err != nil {
 		a.log.Error("failed to load watchers from database", "error", err)
 		return
 	}

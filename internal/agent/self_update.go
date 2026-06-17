@@ -210,17 +210,65 @@ func extractFileFromZip(zipPath, fileName, destPath string) error {
 // It accepts plain versions, prefixed tags, and artifact-like labels as long as a
 // semantic version can be extracted from the string.
 func isNewer(latest, current string) bool {
-	latestVersion, latestOK := extractComparableVersion(latest)
-	currentVersion, currentOK := extractComparableVersion(current)
-
+	_, latestOK := extractComparableVersion(latest)
+	_, currentOK := extractComparableVersion(current)
 	if current == "dev" || current == "" || !currentOK {
 		return latestOK
 	}
-	if !latestOK {
+	cmp, ok := CompareVersions(latest, current)
+	return ok && cmp > 0
+}
+
+// CompareVersions compares two semver-like strings after extracting a comparable
+// version from each label. It supports plain semver values, prefixed tags, and
+// artifact-like labels that embed a semantic version. The boolean return value
+// reports whether both values were comparable.
+func CompareVersions(a, b string) (int, bool) {
+	av, aOK := extractComparableVersion(a)
+	bv, bOK := extractComparableVersion(b)
+	if !aOK || !bOK {
+		return 0, false
+	}
+	return compareComparableVersions(av, bv), true
+}
+
+// IsVersionBlockedByRollback reports whether targetVersion should be skipped by
+// the rollback high-watermark. Exact version matches are always blocked. When
+// both values are comparable semver-like labels, versions <= maxIgnoredVersion
+// are also blocked.
+func IsVersionBlockedByRollback(targetVersion, maxIgnoredVersion string) bool {
+	targetVersion = strings.TrimSpace(targetVersion)
+	maxIgnoredVersion = strings.TrimSpace(maxIgnoredVersion)
+	if targetVersion == "" || maxIgnoredVersion == "" {
 		return false
 	}
+	if targetVersion == maxIgnoredVersion {
+		return true
+	}
+	cmp, ok := CompareVersions(targetVersion, maxIgnoredVersion)
+	return ok && cmp <= 0
+}
 
-	return compareComparableVersions(latestVersion, currentVersion) > 0
+// RollbackHighWatermark returns the version label that should be remembered
+// after a manual rollback so future polling can avoid immediately re-applying
+// the same bad version. When both versions are comparable, the previous version
+// is pinned only if the rollback target is older. For non-comparable labels,
+// Watcher conservatively pins the previous exact label so exact rediscovery is
+// still blocked.
+func RollbackHighWatermark(targetVersion, previousVersion string) string {
+	targetVersion = strings.TrimSpace(targetVersion)
+	previousVersion = strings.TrimSpace(previousVersion)
+	if targetVersion == "" || previousVersion == "" || targetVersion == previousVersion {
+		return ""
+	}
+	cmp, ok := CompareVersions(targetVersion, previousVersion)
+	if !ok {
+		return previousVersion
+	}
+	if cmp < 0 {
+		return previousVersion
+	}
+	return ""
 }
 
 func extractComparableVersion(raw string) ([3]int, bool) {
