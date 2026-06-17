@@ -4,6 +4,12 @@ Watcher can emit durable, outbound HTTP webhook events to external systems to an
 
 This document serves as the integration guide and public API contract for webhook interactions in Watcher (`schema_version: "v1"`).
 
+Companion references:
+
+- In-app docs page: `/docs/webhooks`
+- In-app webhook hub: `/webhooks`
+- OpenAPI contract: [`web/static/webhooks.openapi.yaml`](../web/static/webhooks.openapi.yaml)
+
 ---
 
 ## 1. Webhook Delivery Model & Guarantees
@@ -33,6 +39,38 @@ When delivering an event, Watcher sends an HTTP request with the following detai
   - `X-Watcher-Event`: The type of event being delivered (e.g. `watcher.deployment_succeeded`).
   - `X-Watcher-Delivery-ID`: A unique string identifying this specific delivery attempt (e.g. `dlv_01j0deployok_1`).
   - `Authorization`: `Bearer <token>` (only included if a Bearer Token is configured for the watcher or globally).
+
+### 2.1 Shared Envelope Contract
+
+Every webhook event includes the same top-level envelope before any event-specific nested object such as `version`, `attempt`, `service`, or `health`.
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `schema_version` | `string` | Version of the webhook payload contract. For the current public contract this is `v1`. |
+| `event_id` | `string` | Stable identifier for the business event itself. Use this for idempotency and deduplication across retries or replays. |
+| `event_type` | `string` | Event name such as `watcher.version_found`. This matches the `X-Watcher-Event` header and tells you which nested object to expect. |
+| `occurred_at` | `string` (`RFC3339 date-time`) | When Watcher created the event record, not when your endpoint received it. |
+| `watcher.id` | `integer` | Internal database ID of the Watcher instance that emitted the event. It is stable inside that Watcher deployment and useful for correlating multiple events from the same watcher. |
+| `watcher.name` | `string` | Human-facing watcher name configured in Watcher UI. Useful for logs, dashboards, and notifications. |
+| `summary` | `string` | Human-readable description of the event. Safe for display or logs, but receivers should not automate business logic from this text. Use structured fields instead. |
+
+### 2.2 `watcher.version_found` Contract
+
+`watcher.version_found` is a discovery event. It means Watcher observed a newer remote version than the watcher's currently active version. It does **not** guarantee that deployment has started or will start.
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `version.discovered_version` | `string` | The newer remote version string that Watcher found during polling. This is the candidate release version that triggered the event. |
+| `version.current_version` | `string` | The watcher's current active version at the time the event was emitted. Compare this with `discovered_version` to see what changed. |
+| `version.will_deploy` | `boolean` | Whether Watcher intends to proceed with deployment for the discovered version after discovery. `true` means deployment is allowed to continue; `false` means discovery happened but rollout is currently blocked. |
+| `version.block_reason` | `string` | Reason deployment will not proceed when `will_deploy` is `false`. Treat this as explanatory operator-facing text, not a fixed enum. Expect an empty string when there is no block. |
+
+Receiver guidance for this event:
+
+- Treat it as a notification that a new candidate exists.
+- Do not assume a deployment attempt already exists.
+- Use `will_deploy=false` plus `block_reason` to distinguish "new version found but no rollout will happen" from "new version found and rollout can proceed".
+- Use `event_id` for deduplication, not `discovered_version` alone.
 
 ---
 
@@ -479,6 +517,12 @@ This section details every event type fired by Watcher. Each block defines the t
   - Emitted exactly once per remote version discovered.
   - Dedicated deduplication is performed so subsequent poll checks for the same version do not repeat the event.
   - This event fires even if deployment is currently blocked (e.g., watcher is paused, release ref mismatch, or retry threshold exceeded). Check the nested `version.will_deploy` and `version.block_reason` fields to see if the watcher will proceed to roll out this version.
+* **Field semantics**:
+  - `version.discovered_version` is the newly discovered remote version.
+  - `version.current_version` is the currently active watcher version when discovery happened.
+  - `version.will_deploy=true` means Watcher can proceed toward deployment after discovery.
+  - `version.will_deploy=false` means this is still a real discovery event, but rollout is blocked; `version.block_reason` explains why.
+  - `summary` is for human reading only. Automation should use the structured fields above.
 * **Payload Structure**:
 ```json
 {

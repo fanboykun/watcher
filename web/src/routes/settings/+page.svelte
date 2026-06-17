@@ -12,7 +12,18 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Checkbox } from '$lib/components/ui/checkbox';
-	import { Download, Info, RotateCcw, AlertTriangle, CheckCircle2, Copy, LockKeyhole } from '@lucide/svelte';
+	import {
+		Download,
+		Info,
+		RotateCcw,
+		AlertTriangle,
+		CheckCircle2,
+		Copy,
+		LockKeyhole,
+		BookOpenText,
+		ExternalLink
+	} from '@lucide/svelte';
+	import { webhookDocsHref } from '$lib/webhooks';
 
 	let versionInfo = $state<SelfVersionResponse | null>(null);
 	let updateInfo = $state<SelfUpdateCheckResponse | null>(null);
@@ -94,7 +105,7 @@
 		error = '';
 		success = '';
 		try {
-			const payload: Record<string, string | boolean> = {
+			const payload: Record<string, string | boolean | number> = {
 				environment: cfgEnvironment,
 				github_deploy_enabled: cfgGithubDeployEnabled,
 				log_dir: cfgLogDir,
@@ -379,6 +390,24 @@
 			<Card.Description>
 				Global webhook routing, authentication, retry, and retention defaults used across watchers.
 			</Card.Description>
+			<div class="flex flex-wrap gap-2">
+				<a href="/webhooks">
+					<Button.Root size="sm" variant="outline">Webhook Hub</Button.Root>
+				</a>
+				<a href="/docs/webhooks">
+					<Button.Root size="sm" variant="outline">
+						<BookOpenText class="mr-2 h-4 w-4" />
+						Integration Guide
+					</Button.Root>
+				</a>
+				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+				<a href={webhookDocsHref} target="_blank" rel="noopener noreferrer">
+					<Button.Root size="sm" variant="outline">
+						<ExternalLink class="mr-2 h-4 w-4" />
+						Repo Docs
+					</Button.Root>
+				</a>
+			</div>
 		</Card.Header>
 		<Card.Content class="space-y-4">
 			{#if agentConfig}

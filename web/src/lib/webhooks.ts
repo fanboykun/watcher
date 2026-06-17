@@ -20,7 +20,7 @@ export type WebhookEventDoc = {
 	examplePayload: string;
 };
 
-export const webhookDocsHref = '/docs/webhooks';
+export const webhookDocsHref = 'https://github.com/fanboykun/watcher/blob/main/docs/webhooks.md';
 export const webhookOpenAPISpecHref = '/webhooks.openapi.yaml';
 
 export function webhookEventDocHref(anchor: string) {

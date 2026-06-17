@@ -10,15 +10,15 @@
 		watcher,
 		readonly = false,
 		manageHref = '',
-		onAddService,
-		onEditService,
+		createHref = '',
+		editHrefBase = '',
 		onDeleteService
 	}: {
 		watcher: Watcher;
 		readonly?: boolean;
 		manageHref?: string;
-		onAddService?: () => void;
-		onEditService?: (svc: Service) => void;
+		createHref?: string;
+		editHrefBase?: string;
 		onDeleteService?: (svcId: number, name: string) => void;
 	} = $props();
 </script>
@@ -30,10 +30,12 @@
 				<Pencil class="mr-2 h-4 w-4" /> Manage Settings
 			</Button.Root>
 		</a>
-	{:else if onAddService}
-		<Button.Root size="sm" onclick={onAddService}>
-			<Plus class="mr-2 h-4 w-4" /> Add Service
-		</Button.Root>
+	{:else if createHref}
+		<a href={createHref}>
+			<Button.Root size="sm">
+				<Plus class="mr-2 h-4 w-4" /> Add Service
+			</Button.Root>
+		</a>
 	{/if}
 </div>
 
@@ -92,16 +94,12 @@
 						</Table.Cell>
 						{#if !readonly}
 							<Table.Cell class="text-right">
-								{#if onEditService}
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										class="h-8 w-8"
-										onclick={() => onEditService(svc)}
-										title="Edit"
-									>
-										<Pencil class="h-4 w-4" />
-									</Button.Root>
+								{#if editHrefBase}
+									<a href={`${editHrefBase}/${svc.id}/edit`}>
+										<Button.Root variant="ghost" size="icon" class="h-8 w-8" title="Edit">
+											<Pencil class="h-4 w-4" />
+										</Button.Root>
+									</a>
 								{/if}
 								{#if onDeleteService}
 									<Button.Root

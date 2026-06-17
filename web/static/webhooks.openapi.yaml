@@ -1,0 +1,268 @@
+openapi: 3.1.0
+info:
+  title: Watcher Webhook Events
+  version: v1
+  summary: Public contract for outbound Watcher webhook payloads
+  description: |
+    This specification documents the JSON payloads that Watcher sends to your webhook receiver.
+    Delivery is at-least-once. Deduplicate on `event_id`.
+servers:
+  - url: https://example-receiver.invalid
+    description: Your webhook receiver
+paths:
+  /watcher-hook:
+    post:
+      summary: Receive Watcher webhook events
+      description: |
+        Watcher sends outbound POST requests with JSON bodies. The payload shape varies by `event_type`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/WatcherVersionFoundEvent'
+                - $ref: '#/components/schemas/WatcherDeploymentSucceededEvent'
+                - $ref: '#/components/schemas/WatcherDeploymentFailedEvent'
+                - $ref: '#/components/schemas/WatcherRollbackSucceededEvent'
+                - $ref: '#/components/schemas/WatcherRollbackFailedEvent'
+                - $ref: '#/components/schemas/ServiceHealthChangedEvent'
+                - $ref: '#/components/schemas/WatcherWebhookTestEvent'
+                - $ref: '#/components/schemas/WebhookDeliveryExhaustedEvent'
+            examples:
+              version_found:
+                value:
+                  schema_version: v1
+                  event_id: evt_01j0versionfound
+                  event_type: watcher.version_found
+                  occurred_at: '2026-06-17T02:15:10Z'
+                  watcher:
+                    id: 12
+                    name: api-prod
+                  version:
+                    discovered_version: v1.4.2
+                    current_version: v1.4.1
+                    will_deploy: false
+                    block_reason: watcher paused
+                  summary: Watcher api-prod found version v1.4.2
+      responses:
+        '200':
+          description: Webhook accepted
+components:
+  schemas:
+    WatcherRef:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+    BaseEvent:
+      type: object
+      additionalProperties: true
+      required: [schema_version, event_id, event_type, occurred_at, watcher, summary]
+      properties:
+        schema_version:
+          type: string
+          const: v1
+        event_id:
+          type: string
+        event_type:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        watcher:
+          $ref: '#/components/schemas/WatcherRef'
+        summary:
+          type: string
+    VersionInfo:
+      type: object
+      additionalProperties: false
+      required: [discovered_version, current_version, will_deploy, block_reason]
+      properties:
+        discovered_version:
+          type: string
+        current_version:
+          type: string
+        will_deploy:
+          type: boolean
+        block_reason:
+          type: string
+    AttemptInfo:
+      type: object
+      additionalProperties: true
+      required:
+        - id
+        - kind
+        - reason
+        - status
+        - triggered_by
+        - target_version
+        - from_version
+        - failed_target_version
+        - failure_phase
+        - error
+      properties:
+        id:
+          type: integer
+        kind:
+          type: string
+          enum: [deploy, rollback]
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [succeeded, failed]
+        triggered_by:
+          type: string
+        target_version:
+          type: string
+        from_version:
+          type: string
+        failed_target_version:
+          type: string
+        failure_phase:
+          type: string
+        error:
+          type: string
+        parent_attempt_id:
+          type: [integer, 'null']
+        root_attempt_id:
+          type: [integer, 'null']
+    ServiceInfo:
+      type: object
+      additionalProperties: false
+      required: [id, name, service_type, health_check_url]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        service_type:
+          type: string
+        health_check_url:
+          type: string
+    HealthInfo:
+      type: object
+      additionalProperties: true
+      required: [previous_status, current_status, http_status, error, checked_at, source]
+      properties:
+        previous_status:
+          type: string
+        current_status:
+          type: string
+        http_status:
+          type: integer
+        error:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
+        source:
+          type: string
+          description: Today this is emitted from manual health checks; additional sources are reserved for future flows.
+    FailedDeliveryInfo:
+      type: object
+      additionalProperties: false
+      required: [event_id, event_type, delivery_id, attempt_number, response_status_code, error, summary]
+      properties:
+        event_id:
+          type: string
+        event_type:
+          type: string
+        delivery_id:
+          type: string
+        attempt_number:
+          type: integer
+        response_status_code:
+          type: integer
+        error:
+          type: string
+        summary:
+          type: string
+    WatcherVersionFoundEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required: [version]
+          properties:
+            event_type:
+              const: watcher.version_found
+            version:
+              $ref: '#/components/schemas/VersionInfo'
+    WatcherDeploymentSucceededEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required: [attempt]
+          properties:
+            event_type:
+              const: watcher.deployment_succeeded
+            attempt:
+              $ref: '#/components/schemas/AttemptInfo'
+    WatcherDeploymentFailedEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required: [attempt]
+          properties:
+            event_type:
+              const: watcher.deployment_failed
+            attempt:
+              $ref: '#/components/schemas/AttemptInfo'
+    WatcherRollbackSucceededEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required: [attempt]
+          properties:
+            event_type:
+              const: watcher.rollback_succeeded
+            attempt:
+              $ref: '#/components/schemas/AttemptInfo'
+    WatcherRollbackFailedEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required: [attempt]
+          properties:
+            event_type:
+              const: watcher.rollback_failed
+            attempt:
+              $ref: '#/components/schemas/AttemptInfo'
+    ServiceHealthChangedEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required: [service, health]
+          properties:
+            event_type:
+              const: service.health_changed
+            service:
+              $ref: '#/components/schemas/ServiceInfo'
+            health:
+              $ref: '#/components/schemas/HealthInfo'
+    WatcherWebhookTestEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required: [triggered_by]
+          properties:
+            event_type:
+              const: watcher.webhook_test
+            triggered_by:
+              type: string
+              const: manual
+    WebhookDeliveryExhaustedEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required: [failed_delivery]
+          properties:
+            event_type:
+              const: webhook.delivery_exhausted
+            failed_delivery:
+              $ref: '#/components/schemas/FailedDeliveryInfo'

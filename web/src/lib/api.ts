@@ -239,6 +239,7 @@ export interface WatcherWritePayload {
 	notify_rollback_succeeded?: boolean;
 	notify_rollback_failed?: boolean;
 	notify_service_health_changed?: boolean;
+	services?: ServiceWritePayload[];
 }
 
 export type ServiceType = 'nssm' | 'iis';
@@ -355,6 +356,9 @@ export interface WebhookDelivery {
 	id: number;
 	watcher_id: number;
 	webhook_event_id: number;
+	event_id: string;
+	event_type: string;
+	summary: string;
 	delivery_id: string;
 	status: string;
 	attempt_number: number;

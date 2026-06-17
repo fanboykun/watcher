@@ -1,11 +1,16 @@
 <script lang="ts">
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import Badge from '$lib/components/ui/badge/badge.svelte';
-	import { ExternalLink } from '@lucide/svelte';
+	import { BookOpenText, Braces, ExternalLink } from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card';
+	import * as Button from '$lib/components/ui/button';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import {
+		webhookDocsHref,
 		webhookDeliveryNotes,
 		webhookEventDocs,
+		webhookEventDocHref,
+		webhookOpenAPISpecHref,
 		webhookSystemEventDocs,
 		type WebhookSelectionState
 	} from '$lib/webhooks';
@@ -29,6 +34,22 @@
 		<Card.Description>{description}</Card.Description>
 	</Card.Header>
 	<Card.Content class="space-y-5">
+		<div class="flex flex-wrap gap-2">
+			<a href={webhookDocsHref}>
+				<Button.Root variant="outline" size="sm">
+					<BookOpenText class="mr-2 h-4 w-4" />
+					Webhook Guide
+				</Button.Root>
+			</a>
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+			<a href={webhookOpenAPISpecHref} target="_blank" rel="noopener noreferrer">
+				<Button.Root variant="outline" size="sm">
+					<Braces class="mr-2 h-4 w-4" />
+					OpenAPI Spec
+				</Button.Root>
+			</a>
+		</div>
+
 		<div class="rounded-md border border-border/70 bg-muted/20 p-4">
 			<h4 class="text-sm font-medium">Delivery Behavior</h4>
 			<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
@@ -50,11 +71,9 @@
 									{event.eventType}
 								</Badge>
 								<a
-									href="https://github.com/fanboykun/watcher/blob/main/docs/webhooks.md#{event.anchor}"
-									target="_blank"
-									rel="noopener noreferrer"
+									href={webhookEventDocHref(event.anchor)}
 									class="text-muted-foreground hover:text-primary transition-colors"
-									title="View in Repository Documentation"
+									title="Open Event Documentation"
 								>
 									<ExternalLink class="h-3 w-3" />
 								</a>
@@ -63,9 +82,7 @@
 						</div>
 						{#if showSelection && selections && event.key}
 							<label class="flex items-center gap-2 text-sm">
-								<Checkbox
-									bind:checked={selections[event.key]}
-								/>
+								<Checkbox bind:checked={selections[event.key]} />
 								<span>Send this event</span>
 							</label>
 						{/if}
@@ -90,6 +107,25 @@
 									<li>{field}</li>
 								{/each}
 							</ul>
+							<div class="mt-3 flex flex-wrap gap-2">
+								<a href={webhookEventDocHref(event.anchor)} class="text-xs text-primary hover:underline">
+									Read event docs
+								</a>
+								<Dialog.Root>
+									<Dialog.Trigger>
+										<Button.Root variant="outline" size="sm">Payload Example</Button.Root>
+									</Dialog.Trigger>
+									<Dialog.Content class="max-w-3xl">
+										<Dialog.Header>
+											<Dialog.Title>{event.name} payload example</Dialog.Title>
+											<Dialog.Description>
+												{event.eventType} using schema <code>{event.schemaName}</code>.
+											</Dialog.Description>
+										</Dialog.Header>
+										<pre class="max-h-[60vh] overflow-auto rounded-md border border-border/70 bg-muted/30 p-4 text-xs leading-6 text-foreground"><code>{event.examplePayload}</code></pre>
+									</Dialog.Content>
+								</Dialog.Root>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -110,11 +146,9 @@
 								{event.eventType}
 							</Badge>
 							<a
-								href="https://github.com/fanboykun/watcher/blob/main/docs/webhooks.md#{event.anchor}"
-								target="_blank"
-								rel="noopener noreferrer"
+								href={webhookEventDocHref(event.anchor)}
 								class="text-muted-foreground hover:text-primary transition-colors"
-								title="View in Repository Documentation"
+								title="Open Event Documentation"
 							>
 								<ExternalLink class="h-3 w-3" />
 							</a>
@@ -141,6 +175,25 @@
 									<li>{field}</li>
 								{/each}
 							</ul>
+							<div class="mt-3 flex flex-wrap gap-2">
+								<a href={webhookEventDocHref(event.anchor)} class="text-xs text-primary hover:underline">
+									Read event docs
+								</a>
+								<Dialog.Root>
+									<Dialog.Trigger>
+										<Button.Root variant="outline" size="sm">Payload Example</Button.Root>
+									</Dialog.Trigger>
+									<Dialog.Content class="max-w-3xl">
+										<Dialog.Header>
+											<Dialog.Title>{event.name} payload example</Dialog.Title>
+											<Dialog.Description>
+												{event.eventType} using schema <code>{event.schemaName}</code>.
+											</Dialog.Description>
+										</Dialog.Header>
+										<pre class="max-h-[60vh] overflow-auto rounded-md border border-border/70 bg-muted/30 p-4 text-xs leading-6 text-foreground"><code>{event.examplePayload}</code></pre>
+									</Dialog.Content>
+								</Dialog.Root>
+							</div>
 						</div>
 					</div>
 				</div>

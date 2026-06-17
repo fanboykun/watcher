@@ -11,12 +11,12 @@
 		type IISAppKind,
 		type Service,
 		type ServiceConfigFile,
-		type Watcher,
-		type ServiceWritePayload
+		type Watcher
 	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import * as Button from '$lib/components/ui/button';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import {
 		ArrowLeft,
 		Play,
@@ -26,7 +26,8 @@
 		AlertCircle,
 		ExternalLink,
 		TerminalSquare,
-		Pencil
+		Pencil,
+		Trash2
 	} from '@lucide/svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -34,7 +35,6 @@
 	import DeploysTab from './components/deploys-tab.svelte';
 	import LogsTab from './components/logs-tab.svelte';
 	import EnvTab from './components/env-tab.svelte';
-	import EditServiceDialog from './components/edit-service-dialog.svelte';
 
 	let service = $state<Service | null>(null);
 	let watcher = $state<Watcher | null>(null);
@@ -53,8 +53,8 @@
 	let envContent = $state('');
 	let configFiles = $state<ServiceConfigFile[]>([]);
 	let savingEnv = $state(false);
-	let showEditService = $state(false);
-
+	let showDeleteDialog = $state(false);
+	let deleting = $state(false);
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
@@ -127,21 +127,18 @@
 		}
 	}
 
-	function openEditServiceDialog() {
-		showEditService = true;
-	}
-
-	async function saveServiceEdit(data: ServiceWritePayload) {
+	async function deleteService() {
 		if (!service || !watcher) return;
+		deleting = true;
 		try {
-			service = await api.updateService(watcher.id, service.id, data);
-			showEditService = false;
-			await refreshServiceDetail();
-			actionMsg = 'Service updated';
-			setTimeout(() => (actionMsg = ''), 4000);
+			await api.deleteService(watcher.id, service.id);
+			showDeleteDialog = false;
+			await goto(resolve(`/watchers/${watcher.id}/edit#services`));
 		} catch (e) {
-			actionMsg = e instanceof Error ? e.message : 'Failed to update service';
+			actionMsg = e instanceof Error ? e.message : 'Failed to delete service';
 			setTimeout(() => (actionMsg = ''), 5000);
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -177,8 +174,13 @@
 		</div>
 		{#if service}
 			<div class="flex items-center gap-2">
-				<Button.Root variant="outline" size="sm" onclick={openEditServiceDialog}>
-					<Pencil class="mr-1.5 h-4 w-4" /> Edit
+				<a href={resolve(`/services/${id}/edit`)}>
+					<Button.Root variant="outline" size="sm">
+						<Pencil class="mr-1.5 h-4 w-4" /> Edit
+					</Button.Root>
+				</a>
+				<Button.Root variant="outline" size="sm" class="text-red-400" onclick={() => (showDeleteDialog = true)}>
+					<Trash2 class="mr-1.5 h-4 w-4" /> Delete
 				</Button.Root>
 				{#if !isIISService(service.service_type)}
 					<Button.Root
@@ -353,8 +355,21 @@
 	{/if}
 </div>
 
-<EditServiceDialog
-	bind:open={showEditService}
-	service={service}
-	onSave={saveServiceEdit}
-/>
+<Dialog.Root bind:open={showDeleteDialog}>
+	<Dialog.Content class="sm:max-w-[420px]">
+		<Dialog.Header>
+			<Dialog.Title>Delete Service</Dialog.Title>
+			<Dialog.Description>
+				Delete <span class="font-medium">{service?.windows_service_name || 'this service'}</span>? This removes it from Watcher.
+			</Dialog.Description>
+		</Dialog.Header>
+		<Dialog.Footer>
+			<Button.Root variant="outline" type="button" onclick={() => (showDeleteDialog = false)} disabled={deleting}>
+				Cancel
+			</Button.Root>
+			<Button.Root type="button" class="bg-red-600 text-white hover:bg-red-700" onclick={deleteService} disabled={deleting}>
+				{deleting ? 'Deleting...' : 'Delete Service'}
+			</Button.Root>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>

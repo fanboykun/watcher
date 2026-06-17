@@ -11,6 +11,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type webhookDeliveryListItem struct {
+	database.WebhookDelivery
+	EventID   string `json:"event_id"`
+	EventType string `json:"event_type"`
+	Summary   string `json:"summary"`
+}
+
 func (h *Handler) ListWebhookEvents(c *gin.Context) {
 	watcher, err := h.findWatcher(c)
 	if err != nil {
@@ -40,15 +47,22 @@ func (h *Handler) ListWebhookDeliveries(c *gin.Context) {
 		pageSize = 20
 	}
 
-	query := h.db.Model(&database.WebhookDelivery{}).Where("watcher_id = ?", watcher.ID)
+	query := h.db.Table("webhook_deliveries").
+		Joins("LEFT JOIN webhook_events ON webhook_events.id = webhook_deliveries.webhook_event_id").
+		Where("webhook_deliveries.watcher_id = ?", watcher.ID)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
 
-	var deliveries []database.WebhookDelivery
-	if err := query.Order("created_at desc, id desc").Limit(pageSize).Offset((page - 1) * pageSize).Find(&deliveries).Error; err != nil {
+	var deliveries []webhookDeliveryListItem
+	if err := query.
+		Select("webhook_deliveries.*, webhook_events.event_id AS event_id, webhook_events.event_type AS event_type, webhook_events.summary AS summary").
+		Order("webhook_deliveries.created_at desc, webhook_deliveries.id desc").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Scan(&deliveries).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}

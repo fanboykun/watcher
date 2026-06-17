@@ -5,7 +5,6 @@
 	import {
 		api,
 		type Service,
-		type ServiceWritePayload,
 		type Watcher
 	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
@@ -14,19 +13,19 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Checkbox } from '$lib/components/ui/checkbox';
-	import WebhookEventReference from '$lib/components/webhook-event-reference.svelte';
+	import { webhookDocsHref } from '$lib/webhooks';
 	import type { WebhookSelectionState } from '$lib/webhooks';
 	import {
 		ArrowLeft,
 		AlertCircle,
 		CheckCircle2,
+		BookOpenText,
+		ExternalLink,
 		Save,
 		Send,
 		Link as LinkIcon
 	} from '@lucide/svelte';
 	import ServicesTab from '../components/services-tab.svelte';
-	import AddServiceDialog from '../components/add-service-dialog.svelte';
-	import EditServiceDialog from '../components/edit-service-dialog.svelte';
 
 	const id = Number(page.params.id);
 
@@ -36,8 +35,6 @@
 	let saving = $state(false);
 	let sendingTest = $state(false);
 
-	let showAddService = $state(false);
-	let showEditService = $state(false);
 	let showConfirmDialog = $state(false);
 	let confirming = $state(false);
 	let confirmTitle = $state('');
@@ -45,7 +42,6 @@
 	let confirmActionLabel = $state('Confirm');
 	let confirmActionClass = $state('');
 	let confirmAction: (() => Promise<void> | void) | null = null;
-	let editSvc = $state<Service | null>(null);
 
 	let editInterval = $state(60);
 	let editMetadataURL = $state('');
@@ -161,23 +157,6 @@
 		} finally {
 			sendingTest = false;
 		}
-	}
-
-	async function handleServiceAdded(data: ServiceWritePayload) {
-		await api.createService(id, data);
-		await loadWatcher();
-		success = 'Service added.';
-	}
-
-	async function handleServiceUpdated(svcId: number, data: ServiceWritePayload) {
-		await api.updateService(id, svcId, data);
-		await loadWatcher();
-		success = 'Service updated.';
-	}
-
-	function openEditServiceDialog(svc: Service) {
-		editSvc = svc;
-		showEditService = true;
 	}
 
 	function openConfirmDialog(opts: {
@@ -353,14 +332,29 @@
 				</Card.Content>
 			</Card.Root>
 
-			<Card.Root class="border-border bg-card">
+			<Card.Root class="border-border bg-card" id="webhooks">
 				<Card.Header>
 					<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 						<div>
 							<Card.Title>Webhook Settings</Card.Title>
 							<Card.Description>
-								Outbound webhook delivery configuration, auth override, and event subscriptions.
+								Configure this watcher's endpoint, token override, and event subscriptions.
 							</Card.Description>
+							<div class="mt-3 flex flex-wrap gap-2">
+								<a href={resolve('/docs/webhooks')}>
+									<Button.Root type="button" variant="outline" size="sm">
+										<BookOpenText class="mr-2 h-4 w-4" />
+										Integration Guide
+									</Button.Root>
+								</a>
+								<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+								<a href={webhookDocsHref} target="_blank" rel="noopener noreferrer">
+									<Button.Root type="button" variant="outline" size="sm">
+										<ExternalLink class="mr-2 h-4 w-4" />
+										Repo Docs
+									</Button.Root>
+								</a>
+							</div>
 						</div>
 						<Button.Root
 							type="button"
@@ -374,6 +368,9 @@
 					</div>
 				</Card.Header>
 				<Card.Content class="space-y-4">
+					<div class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+						Use this form only for watcher-specific webhook configuration. Delivery history, replay, and pause recovery live in the webhook hub and the watcher webhook tab.
+					</div>
 					<div class="flex items-center gap-2">
 						<Checkbox id="editWebhookEnabled" bind:checked={editWebhookEnabled} />
 						<Label for="editWebhookEnabled">Enable webhook delivery for this watcher</Label>
@@ -411,12 +408,48 @@
 							</p>
 						</div>
 					</div>
-					<WebhookEventReference
-						title="Webhook Event Subscriptions"
-						description="Choose which business events this watcher should send. Each event entry explains the trigger, delivery behavior, and payload fields."
-						bind:selections={webhookSelections}
-						showSelection={true}
-					/>
+					<div class="space-y-3 rounded-lg border border-border/70 p-4">
+						<div class="flex items-start justify-between gap-3">
+							<div>
+								<h4 class="font-medium">Event Subscriptions</h4>
+								<p class="text-sm text-muted-foreground">
+									Choose which business events this watcher should emit.
+								</p>
+							</div>
+							<a href={resolve('/docs/webhooks')}>
+								<Button.Root type="button" variant="outline" size="sm">
+									<BookOpenText class="mr-2 h-4 w-4" />
+									Guide
+								</Button.Root>
+							</a>
+						</div>
+						<div class="grid gap-3 md:grid-cols-2">
+							<label class="flex items-center gap-2 text-sm">
+								<Checkbox bind:checked={webhookSelections.notify_version_found} />
+								<span>Version Found</span>
+							</label>
+							<label class="flex items-center gap-2 text-sm">
+								<Checkbox bind:checked={webhookSelections.notify_deployment_succeeded} />
+								<span>Deployment Succeeded</span>
+							</label>
+							<label class="flex items-center gap-2 text-sm">
+								<Checkbox bind:checked={webhookSelections.notify_deployment_failed} />
+								<span>Deployment Failed</span>
+							</label>
+							<label class="flex items-center gap-2 text-sm">
+								<Checkbox bind:checked={webhookSelections.notify_rollback_succeeded} />
+								<span>Rollback Succeeded</span>
+							</label>
+							<label class="flex items-center gap-2 text-sm">
+								<Checkbox bind:checked={webhookSelections.notify_rollback_failed} />
+								<span>Rollback Failed</span>
+							</label>
+							<label class="flex items-center gap-2 text-sm">
+								<Checkbox bind:checked={webhookSelections.notify_service_health_changed} />
+								<span>Service Health Changed</span>
+							</label>
+						</div>
+					</div>
 				</Card.Content>
 			</Card.Root>
 
@@ -437,22 +470,14 @@
 			<Card.Content>
 				<ServicesTab
 					{watcher}
-					onAddService={() => (showAddService = true)}
-					onEditService={openEditServiceDialog}
+					createHref={resolve(`/watchers/${id}/services/new`)}
+					editHrefBase="/services"
 					onDeleteService={deleteService}
 				/>
 			</Card.Content>
 		</Card.Root>
 	{/if}
 </div>
-
-<AddServiceDialog bind:open={showAddService} onServiceAdded={handleServiceAdded} />
-
-<EditServiceDialog
-	bind:open={showEditService}
-	service={editSvc}
-	onServiceUpdated={handleServiceUpdated}
-/>
 
 <Dialog.Root bind:open={showConfirmDialog}>
 	<Dialog.Content class="sm:max-w-115">

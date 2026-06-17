@@ -2,10 +2,11 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import type { Watcher, WebhookDelivery } from '$lib/api';
 	import { formatDate } from '$lib/utils';
-	import { ExternalLink } from '@lucide/svelte';
+	import { ExternalLink, PlayCircle, RotateCcw, Send } from '@lucide/svelte';
 
 	let {
 		watcher,
@@ -36,14 +37,9 @@
 	<Card.Root class="border-border bg-card">
 		<Card.Header class="pb-3 flex flex-row items-center justify-between space-y-0">
 			<Card.Title class="text-sm font-medium text-muted-foreground">Webhook Delivery</Card.Title>
-			<a
-				href="https://github.com/fanboykun/watcher/blob/main/docs/webhooks.md"
-				target="_blank"
-				rel="noopener noreferrer"
-				class="text-xs text-primary hover:underline inline-flex items-center gap-1 font-medium"
-			>
+			<a href="/webhooks" class="text-xs text-primary hover:underline inline-flex items-center gap-1 font-medium">
 				<ExternalLink class="h-3 w-3" />
-				Integration Guide
+				Webhook Hub
 			</a>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm">
@@ -70,11 +66,37 @@
 					{watcher.webhook_pause_reason}
 				</div>
 			{/if}
-			<div class="flex flex-wrap gap-2">
-				<Button.Root size="sm" variant="outline" onclick={onSendTest}>Send Test Webhook</Button.Root>
-				<Button.Root size="sm" variant="outline" onclick={onResume}>Resume Only</Button.Root>
-				<Button.Root size="sm" variant="outline" onclick={onResumeReplay}>Resume and Replay Suppressed</Button.Root>
-			</div>
+			<Dialog.Root>
+				<Dialog.Trigger>
+					<Button.Root size="sm" variant="outline">Delivery Controls</Button.Root>
+				</Dialog.Trigger>
+				<Dialog.Content class="sm:max-w-xl">
+					<Dialog.Header>
+						<Dialog.Title>Webhook Delivery Controls</Dialog.Title>
+						<Dialog.Description>
+							Use these actions when validating a receiver or recovering from paused delivery.
+						</Dialog.Description>
+					</Dialog.Header>
+					<div class="space-y-4">
+						<div class="rounded-md border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+							<p><span class="font-medium text-foreground">Send Test Webhook:</span> Queues a synthetic <code>watcher.webhook_test</code> event through the exact same outbox and retry pipeline as real events.</p>
+							<p class="mt-2"><span class="font-medium text-foreground">Resume Only:</span> Clears the paused state and lets only future events continue. Suppressed events remain stored.</p>
+							<p class="mt-2"><span class="font-medium text-foreground">Resume and Replay Suppressed:</span> Clears the paused state, marks suppressed events back to pending, and replays them in normal FIFO order.</p>
+						</div>
+						<div class="flex flex-wrap gap-2">
+							<Button.Root size="sm" variant="outline" onclick={onSendTest}>
+								<Send class="mr-2 h-4 w-4" /> Send Test Webhook
+							</Button.Root>
+							<Button.Root size="sm" variant="outline" onclick={onResume}>
+								<PlayCircle class="mr-2 h-4 w-4" /> Resume Only
+							</Button.Root>
+							<Button.Root size="sm" variant="outline" onclick={onResumeReplay}>
+								<RotateCcw class="mr-2 h-4 w-4" /> Resume and Replay Suppressed
+							</Button.Root>
+						</div>
+					</div>
+				</Dialog.Content>
+			</Dialog.Root>
 		</Card.Content>
 	</Card.Root>
 
@@ -110,6 +132,7 @@
 		<Table.Root>
 			<Table.Header>
 				<Table.Row class="border-border hover:bg-transparent">
+					<Table.Head>Event Type</Table.Head>
 					<Table.Head>Status</Table.Head>
 					<Table.Head>Delivery ID</Table.Head>
 					<Table.Head>Attempt</Table.Head>
@@ -121,11 +144,12 @@
 			<Table.Body>
 				{#if deliveries.length === 0}
 					<Table.Row class="border-border">
-						<Table.Cell colspan={6} class="py-8 text-center text-sm text-muted-foreground">No webhook deliveries yet</Table.Cell>
+						<Table.Cell colspan={7} class="py-8 text-center text-sm text-muted-foreground">No webhook deliveries yet</Table.Cell>
 					</Table.Row>
 				{:else}
 					{#each deliveries as delivery (delivery.id)}
 						<Table.Row class="border-border">
+							<Table.Cell class="font-mono text-xs">{delivery.event_type || '—'}</Table.Cell>
 							<Table.Cell class="capitalize">{delivery.status}</Table.Cell>
 							<Table.Cell class="font-mono text-xs">{delivery.delivery_id}</Table.Cell>
 							<Table.Cell>{delivery.attempt_number}</Table.Cell>

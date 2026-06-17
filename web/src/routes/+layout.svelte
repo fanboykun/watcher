@@ -1,7 +1,7 @@
 <script lang="ts">
 	import './layout.css';
 	import { page } from '$app/state';
-	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock, Settings, LogOut, AlertCircle } from '@lucide/svelte';
+	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock, Settings, LogOut, AlertCircle, Webhook } from '@lucide/svelte';
 	import * as Button from '$lib/components/ui/button';
 	import Separator from '$lib/components/ui/separator/separator.svelte';
 	import { Input } from '$lib/components/ui/input';
@@ -23,6 +23,7 @@
 		{ href: '/', label: 'Dashboard', icon: LayoutDashboard },
 		{ href: '/watchers', label: 'Watchers', icon: Eye },
 		{ href: '/services', label: 'Services', icon: Server },
+		{ href: '/webhooks', label: 'Webhooks', icon: Webhook },
 		{ href: '/polling', label: 'Polling', icon: Clock },
 		{ href: '/logs', label: 'Logs', icon: Activity },
 		{ href: '/settings', label: 'Settings', icon: Settings }

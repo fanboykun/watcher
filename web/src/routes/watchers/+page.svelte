@@ -11,12 +11,10 @@
 	import { Eye, Plus, Trash2, Zap, AlertCircle } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { statusColor, timeAgo } from '$lib/utils';
-	import AddWatcherDialog from './components/add-watcher-dialog.svelte';
 
 	let watchers = $state<Watcher[]>([]);
 	let error = $state('');
 	let triggerMsg = $state('');
-	let showCreate = $state(false);
 	let showDeleteDialog = $state(false);
 	let deleting = $state(false);
 	let deleteWatcherID = $state<number | null>(null);
@@ -72,12 +70,14 @@
 			<h1 class="text-2xl font-bold tracking-tight">Watchers</h1>
 			<p class="text-sm text-muted-foreground">Repository poll loops</p>
 		</div>
-		<Button.Root onclick={() => (showCreate = true)}>
-			<Plus class="mr-2 h-4 w-4" /> Add Watcher
-		</Button.Root>
+		<a href={resolve('/watchers/new')}>
+			<Button.Root>
+				<Plus class="mr-2 h-4 w-4" /> Add Watcher
+			</Button.Root>
+		</a>
 	</div>
 
-	{#if error && !showCreate}
+	{#if error}
 		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400 flex items-center">
 			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
 			<span>{error}</span>
@@ -168,12 +168,6 @@
 		</Card.Root>
 	{/if}
 </div>
-
-<!-- Create Watcher Dialog Multi-step -->
-<AddWatcherDialog
-	bind:open={showCreate}
-	onWatcherCreated={load}
-/>
 
 <!-- Delete Confirmation Dialog -->
 <Dialog.Root bind:open={showDeleteDialog}>
