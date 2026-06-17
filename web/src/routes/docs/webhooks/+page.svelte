@@ -294,12 +294,37 @@
 							<p class="mt-1 font-mono text-xs text-muted-foreground">{event.eventType}</p>
 							<p class="mt-2 text-sm text-muted-foreground">{event.when}</p>
 							<div class="mt-3">
-								<p class="text-xs font-medium uppercase tracking-wide text-foreground/80">Payload shape</p>
-								<ul class="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
-									{#each event.payload as field (field)}
-										<li>{field}</li>
-									{/each}
-								</ul>
+								<p class="text-xs font-medium uppercase tracking-wide text-foreground/80">Field contract</p>
+								<div class="mt-2 overflow-x-auto rounded-md border border-border/70">
+									<table class="w-full text-sm">
+										<thead class="bg-muted/30 text-left text-muted-foreground">
+											<tr>
+												<th class="px-3 py-2 font-medium">Field</th>
+												<th class="px-3 py-2 font-medium">Type</th>
+												<th class="px-3 py-2 font-medium">Meaning</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each event.fields as field (field.field)}
+												<tr class="border-t border-border/60 align-top">
+													<td class="px-3 py-2 font-mono text-xs text-foreground">{field.field}</td>
+													<td class="px-3 py-2 text-xs text-muted-foreground">{field.type}</td>
+													<td class="px-3 py-2 text-xs text-muted-foreground">{field.meaning}</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+								{#if event.interpretation}
+									<div class="mt-3 rounded-md border border-border/70 bg-background/60 p-3 text-sm text-muted-foreground">
+										<p class="font-medium text-foreground">Interpretation</p>
+										<ul class="mt-2 space-y-1">
+											{#each event.interpretation as item (item)}
+												<li>{item}</li>
+											{/each}
+										</ul>
+									</div>
+								{/if}
 							</div>
 						</div>
 					{/each}
@@ -314,12 +339,37 @@
 							<p class="mt-1 font-mono text-xs text-muted-foreground">{event.eventType}</p>
 							<p class="mt-2 text-sm text-muted-foreground">{event.when}</p>
 							<div class="mt-3">
-								<p class="text-xs font-medium uppercase tracking-wide text-foreground/80">Payload shape</p>
-								<ul class="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
-									{#each event.payload as field (field)}
-										<li>{field}</li>
-									{/each}
-								</ul>
+								<p class="text-xs font-medium uppercase tracking-wide text-foreground/80">Field contract</p>
+								<div class="mt-2 overflow-x-auto rounded-md border border-border/70">
+									<table class="w-full text-sm">
+										<thead class="bg-muted/30 text-left text-muted-foreground">
+											<tr>
+												<th class="px-3 py-2 font-medium">Field</th>
+												<th class="px-3 py-2 font-medium">Type</th>
+												<th class="px-3 py-2 font-medium">Meaning</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each event.fields as field (field.field)}
+												<tr class="border-t border-border/60 align-top">
+													<td class="px-3 py-2 font-mono text-xs text-foreground">{field.field}</td>
+													<td class="px-3 py-2 text-xs text-muted-foreground">{field.type}</td>
+													<td class="px-3 py-2 text-xs text-muted-foreground">{field.meaning}</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+								{#if event.interpretation}
+									<div class="mt-3 rounded-md border border-border/70 bg-background/60 p-3 text-sm text-muted-foreground">
+										<p class="font-medium text-foreground">Interpretation</p>
+										<ul class="mt-2 space-y-1">
+											{#each event.interpretation as item (item)}
+												<li>{item}</li>
+											{/each}
+										</ul>
+									</div>
+								{/if}
 							</div>
 						</div>
 					{/each}

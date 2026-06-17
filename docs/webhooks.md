@@ -552,6 +552,23 @@ This section details every event type fired by Watcher. Each block defines the t
 * **Behavior**:
   - Emitted only after the active version is updated in the database.
   - Useful for updating deployment dashboards or triggering post-deployment automation (e.g. cache purges).
+* **Field contract**:
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `watcher.id` | `integer` | Internal ID of the watcher that emitted the event. |
+| `watcher.name` | `string` | Human-facing watcher name. |
+| `attempt.id` | `integer` | Unique ID of this deploy attempt record. |
+| `attempt.kind` | `string` | Always `deploy` for this event. |
+| `attempt.reason` | `string` | Why the deploy was started, such as `new_version_found` or `manual_redeploy`. |
+| `attempt.triggered_by` | `string` | Who initiated the deploy flow, such as `agent` or `manual`. |
+| `attempt.status` | `string` | Always `succeeded` for this event. |
+| `attempt.target_version` | `string` | Version that was successfully deployed. |
+| `attempt.from_version` | `string` | Version that was active before the deploy started. |
+| `summary` | `string` | Human-readable summary for logs and UI. Do not automate from this text. |
+* **Interpretation**:
+  - This event means the deploy reached terminal success.
+  - If health checks are part of the deploy flow, success is emitted only after they pass.
 * **Payload Structure**:
 ```json
 {
@@ -589,6 +606,28 @@ This section details every event type fired by Watcher. Each block defines the t
 * **Behavior**:
   - Fired *immediately* when the failure occurs, before any automatic recovery rollback is initiated.
   - The `failure_phase` field informs you of where the sequence broke down (e.g., `download` vs `health_check`).
+* **Field contract**:
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `watcher.id` | `integer` | Internal ID of the watcher that emitted the event. |
+| `watcher.name` | `string` | Human-facing watcher name. |
+| `attempt.id` | `integer` | Unique ID of this failed deploy attempt record. |
+| `attempt.kind` | `string` | Always `deploy` for this event. |
+| `attempt.reason` | `string` | Why the deploy was started, such as `new_version_found` or `manual_redeploy`. |
+| `attempt.triggered_by` | `string` | Who initiated the deploy flow, such as `agent` or `manual`. |
+| `attempt.status` | `string` | Always `failed` for this event. |
+| `attempt.target_version` | `string` | Version Watcher tried to deploy. |
+| `attempt.from_version` | `string` | Version that was active before the failed deploy started. |
+| `attempt.failure_phase` | `string` | Step where the deploy failed, such as `download`, `extract`, `activate_release`, `start_services`, or `health_check`. |
+| `attempt.error` | `string` | Operator-facing failure detail. Do not automate from this text. |
+| `attempt.parent_attempt_id` | `integer \| null` | Immediate parent attempt if this deploy belongs to another attempt chain. Usually `null` for the initial failed deploy. |
+| `attempt.root_attempt_id` | `integer` | Root incident chain ID used to correlate related attempts. |
+| `summary` | `string` | Human-readable summary for logs and UI. Do not automate from this text. |
+* **Interpretation**:
+  - This event is emitted before any automatic rollback attempt runs.
+  - `failure_phase` is the structured field to automate against, not the free-form `error` text.
+  - A later rollback event may follow as part of the same incident chain.
 * **Payload Structure**:
 ```json
 {
@@ -626,6 +665,26 @@ This section details every event type fired by Watcher. Each block defines the t
 * **Behavior**:
   - Triggered for both automated agent rollbacks (after a failed deploy) and manual operator rollbacks.
   - The `failed_target_version` identifies which release version caused the problem, while the `target_version` indicates the safe backup version that was successfully restored.
+* **Field contract**:
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `watcher.id` | `integer` | Internal ID of the watcher that emitted the event. |
+| `watcher.name` | `string` | Human-facing watcher name. |
+| `attempt.id` | `integer` | Unique ID of this rollback attempt record. |
+| `attempt.kind` | `string` | Always `rollback` for this event. |
+| `attempt.reason` | `string` | Why the rollback was started, such as `auto_after_failed_deploy` or `manual_rollback`. |
+| `attempt.triggered_by` | `string` | Who initiated the rollback flow, such as `agent` or `manual`. |
+| `attempt.status` | `string` | Always `succeeded` for this event. |
+| `attempt.target_version` | `string` | Version that Watcher restored successfully. This is the rollback destination. |
+| `attempt.failed_target_version` | `string` | Version whose failure triggered the rollback attempt. |
+| `attempt.parent_attempt_id` | `integer \| null` | Immediate parent attempt that caused this rollback. Usually the failed deploy attempt for automatic rollback. |
+| `attempt.root_attempt_id` | `integer` | Root incident chain ID used to correlate deploy failure and rollback success together. |
+| `summary` | `string` | Human-readable summary for logs and UI. Do not automate from this text. |
+* **Interpretation**:
+  - `target_version` is the version that was restored.
+  - `failed_target_version` is the bad version that triggered recovery.
+  - Use `parent_attempt_id` or `root_attempt_id` to correlate this rollback with the original failed deploy.
 * **Payload Structure**:
 ```json
 {
@@ -661,7 +720,29 @@ This section details every event type fired by Watcher. Each block defines the t
 
 * **Trigger**: Fired when a rollback attempt itself fails (e.g. could not restore the previous junction link or start backup services).
 * **Behavior**:
-  - **CRITICAL ALERT**: This represents a major system emergency where both the original deploy and the fallback recovery mechanism have failed. Operators should be paged immediately.
+  - This is distinct from `watcher.deployment_failed`. Receivers should expect the deploy failure event first, then this if recovery also breaks.
+  - Use the parent/root attempt linkage to correlate the rollback failure back to the deploy incident.
+* **Field contract**:
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `watcher.id` | `integer` | Internal ID of the watcher that emitted the event. |
+| `watcher.name` | `string` | Human-facing watcher name. |
+| `attempt.id` | `integer` | Unique ID of this rollback attempt record. |
+| `attempt.kind` | `string` | Always `rollback` for this event. |
+| `attempt.reason` | `string` | Why the rollback was started, such as `auto_after_failed_deploy` or `manual_rollback`. |
+| `attempt.triggered_by` | `string` | Who initiated the rollback flow, such as `agent` or `manual`. |
+| `attempt.status` | `string` | Always `failed` for this event. |
+| `attempt.target_version` | `string` | Version Watcher attempted to restore. This is the intended rollback destination. |
+| `attempt.failed_target_version` | `string` | Version whose failure led to this rollback attempt. In automatic recovery this is usually the bad deployment version. |
+| `attempt.error` | `string` | Operator-facing rollback failure detail. Do not automate from this text. |
+| `attempt.parent_attempt_id` | `integer \| null` | Immediate parent attempt that caused this rollback. Usually the failed deploy attempt for automatic rollback. |
+| `attempt.root_attempt_id` | `integer` | Root incident chain ID used to correlate deploy failure and rollback failure together. |
+| `summary` | `string` | Human-readable summary for logs and UI. Do not automate from this text. |
+* **Interpretation**:
+  - `target_version` is what Watcher tried to restore.
+  - `failed_target_version` is the bad version that triggered recovery.
+  - This is usually the highest-severity event in a deployment incident because recovery also failed.
 * **Payload Structure**:
 ```json
 {
@@ -699,6 +780,26 @@ This section details every event type fired by Watcher. Each block defines the t
 * **Behavior**:
   - Fired only on state changes. Repetitive checks showing the same status (e.g., healthy to healthy) are suppressed.
   - The `health.source` field indicates what check triggered this state transition (currently `manual` via health API).
+* **Field contract**:
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `watcher.id` | `integer` | Internal ID of the watcher that owns the service. |
+| `watcher.name` | `string` | Human-facing watcher name. |
+| `service.id` | `integer` | Internal ID of the service whose health changed. |
+| `service.name` | `string` | Human-facing service name. |
+| `service.service_type` | `string` | Service mode such as `nssm` or `static`. |
+| `service.health_check_url` | `string` | Effective health-check URL used for this service. |
+| `health.previous_status` | `string` | Previously stored health status before this transition. |
+| `health.current_status` | `string` | Newly stored health status after this transition. |
+| `health.http_status` | `integer` | HTTP status returned by the health-check endpoint when available. |
+| `health.error` | `string` | Operator-facing health-check error detail. Usually empty when the service is healthy. |
+| `health.checked_at` | `string` (`RFC3339 date-time`) | When the health check result was recorded. |
+| `health.source` | `string` | What flow produced the health change, such as `manual` today and potentially `deploy` or `monitor` in the future. |
+| `summary` | `string` | Human-readable summary for logs and UI. Do not automate from this text. |
+* **Interpretation**:
+  - This event is emitted only when the stored health state changes.
+  - The primary subject is the service; watcher context is included for correlation.
 * **Payload Structure**:
 ```json
 {
@@ -736,6 +837,17 @@ This section details every event type fired by Watcher. Each block defines the t
 * **Behavior**:
   - Always fires and bypasses the business-event subscription checkboxes (is not gated).
   - Follows the identical outbox delivery, retrying, and failure logs pipeline as normal webhooks. Use this to verify network connection and header values.
+* **Field contract**:
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `watcher.id` | `integer` | Internal ID of the watcher that emitted the test event. |
+| `watcher.name` | `string` | Human-facing watcher name. |
+| `triggered_by` | `string` | Who triggered the test event. Currently `manual`. |
+| `summary` | `string` | Human-readable summary for logs and UI. Do not automate from this text. |
+* **Interpretation**:
+  - This is a synthetic validation event, not a business lifecycle event.
+  - It uses the same outbox and delivery pipeline as real events.
 * **Payload Structure**:
 ```json
 {
@@ -760,6 +872,23 @@ This section details every event type fired by Watcher. Each block defines the t
 * **Behavior**:
   - Emitted specifically for failed deliveries, not for suppressed events while paused.
   - Non-recursive: if this exhaustion event fails to deliver, Watcher logs the failure locally but does not emit another notification to prevent a cascading loops.
+* **Field contract**:
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `watcher.id` | `integer` | Internal ID of the watcher whose webhook delivery exhausted retries. |
+| `watcher.name` | `string` | Human-facing watcher name. |
+| `failed_delivery.event_id` | `string` | Business-event ID of the original event that could not be delivered. |
+| `failed_delivery.event_type` | `string` | Event type of the original undelivered event, such as `watcher.deployment_failed`. |
+| `failed_delivery.delivery_id` | `string` | Delivery-attempt ID of the final failed HTTP attempt. |
+| `failed_delivery.attempt_number` | `integer` | Ordinal number of the final failed delivery attempt. |
+| `failed_delivery.response_status_code` | `integer` | HTTP status code from the final failed attempt when one was received. |
+| `failed_delivery.error` | `string` | Operator-facing delivery failure detail for the final attempt. |
+| `failed_delivery.summary` | `string` | Human-readable summary of the original event that could not be delivered. |
+| `summary` | `string` | Human-readable summary for logs and UI. Do not automate from this text. |
+* **Interpretation**:
+  - This event describes a webhook delivery failure, not a service or deployment lifecycle change.
+  - Use `failed_delivery.event_id` to correlate back to the original business event.
 * **Payload Structure**:
 ```json
 {

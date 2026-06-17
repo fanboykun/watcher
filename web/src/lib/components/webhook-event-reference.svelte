@@ -100,13 +100,40 @@
 						</div>
 						<div>
 							<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-								Payload Highlights
+								Field Contract
 							</h6>
-							<ul class="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
-								{#each event.payload as field (field)}
-									<li>{field}</li>
-								{/each}
-							</ul>
+							<div class="mt-2 overflow-x-auto rounded-md border border-border/70">
+								<table class="w-full text-sm">
+									<thead class="bg-muted/30 text-left text-muted-foreground">
+										<tr>
+											<th class="px-3 py-2 font-medium">Field</th>
+											<th class="px-3 py-2 font-medium">Type</th>
+											<th class="px-3 py-2 font-medium">Meaning</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each event.fields as field (field.field)}
+											<tr class="border-t border-border/60 align-top">
+												<td class="px-3 py-2 font-mono text-xs text-foreground">{field.field}</td>
+												<td class="px-3 py-2 text-xs text-muted-foreground">{field.type}</td>
+												<td class="px-3 py-2 text-xs text-muted-foreground">{field.meaning}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+							{#if event.interpretation}
+								<div class="mt-3 rounded-md border border-border/70 bg-muted/20 p-3">
+									<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										Interpretation
+									</h6>
+									<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
+										{#each event.interpretation as item (item)}
+											<li>{item}</li>
+										{/each}
+									</ul>
+								</div>
+							{/if}
 							<div class="mt-3 flex flex-wrap gap-2">
 								<a href={webhookEventDocHref(event.anchor)} class="text-xs text-primary hover:underline">
 									Read event docs
@@ -168,13 +195,40 @@
 						</div>
 						<div>
 							<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-								Payload Highlights
+								Field Contract
 							</h6>
-							<ul class="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
-								{#each event.payload as field (field)}
-									<li>{field}</li>
-								{/each}
-							</ul>
+							<div class="mt-2 overflow-x-auto rounded-md border border-border/70">
+								<table class="w-full text-sm">
+									<thead class="bg-muted/30 text-left text-muted-foreground">
+										<tr>
+											<th class="px-3 py-2 font-medium">Field</th>
+											<th class="px-3 py-2 font-medium">Type</th>
+											<th class="px-3 py-2 font-medium">Meaning</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each event.fields as field (field.field)}
+											<tr class="border-t border-border/60 align-top">
+												<td class="px-3 py-2 font-mono text-xs text-foreground">{field.field}</td>
+												<td class="px-3 py-2 text-xs text-muted-foreground">{field.type}</td>
+												<td class="px-3 py-2 text-xs text-muted-foreground">{field.meaning}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+							{#if event.interpretation}
+								<div class="mt-3 rounded-md border border-border/70 bg-muted/20 p-3">
+									<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										Interpretation
+									</h6>
+									<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
+										{#each event.interpretation as item (item)}
+											<li>{item}</li>
+										{/each}
+									</ul>
+								</div>
+							{/if}
 							<div class="mt-3 flex flex-wrap gap-2">
 								<a href={webhookEventDocHref(event.anchor)} class="text-xs text-primary hover:underline">
 									Read event docs
