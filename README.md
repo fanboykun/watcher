@@ -280,6 +280,12 @@ Detailed contract, event payload fields, and trigger rules:
 
 - [docs/webhooks.md](docs/webhooks.md)
 
+For local testing, this repo also includes a minimal receiver:
+
+```bash
+go run ./cmd/webhook-server -addr :8091 -path /webhook
+```
+
 ---
 
 ## GitHub Token Guide

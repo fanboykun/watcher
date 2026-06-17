@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import Badge from '$lib/components/ui/badge/badge.svelte';
+	import { ExternalLink } from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card';
 	import {
 		webhookDeliveryNotes,
@@ -20,11 +21,6 @@
 		selections?: WebhookSelectionState | null;
 		showSelection?: boolean;
 	} = $props();
-
-	function setSelection(key: keyof WebhookSelectionState, checked: boolean) {
-		if (!selections) return;
-		selections = { ...selections, [key]: checked };
-	}
 </script>
 
 <Card.Root class="border-border/70 bg-background/40">
@@ -36,7 +32,7 @@
 		<div class="rounded-md border border-border/70 bg-muted/20 p-4">
 			<h4 class="text-sm font-medium">Delivery Behavior</h4>
 			<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
-				{#each webhookDeliveryNotes as note}
+				{#each webhookDeliveryNotes as note (note)}
 					<li>{note}</li>
 				{/each}
 			</ul>
@@ -53,14 +49,22 @@
 								<Badge variant="secondary" class="font-mono text-[11px]">
 									{event.eventType}
 								</Badge>
+								<a
+									href="https://github.com/fanboykun/watcher/blob/main/docs/webhooks.md#{event.anchor}"
+									target="_blank"
+									rel="noopener noreferrer"
+									class="text-muted-foreground hover:text-primary transition-colors"
+									title="View in Repository Documentation"
+								>
+									<ExternalLink class="h-3 w-3" />
+								</a>
 							</div>
 							<p class="text-sm text-muted-foreground">{event.when}</p>
 						</div>
 						{#if showSelection && selections && event.key}
 							<label class="flex items-center gap-2 text-sm">
 								<Checkbox
-									checked={selections[event.key]}
-									onclick={() => setSelection(event.key, !selections[event.key])}
+									bind:checked={selections[event.key]}
 								/>
 								<span>Send this event</span>
 							</label>
@@ -72,7 +76,7 @@
 								Behavior
 							</h6>
 							<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
-								{#each event.behavior as item}
+								{#each event.behavior as item (item)}
 									<li>{item}</li>
 								{/each}
 							</ul>
@@ -82,7 +86,7 @@
 								Payload Highlights
 							</h6>
 							<ul class="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
-								{#each event.payload as field}
+								{#each event.payload as field (field)}
 									<li>{field}</li>
 								{/each}
 							</ul>
@@ -105,6 +109,15 @@
 							<Badge variant="secondary" class="font-mono text-[11px]">
 								{event.eventType}
 							</Badge>
+							<a
+								href="https://github.com/fanboykun/watcher/blob/main/docs/webhooks.md#{event.anchor}"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="text-muted-foreground hover:text-primary transition-colors"
+								title="View in Repository Documentation"
+							>
+								<ExternalLink class="h-3 w-3" />
+							</a>
 						</div>
 						<p class="text-sm text-muted-foreground">{event.when}</p>
 					</div>
@@ -114,7 +127,7 @@
 								Behavior
 							</h6>
 							<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
-								{#each event.behavior as item}
+								{#each event.behavior as item (item)}
 									<li>{item}</li>
 								{/each}
 							</ul>
@@ -124,7 +137,7 @@
 								Payload Highlights
 							</h6>
 							<ul class="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
-								{#each event.payload as field}
+								{#each event.payload as field (field)}
 									<li>{field}</li>
 								{/each}
 							</ul>

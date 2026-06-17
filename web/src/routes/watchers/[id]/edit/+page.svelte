@@ -455,7 +455,7 @@
 />
 
 <Dialog.Root bind:open={showConfirmDialog}>
-	<Dialog.Content class="sm:max-w-[460px]">
+	<Dialog.Content class="sm:max-w-115">
 		<Dialog.Header>
 			<Dialog.Title>{confirmTitle}</Dialog.Title>
 			<Dialog.Description>{confirmDescription}</Dialog.Description>

@@ -34,6 +34,8 @@
 	import VersionsTab from './components/versions-tab.svelte';
 	import PollingTab from './components/polling-tab.svelte';
 	import WebhooksTab from './components/webhooks-tab.svelte';
+	import RollbackDialog from './components/rollback-dialog.svelte';
+	import ConfirmationDialog from './components/confirmation-dialog.svelte';
 
 	let watcher = $state<Watcher | null>(null);
 	let deploys = $state<DeployLog[]>([]);
@@ -552,54 +554,21 @@
 </div>
 
 <!-- Rollback Dialog -->
-<Dialog.Root bind:open={showRollbackDialog}>
-	<Dialog.Content class="sm:max-w-[480px]">
-		<Dialog.Header>
-			<Dialog.Title>Confirm Rollback</Dialog.Title>
-			<Dialog.Description>
-				This will stop running services, swap the current release, and restart services.
-			</Dialog.Description>
-		</Dialog.Header>
-		<div class="space-y-3">
-			<p class="text-sm">
-				Target version: <span class="font-mono font-medium">{rollbackTargetVersion}</span>
-			</p>
-			<div class="flex items-center gap-2 py-1">
-				<Checkbox id="rollbackReportGitHub" bind:checked={rollbackReportGitHub} />
-				<Label for="rollbackReportGitHub" class="text-sm text-muted-foreground select-none">
-					Report rollback to GitHub Deployment API
-				</Label>
-			</div>
-		</div>
-		<Dialog.Footer>
-			<Button.Root variant="outline" type="button" onclick={() => (showRollbackDialog = false)}>
-				Cancel
-			</Button.Root>
-			<Button.Root
-				type="button"
-				class="bg-amber-600 hover:bg-amber-700 text-white"
-				onclick={() => rollback(rollbackTargetVersion, rollbackReportGitHub)}
-			>
-				Proceed Rollback
-			</Button.Root>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>
+<RollbackDialog 
+	onRollback={rollback} 
+	bind:open={showRollbackDialog}
+	{rollbackTargetVersion} 
+	bind:rollbackReportGitHub
+/>
+
 
 <!-- Confirm Action Dialog -->
-<Dialog.Root bind:open={showConfirmDialog}>
-	<Dialog.Content class="sm:max-w-[460px]">
-		<Dialog.Header>
-			<Dialog.Title>{confirmTitle}</Dialog.Title>
-			<Dialog.Description>{confirmDescription}</Dialog.Description>
-		</Dialog.Header>
-		<Dialog.Footer>
-			<Button.Root variant="outline" type="button" onclick={() => (showConfirmDialog = false)} disabled={confirming}>
-				Cancel
-			</Button.Root>
-			<Button.Root type="button" class={confirmActionClass} onclick={runConfirmAction} disabled={confirming}>
-				{confirming ? 'Processing...' : confirmActionLabel}
-			</Button.Root>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>
+ <ConfirmationDialog
+	bind:open={showConfirmDialog}
+	bind:confirmTitle
+	bind:confirmDescription
+	bind:confirming
+	{confirmActionClass}
+	{confirmActionLabel}
+	onConfirm={runConfirmAction}
+ />

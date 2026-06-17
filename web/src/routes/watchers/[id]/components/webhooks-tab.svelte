@@ -3,9 +3,9 @@
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
 	import * as Select from '$lib/components/ui/select/index.js';
-	import WebhookEventReference from '$lib/components/webhook-event-reference.svelte';
 	import type { Watcher, WebhookDelivery } from '$lib/api';
 	import { formatDate } from '$lib/utils';
+	import { ExternalLink } from '@lucide/svelte';
 
 	let {
 		watcher,
@@ -34,8 +34,17 @@
 
 <div class="space-y-4">
 	<Card.Root class="border-border bg-card">
-		<Card.Header class="pb-3">
+		<Card.Header class="pb-3 flex flex-row items-center justify-between space-y-0">
 			<Card.Title class="text-sm font-medium text-muted-foreground">Webhook Delivery</Card.Title>
+			<a
+				href="https://github.com/fanboykun/watcher/blob/main/docs/webhooks.md"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="text-xs text-primary hover:underline inline-flex items-center gap-1 font-medium"
+			>
+				<ExternalLink class="h-3 w-3" />
+				Integration Guide
+			</a>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm">
 			<div class="grid gap-3 sm:grid-cols-2">
@@ -68,11 +77,6 @@
 			</div>
 		</Card.Content>
 	</Card.Root>
-
-	<WebhookEventReference
-		title="Webhook Contract"
-		description="Reference for the event names, trigger rules, and payload structure used by this watcher."
-	/>
 
 	<div class="mb-3 flex items-center justify-between gap-2">
 		<div class="text-xs text-muted-foreground">
