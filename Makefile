@@ -47,7 +47,7 @@ PACKAGE_DIR := $(BIN_DIR)/$(APP_NAME)-$(VERSION)
 # Targets
 # ==============================================================
 
-.PHONY: all build build-go build-installer build-web package test test-github test-verbose run dev clean info help
+.PHONY: all build build-go build-installer build-web package test test-github test-verbose run webhook-server dev clean info help
 
 ## all: run tests then build
 all: test build
@@ -183,6 +183,15 @@ run:
 	@echo "    Config : .env"
 	@echo ""
 	$(GO) run $(CMD_PATH) -config .env
+
+## webhook-server: run the example webhook receiver locally
+webhook-server:
+	@echo ""
+	@echo ">>> Running example webhook server"
+	@echo "    UI      : http://localhost:8091"
+	@echo "    Webhook : http://localhost:8091/webhook"
+	@echo ""
+	$(GO) run ./cmd/webhook-server -addr :8091 -path /webhook
 
 ## clean: remove build artifacts
 clean:

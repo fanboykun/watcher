@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
 	import {
 		api,
 		auth,
@@ -7,6 +8,12 @@
 		type SelfUpdateCheckResponse,
 		type SelfConfigResponse
 	} from '$lib/api';
+	import {
+		clearSelfUpdateCache,
+		clearSelfUpdateDismissal,
+		getSelfUpdateSnapshot,
+		lookupSelfUpdate
+	} from '$lib/self-update';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -31,7 +38,7 @@
 	let authStatus = $state<{ authenticated: boolean; using_default_password: boolean } | null>(null);
 	let error = $state('');
 	let success = $state('');
-	
+
 	let isChecking = $state(false);
 	let isUpdating = $state(false);
 	let isSavingConfig = $state(false);
@@ -67,12 +74,18 @@
 	onMount(() => {
 		const init = async () => {
 			try {
+				updateInfo = getSelfUpdateSnapshot().info;
 				[versionInfo, agentConfig, authStatus] = await Promise.all([
 					api.selfVersion(),
 					api.selfConfig(),
 					api.authStatus()
 				]);
 				syncConfigForm();
+				void lookupSelfUpdate({ silent: true }).then((info) => {
+					if (info) {
+						updateInfo = info;
+					}
+				});
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to load version info';
 			}
@@ -193,9 +206,10 @@
 		isChecking = true;
 		error = '';
 		try {
-			updateInfo = await api.selfUpdateCheck();
-			if (!updateInfo.update_available) {
-				error = ''; // Watcher is up to date
+			const info = await lookupSelfUpdate({ force: true });
+			updateInfo = info;
+			if (info && !info.update_available) {
+				clearSelfUpdateDismissal();
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Check failed';
@@ -209,6 +223,8 @@
 		error = '';
 		try {
 			await api.selfUpdate();
+			clearSelfUpdateCache();
+			clearSelfUpdateDismissal();
 			showUpdateDialog = false;
 			setTimeout(() => {
 				window.location.reload();
@@ -245,8 +261,8 @@
 <div class="space-y-6">
 	<div>
 		<h1 class="text-2xl font-bold tracking-tight">System Settings</h1>
-		<p class="text-muted-foreground text-sm flex items-center gap-1.5 mt-1">
-			<Info class="w-4 h-4" /> Manage the Watcher agent installation and updates
+		<p class="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+			<Info class="h-4 w-4" /> Manage the Watcher agent installation and updates
 		</p>
 	</div>
 
@@ -271,23 +287,45 @@
 		</Card.Header>
 		<Card.Content class="space-y-4">
 			{#if authStatus?.using_default_password}
-				<div class="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
-					The dashboard is still using the default password. Change it before exposing Watcher beyond a trusted machine.
+				<div
+					class="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300"
+				>
+					The dashboard is still using the default password. Change it before exposing Watcher
+					beyond a trusted machine.
 				</div>
 			{/if}
 
 			<div class="grid gap-4 md:grid-cols-3">
 				<div class="space-y-2">
-					<label class="text-sm text-muted-foreground" for="current-password">Current Password</label>
-					<Input id="current-password" type="password" bind:value={currentPassword} autocomplete="current-password" />
+					<label class="text-sm text-muted-foreground" for="current-password"
+						>Current Password</label
+					>
+					<Input
+						id="current-password"
+						type="password"
+						bind:value={currentPassword}
+						autocomplete="current-password"
+					/>
 				</div>
 				<div class="space-y-2">
 					<label class="text-sm text-muted-foreground" for="new-password">New Password</label>
-					<Input id="new-password" type="password" bind:value={newPassword} autocomplete="new-password" />
+					<Input
+						id="new-password"
+						type="password"
+						bind:value={newPassword}
+						autocomplete="new-password"
+					/>
 				</div>
 				<div class="space-y-2">
-					<label class="text-sm text-muted-foreground" for="confirm-password">Confirm Password</label>
-					<Input id="confirm-password" type="password" bind:value={confirmPassword} autocomplete="new-password" />
+					<label class="text-sm text-muted-foreground" for="confirm-password"
+						>Confirm Password</label
+					>
+					<Input
+						id="confirm-password"
+						type="password"
+						bind:value={confirmPassword}
+						autocomplete="new-password"
+					/>
 				</div>
 			</div>
 
@@ -313,7 +351,10 @@
 					</div>
 					<div class="flex items-center gap-2 py-2">
 						<Checkbox id="cfg-github-deploy-enabled" bind:checked={cfgGithubDeployEnabled} />
-						<label class="text-sm text-muted-foreground select-none" for="cfg-github-deploy-enabled">
+						<label
+							class="text-sm text-muted-foreground select-none"
+							for="cfg-github-deploy-enabled"
+						>
 							Enable GitHub Deployment API
 						</label>
 					</div>
@@ -322,19 +363,32 @@
 						<Input id="cfg-api-port" bind:value={cfgAPIPort} />
 					</div>
 					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-github-token">GitHub Token (leave blank to keep current)</label>
-						<Input id="cfg-github-token" type="password" placeholder={agentConfig.github_token_masked || 'not set'} bind:value={githubTokenInput} />
-						<div class="flex items-center gap-2 mt-2">
+						<label class="text-sm text-muted-foreground" for="cfg-github-token"
+							>GitHub Token (leave blank to keep current)</label
+						>
+						<Input
+							id="cfg-github-token"
+							type="password"
+							placeholder={agentConfig.github_token_masked || 'not set'}
+							bind:value={githubTokenInput}
+						/>
+						<div class="mt-2 flex items-center gap-2">
 							<Checkbox id="clear-github-token" bind:checked={clearGitHubToken} />
 							<label class="text-xs text-muted-foreground select-none" for="clear-github-token">
 								Clear existing GitHub token
 							</label>
 						</div>
-						<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+						<div
+							class="space-y-1 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
+						>
 							<p class="font-medium text-foreground/90">GitHub token requirements</p>
 							<p>Public repos: token optional. Private repos: token required.</p>
 							<p>Fine-grained PAT minimum: <code>Contents: Read</code>.</p>
-							<p>If GitHub Deployment API is enabled: also grant <code>Deployments: Read and write</code>.</p>
+							<p>
+								If GitHub Deployment API is enabled: also grant <code
+									>Deployments: Read and write</code
+								>.
+							</p>
 							<p class="pt-1 font-medium text-foreground/90">Org private repo checklist</p>
 							<p>Token must be authorized for org SSO/SAML and allowed by org PAT policy.</p>
 							<p>Token owner must already have access to the target private repository.</p>
@@ -342,14 +396,22 @@
 					</div>
 					<div class="space-y-2 md:col-span-2">
 						<label class="text-sm text-muted-foreground" for="cfg-api-base-url">API Base URL</label>
-						<Input id="cfg-api-base-url" bind:value={cfgAPIBaseURL} placeholder="http://192.168.1.100:8080" />
+						<Input
+							id="cfg-api-base-url"
+							bind:value={cfgAPIBaseURL}
+							placeholder="http://192.168.1.100:8080"
+						/>
 					</div>
 					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-watcher-repo-url">Watcher Repo URL</label>
+						<label class="text-sm text-muted-foreground" for="cfg-watcher-repo-url"
+							>Watcher Repo URL</label
+						>
 						<Input id="cfg-watcher-repo-url" bind:value={cfgWatcherRepoURL} />
 					</div>
 					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-watcher-service-name">Watcher Service Name</label>
+						<label class="text-sm text-muted-foreground" for="cfg-watcher-service-name"
+							>Watcher Service Name</label
+						>
 						<Input id="cfg-watcher-service-name" bind:value={cfgWatcherServiceName} />
 					</div>
 					<div class="space-y-2 md:col-span-2">
@@ -367,7 +429,8 @@
 				</div>
 
 				<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-					Changes are written to <code>{agentConfig.env_path}</code>. Watcher loops reload automatically, but changing API port or DB path requires service restart.
+					Changes are written to <code>{agentConfig.env_path}</code>. Watcher loops reload
+					automatically, but changing API port or DB path requires service restart.
 				</div>
 
 				<div class="flex gap-2">
@@ -379,7 +442,7 @@
 					</Button.Root>
 				</div>
 			{:else}
-				<div class="animate-pulse bg-muted/50 h-20 rounded"></div>
+				<div class="h-20 animate-pulse rounded bg-muted/50"></div>
 			{/if}
 		</Card.Content>
 	</Card.Root>
@@ -391,10 +454,10 @@
 				Global webhook routing, authentication, retry, and retention defaults used across watchers.
 			</Card.Description>
 			<div class="flex flex-wrap gap-2">
-				<a href="/webhooks">
+				<a href={resolve('/webhooks')}>
 					<Button.Root size="sm" variant="outline">Webhook Hub</Button.Root>
 				</a>
-				<a href="/docs/webhooks">
+				<a href={resolve('/docs/webhooks')}>
 					<Button.Root size="sm" variant="outline">
 						<BookOpenText class="mr-2 h-4 w-4" />
 						Integration Guide
@@ -413,7 +476,9 @@
 			{#if agentConfig}
 				<div class="grid gap-4 md:grid-cols-2">
 					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-url">Default Webhook URL</label>
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-url"
+							>Default Webhook URL</label
+						>
 						<Input
 							id="cfg-webhook-default-url"
 							bind:value={cfgWebhookDefaultURL}
@@ -438,14 +503,24 @@
 								id="clear-webhook-default-bearer-token"
 								bind:checked={clearWebhookDefaultBearerToken}
 							/>
-							<label class="text-xs text-muted-foreground select-none" for="clear-webhook-default-bearer-token">
+							<label
+								class="text-xs text-muted-foreground select-none"
+								for="clear-webhook-default-bearer-token"
+							>
 								Clear existing default webhook bearer token
 							</label>
 						</div>
 					</div>
 					<div class="space-y-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-timeout-sec">Webhook Timeout (s)</label>
-						<Input id="cfg-webhook-timeout-sec" type="number" min="1" bind:value={cfgWebhookTimeoutSec} />
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-timeout-sec"
+							>Webhook Timeout (s)</label
+						>
+						<Input
+							id="cfg-webhook-timeout-sec"
+							type="number"
+							min="1"
+							bind:value={cfgWebhookTimeoutSec}
+						/>
 					</div>
 					<div class="space-y-2">
 						<label class="text-sm text-muted-foreground" for="cfg-webhook-retry-schedule-sec">
@@ -458,13 +533,22 @@
 						/>
 					</div>
 					<div class="flex items-center gap-2 py-2">
-						<Checkbox id="cfg-webhook-auto-pause-enabled" bind:checked={cfgWebhookAutoPauseEnabled} />
-						<label class="text-sm text-muted-foreground select-none" for="cfg-webhook-auto-pause-enabled">
+						<Checkbox
+							id="cfg-webhook-auto-pause-enabled"
+							bind:checked={cfgWebhookAutoPauseEnabled}
+						/>
+						<label
+							class="text-sm text-muted-foreground select-none"
+							for="cfg-webhook-auto-pause-enabled"
+						>
 							Enable webhook auto-pause
 						</label>
 					</div>
 					<div class="space-y-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-auto-pause-after-failures">
+						<label
+							class="text-sm text-muted-foreground"
+							for="cfg-webhook-auto-pause-after-failures"
+						>
 							Auto-pause after failures
 						</label>
 						<Input
@@ -499,7 +583,8 @@
 				</div>
 
 				<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-					These values act as global defaults. Watchers can still override URL, bearer token, and subscriptions individually.
+					These values act as global defaults. Watchers can still override URL, bearer token, and
+					subscriptions individually.
 				</div>
 
 				<div class="flex gap-2">
@@ -508,7 +593,7 @@
 					</Button.Root>
 				</div>
 			{:else}
-				<div class="animate-pulse bg-muted/50 h-20 rounded"></div>
+				<div class="h-20 animate-pulse rounded bg-muted/50"></div>
 			{/if}
 		</Card.Content>
 	</Card.Root>
@@ -520,53 +605,74 @@
 		</Card.Header>
 		<Card.Content class="space-y-4">
 			{#if versionInfo}
-				<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-					<div class="bg-muted/50 p-3 rounded border border-border">
-						<div class="text-xs text-muted-foreground mb-1">Version</div>
+				<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+					<div class="rounded border border-border bg-muted/50 p-3">
+						<div class="mb-1 text-xs text-muted-foreground">Version</div>
 						<div class="font-mono text-sm">{versionInfo.version}</div>
 					</div>
-					<div class="bg-muted/50 p-3 rounded border border-border">
-						<div class="text-xs text-muted-foreground mb-1">Go Runtime</div>
+					<div class="rounded border border-border bg-muted/50 p-3">
+						<div class="mb-1 text-xs text-muted-foreground">Go Runtime</div>
 						<div class="font-mono text-sm">{versionInfo.go_version}</div>
 					</div>
-					<div class="bg-muted/50 p-3 rounded border border-border">
-						<div class="text-xs text-muted-foreground mb-1">Platform</div>
+					<div class="rounded border border-border bg-muted/50 p-3">
+						<div class="mb-1 text-xs text-muted-foreground">Platform</div>
 						<div class="font-mono text-sm">{versionInfo.os} / {versionInfo.arch}</div>
 					</div>
-					<div class="bg-muted/50 p-3 rounded border border-border lg:col-span-4">
-						<div class="text-xs text-muted-foreground mb-1">Executable Path</div>
-						<div class="font-mono text-xs truncate break-all">{versionInfo.executable}</div>
+					<div class="rounded border border-border bg-muted/50 p-3 lg:col-span-4">
+						<div class="mb-1 text-xs text-muted-foreground">Executable Path</div>
+						<div class="truncate font-mono text-xs break-all">{versionInfo.executable}</div>
 					</div>
 				</div>
 			{:else if !error}
-				<div class="animate-pulse bg-muted/50 h-24 rounded"></div>
+				<div class="h-24 animate-pulse rounded bg-muted/50"></div>
 			{/if}
-			
-			<div class="pt-4 border-t border-border mt-4">
-				<Button.Root onclick={checkForUpdates} disabled={isChecking || isUpdating} variant="outline">
-					<RotateCcw class={`w-4 h-4 mr-2 ${isChecking ? 'animate-spin' : ''}`} />
+
+			<div class="mt-4 border-t border-border pt-4">
+				<Button.Root
+					onclick={checkForUpdates}
+					disabled={isChecking || isUpdating}
+					variant="outline"
+				>
+					<RotateCcw class={`mr-2 h-4 w-4 ${isChecking ? 'animate-spin' : ''}`} />
 					{isChecking ? 'Checking...' : 'Check for Updates'}
 				</Button.Root>
 			</div>
 
 			{#if updateInfo}
-				<div class="mt-4 p-4 rounded border {updateInfo.update_available ? 'border-blue-500/50 bg-blue-500/5 text-blue-50' : 'border-emerald-500/30 bg-emerald-500/5'}">
+				<div
+					class="mt-4 rounded border p-4 {updateInfo.update_available
+						? 'border-blue-500/50 bg-blue-500/5 text-blue-50'
+						: 'border-emerald-500/30 bg-emerald-500/5'}"
+				>
 					{#if updateInfo.update_available}
 						<div class="flex items-start justify-between">
 							<div>
-								<h4 class="font-medium text-blue-400 flex items-center gap-2 mb-1">
-									<Download class="w-4 h-4" /> Update Available
+								<h4 class="mb-1 flex items-center gap-2 font-medium text-blue-400">
+									<Download class="h-4 w-4" /> Update Available
 								</h4>
-								<p class="text-sm">A new version of Watcher <strong>{updateInfo.latest_version}</strong> is available.</p>
-								<p class="text-xs text-muted-foreground mt-1">Currently running: {updateInfo.current_version}</p>
+								<p class="text-sm">
+									A new version of Watcher <strong>{updateInfo.latest_version}</strong> is available.
+								</p>
+								<p class="mt-1 text-xs text-muted-foreground">
+									Currently running: {updateInfo.current_version}
+								</p>
+								{#if updateInfo.published_at}
+									<p class="mt-1 text-xs text-muted-foreground">
+										Published: {new Date(updateInfo.published_at).toLocaleString()}
+									</p>
+								{/if}
 							</div>
-							<Button.Root onclick={() => (showUpdateDialog = true)} disabled={isUpdating} class="bg-blue-600 hover:bg-blue-700 text-white">
+							<Button.Root
+								onclick={() => (showUpdateDialog = true)}
+								disabled={isUpdating}
+								class="bg-blue-600 text-white hover:bg-blue-700"
+							>
 								{isUpdating ? 'Updating...' : 'Update & Restart Watcher'}
 							</Button.Root>
 						</div>
 					{:else}
-						<div class="flex items-center gap-2 text-emerald-500 text-sm font-medium">
-							<CheckCircle2 class="w-4 h-4" /> Watcher is up to date (running the latest version: {updateInfo.latest_version}).
+						<div class="flex items-center gap-2 text-sm font-medium text-emerald-500">
+							<CheckCircle2 class="h-4 w-4" /> Watcher is up to date (running the latest version: {updateInfo.latest_version}).
 						</div>
 					{/if}
 				</div>
@@ -576,10 +682,13 @@
 
 	<Card.Root class="bg-card">
 		<Card.Header>
-			<Card.Title class="text-red-400 flex items-center gap-2">
-				<AlertTriangle class="w-4 h-4" /> Uninstall Watcher
+			<Card.Title class="flex items-center gap-2 text-red-400">
+				<AlertTriangle class="h-4 w-4" /> Uninstall Watcher
 			</Card.Title>
-			<Card.Description>Generate a PowerShell script to safely remove the Watcher agent, services, and registry keys.</Card.Description>
+			<Card.Description
+				>Generate a PowerShell script to safely remove the Watcher agent, services, and registry
+				keys.</Card.Description
+			>
 		</Card.Header>
 		<Card.Content>
 			<Button.Root variant="destructive" onclick={generateUninstall} class="mb-4">
@@ -587,14 +696,22 @@
 			</Button.Root>
 
 			{#if uninstallScript}
-				<div class="relative bg-[#0a0a0a] border border-red-500/30 rounded p-4">
-					<Button.Root variant="secondary" size="icon" class="absolute top-2 right-2 h-8 w-8 text-xs bg-muted hover:bg-muted/80" onclick={copyUninstallScript}>
-						<Copy class="w-3.5 h-3.5" />
+				<div class="relative rounded border border-red-500/30 bg-[#0a0a0a] p-4">
+					<Button.Root
+						variant="secondary"
+						size="icon"
+						class="absolute top-2 right-2 h-8 w-8 bg-muted text-xs hover:bg-muted/80"
+						onclick={copyUninstallScript}
+					>
+						<Copy class="h-3.5 w-3.5" />
 					</Button.Root>
-					<pre class="font-mono text-xs text-red-300 overflow-x-auto p-2 leading-relaxed"><code>{uninstallScript}</code></pre>
+					<pre class="overflow-x-auto p-2 font-mono text-xs leading-relaxed text-red-300"><code
+							>{uninstallScript}</code
+						></pre>
 				</div>
-				<p class="text-xs text-muted-foreground mt-2">
-					Save this script as <code>uninstall-watcher.ps1</code> and run it from an elevated PowerShell window to completely remove watcher.
+				<p class="mt-2 text-xs text-muted-foreground">
+					Save this script as <code>uninstall-watcher.ps1</code> and run it from an elevated PowerShell
+					window to completely remove watcher.
 				</p>
 			{/if}
 		</Card.Content>
@@ -613,9 +730,7 @@
 			<Button.Root variant="outline" type="button" onclick={() => (showRestartDialog = false)}>
 				Cancel
 			</Button.Root>
-			<Button.Root type="button" onclick={restartWatcherService}>
-				Restart
-			</Button.Root>
+			<Button.Root type="button" onclick={restartWatcherService}>Restart</Button.Root>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
@@ -629,10 +744,20 @@
 			</Dialog.Description>
 		</Dialog.Header>
 		<Dialog.Footer>
-			<Button.Root variant="outline" type="button" onclick={() => (showUpdateDialog = false)} disabled={isUpdating}>
+			<Button.Root
+				variant="outline"
+				type="button"
+				onclick={() => (showUpdateDialog = false)}
+				disabled={isUpdating}
+			>
 				Cancel
 			</Button.Root>
-			<Button.Root type="button" class="bg-blue-600 hover:bg-blue-700 text-white" onclick={performUpdate} disabled={isUpdating}>
+			<Button.Root
+				type="button"
+				class="bg-blue-600 text-white hover:bg-blue-700"
+				onclick={performUpdate}
+				disabled={isUpdating}
+			>
 				{isUpdating ? 'Updating...' : 'Update & Restart'}
 			</Button.Root>
 		</Dialog.Footer>

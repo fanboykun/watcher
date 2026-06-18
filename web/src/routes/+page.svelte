@@ -2,24 +2,67 @@
 	import { onMount } from 'svelte';
 	import { api, type SystemStatus, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
+	import * as Alert from '$lib/components/ui/alert';
+	import * as Button from '$lib/components/ui/button';
 	import Badge from '$lib/components/ui/badge/badge.svelte';
-	import { Activity, Clock, Eye, Server, Rocket, AlertCircle } from '@lucide/svelte';
+	import {
+		Activity,
+		Clock,
+		Eye,
+		Server,
+		Rocket,
+		AlertCircle,
+		Download,
+		X,
+		BellRing
+	} from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { statusColor, timeAgo } from '$lib/utils';
+	import {
+		dismissSelfUpdate,
+		getSelfUpdateSnapshot,
+		lookupSelfUpdate,
+		subscribeSelfUpdate
+	} from '$lib/self-update';
+	import type { SelfUpdateCheckResponse } from '$lib/api';
 
 	let status = $state<SystemStatus | null>(null);
 	let watchers = $state<Watcher[]>([]);
 	let error = $state('');
+	let selfUpdateInfo = $state<SelfUpdateCheckResponse | null>(null);
+	let showSelfUpdateAlert = $state(false);
 
-	onMount(async () => {
-		try {
-			[status, watchers] = await Promise.all([api.status(), api.listWatchers()]);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to connect to API';
-		}
+	function syncSelfUpdateState() {
+		const snapshot = getSelfUpdateSnapshot();
+		selfUpdateInfo = snapshot.info;
+		showSelfUpdateAlert = snapshot.shouldNotify;
+	}
+
+	onMount(() => {
+		syncSelfUpdateState();
+		const unsubscribe = subscribeSelfUpdate((snapshot) => {
+			selfUpdateInfo = snapshot.info;
+			showSelfUpdateAlert = snapshot.shouldNotify;
+		});
+
+		const init = async () => {
+			try {
+				[status, watchers] = await Promise.all([api.status(), api.listWatchers()]);
+				void lookupSelfUpdate({ silent: true });
+			} catch (e) {
+				error = e instanceof Error ? e.message : 'Failed to connect to API';
+			}
+		};
+
+		void init();
+
+		return unsubscribe;
 	});
 
-
+	function dismissUpdateAlert() {
+		if (!selfUpdateInfo?.latest_version) return;
+		dismissSelfUpdate(selfUpdateInfo.latest_version);
+	}
 </script>
 
 <div class="space-y-8">
@@ -28,6 +71,32 @@
 		<h1 class="text-2xl font-bold tracking-tight">Dashboard</h1>
 		<p class="text-sm text-muted-foreground">Watcher Agent overview</p>
 	</div>
+
+	{#if showSelfUpdateAlert && selfUpdateInfo?.update_available}
+		<Alert.Root class="border-blue-500/30 bg-blue-500/10 text-blue-50">
+			<BellRing class="h-4 w-4 text-blue-300" />
+			<Alert.Title class="text-blue-200">New watcher version available</Alert.Title>
+			<Alert.Description class="text-blue-50/85">
+				Watcher {selfUpdateInfo.latest_version} is available. This agent is currently running {selfUpdateInfo.current_version}.
+			</Alert.Description>
+			<Alert.Action class="flex items-center gap-2">
+				<a href={resolve('/settings')}>
+					<Button.Root size="sm" class="bg-blue-600 text-white hover:bg-blue-700">
+						<Download class="mr-2 h-4 w-4" />
+						Update
+					</Button.Root>
+				</a>
+				<Button.Root
+					size="icon"
+					variant="outline"
+					class="h-8 w-8 border-blue-400/30 bg-transparent text-blue-100 hover:bg-blue-500/10 hover:text-white"
+					onclick={dismissUpdateAlert}
+				>
+					<X class="h-4 w-4" />
+				</Button.Root>
+			</Alert.Action>
+		</Alert.Root>
+	{/if}
 
 	{#if error}
 		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
