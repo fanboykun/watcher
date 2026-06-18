@@ -22,7 +22,7 @@ type CreateWatcherRequest struct {
 	MaxKeptVersions                 int                    `json:"max_kept_versions"`
 	WebhookEnabled                  bool                   `json:"webhook_enabled"`
 	WebhookURL                      string                 `json:"webhook_url"`
-	WebhookBearerToken              string                 `json:"webhook_bearer_token"`
+	WebhookSigningSecret            string                 `json:"webhook_signing_secret"`
 	WebhookAutoPauseEnabledOverride *bool                  `json:"webhook_auto_pause_enabled_override"`
 	WebhookAutoPauseAfterFailures   *int                   `json:"webhook_auto_pause_after_failures_override"`
 	NotifyVersionFound              bool                   `json:"notify_version_found"`
@@ -54,7 +54,7 @@ type UpdateWatcherRequest struct {
 	MaxKeptVersions                 *int    `json:"max_kept_versions"`
 	WebhookEnabled                  *bool   `json:"webhook_enabled"`
 	WebhookURL                      *string `json:"webhook_url"`
-	WebhookBearerToken              *string `json:"webhook_bearer_token"`
+	WebhookSigningSecret            *string `json:"webhook_signing_secret"`
 	WebhookAutoPauseEnabledOverride *bool   `json:"webhook_auto_pause_enabled_override"`
 	WebhookAutoPauseAfterFailures   *int    `json:"webhook_auto_pause_after_failures_override"`
 	NotifyVersionFound              *bool   `json:"notify_version_found"`
@@ -127,27 +127,27 @@ type RollbackRequest struct {
 // ── Agent self config DTOs ───────────────────────────────────
 
 type SelfConfigResponse struct {
-	Environment                     string `json:"environment"`
-	GitHubDeployEnabled             bool   `json:"github_deploy_enabled"`
-	LogDir                          string `json:"log_dir"`
-	NssmPath                        string `json:"nssm_path"`
-	DBPath                          string `json:"db_path"`
-	APIPort                         string `json:"api_port"`
-	APIBaseURL                      string `json:"api_base_url"`
-	WatcherRepoURL                  string `json:"watcher_repo_url"`
-	WatcherServiceName              string `json:"watcher_service_name"`
-	HasGitHubToken                  bool   `json:"has_github_token"`
-	GitHubTokenMasked               string `json:"github_token_masked"`
-	WebhookDefaultURL               string `json:"webhook_default_url"`
-	HasWebhookDefaultBearerToken    bool   `json:"has_webhook_default_bearer_token"`
-	WebhookDefaultBearerTokenMasked string `json:"webhook_default_bearer_token_masked"`
-	WebhookTimeoutSec               int    `json:"webhook_timeout_sec"`
-	WebhookRetryScheduleSec         string `json:"webhook_retry_schedule_sec"`
-	WebhookAutoPauseEnabled         bool   `json:"webhook_auto_pause_enabled"`
-	WebhookAutoPauseAfterFailures   int    `json:"webhook_auto_pause_after_failures"`
-	WebhookEventRetentionDays       int    `json:"webhook_event_retention_days"`
-	WebhookDeliveryRetentionDays    int    `json:"webhook_delivery_retention_days"`
-	EnvPath                         string `json:"env_path"`
+	Environment                       string `json:"environment"`
+	GitHubDeployEnabled               bool   `json:"github_deploy_enabled"`
+	LogDir                            string `json:"log_dir"`
+	NssmPath                          string `json:"nssm_path"`
+	DBPath                            string `json:"db_path"`
+	APIPort                           string `json:"api_port"`
+	APIBaseURL                        string `json:"api_base_url"`
+	WatcherRepoURL                    string `json:"watcher_repo_url"`
+	WatcherServiceName                string `json:"watcher_service_name"`
+	HasGitHubToken                    bool   `json:"has_github_token"`
+	GitHubTokenMasked                 string `json:"github_token_masked"`
+	WebhookDefaultURL                 string `json:"webhook_default_url"`
+	HasWebhookDefaultSigningSecret    bool   `json:"has_webhook_default_signing_secret"`
+	WebhookDefaultSigningSecretMasked string `json:"webhook_default_signing_secret_masked"`
+	WebhookTimeoutSec                 int    `json:"webhook_timeout_sec"`
+	WebhookRetryScheduleSec           string `json:"webhook_retry_schedule_sec"`
+	WebhookAutoPauseEnabled           bool   `json:"webhook_auto_pause_enabled"`
+	WebhookAutoPauseAfterFailures     int    `json:"webhook_auto_pause_after_failures"`
+	WebhookEventRetentionDays         int    `json:"webhook_event_retention_days"`
+	WebhookDeliveryRetentionDays      int    `json:"webhook_delivery_retention_days"`
+	EnvPath                           string `json:"env_path"`
 }
 
 type UpdateSelfConfigRequest struct {
@@ -162,7 +162,7 @@ type UpdateSelfConfigRequest struct {
 	WatcherRepoURL                *string `json:"watcher_repo_url"`
 	WatcherServiceName            *string `json:"watcher_service_name"`
 	WebhookDefaultURL             *string `json:"webhook_default_url"`
-	WebhookDefaultBearerToken     *string `json:"webhook_default_bearer_token"`
+	WebhookDefaultSigningSecret   *string `json:"webhook_default_signing_secret"`
 	WebhookTimeoutSec             *int    `json:"webhook_timeout_sec"`
 	WebhookRetryScheduleSec       *string `json:"webhook_retry_schedule_sec"`
 	WebhookAutoPauseEnabled       *bool   `json:"webhook_auto_pause_enabled"`

@@ -28,8 +28,8 @@ const (
 type ResolvedConfig struct {
 	Enabled               bool
 	URL                   string
-	BearerToken           string
-	TokenSource           string
+	SigningSecret         string
+	SecretSource          string
 	Timeout               time.Duration
 	RetrySchedule         []time.Duration
 	AutoPauseEnabled      bool

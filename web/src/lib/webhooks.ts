@@ -427,7 +427,7 @@ export const webhookSystemEventDocs = [
 		behavior: [
 			'Uses the exact same outbox, retry, pause, and delivery history pipeline as real webhook events.',
 			'Not controlled by the business-event subscription checkboxes.',
-			'Useful for validating URL, bearer token, retry, and delivery history wiring before a real deploy happens.'
+			'Useful for validating URL, signing secret, retry, and delivery history wiring before a real deploy happens.'
 		],
 		payload: [
 			'watcher.id, watcher.name',

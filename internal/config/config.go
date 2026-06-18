@@ -48,7 +48,7 @@ type AppConfig struct {
 
 	// Webhook transport defaults.
 	WebhookDefaultURL            string `mapstructure:"WEBHOOK_DEFAULT_URL"`
-	WebhookDefaultBearerToken    string `mapstructure:"WEBHOOK_DEFAULT_BEARER_TOKEN"`
+	WebhookDefaultSigningSecret  string `mapstructure:"WEBHOOK_DEFAULT_SIGNING_SECRET"`
 	WebhookTimeoutSec            int    `mapstructure:"WEBHOOK_TIMEOUT_SEC"`
 	WebhookRetryScheduleSec      string `mapstructure:"WEBHOOK_RETRY_SCHEDULE_SEC"`
 	WebhookAutoPauseEnabled      bool   `mapstructure:"WEBHOOK_AUTO_PAUSE_ENABLED"`

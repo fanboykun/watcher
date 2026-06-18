@@ -3,6 +3,7 @@ package webhook
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,6 +71,9 @@ func (d *Dispatcher) dispatchWatcher(ctx context.Context, watcher *database.Watc
 	if !resolved.Enabled || strings.TrimSpace(resolved.URL) == "" {
 		return
 	}
+	if strings.TrimSpace(resolved.SigningSecret) == "" {
+		return
+	}
 
 	var event database.WebhookEvent
 	if err := d.db.Where("watcher_id = ? AND status = ?", watcher.ID, EventStatusPending).
@@ -94,8 +98,8 @@ func (d *Dispatcher) dispatchWatcher(ctx context.Context, watcher *database.Watc
 		Status:         DeliveryStatusPending,
 		AttemptNumber:  attemptNum,
 		ResolvedURL:    resolved.URL,
-		AuthType:       "bearer",
-		TokenSource:    resolved.TokenSource,
+		AuthType:       "standard_webhooks_hmac_sha256",
+		SecretSource:   resolved.SecretSource,
 	}
 	if err := d.db.Create(&delivery).Error; err != nil {
 		d.log.Warn("webhook dispatcher: create delivery failed", "error", err)
@@ -106,12 +110,14 @@ func (d *Dispatcher) dispatchWatcher(ctx context.Context, watcher *database.Watc
 	defer cancel()
 	now := time.Now().UTC()
 	delivery.LastAttemptAt = &now
-	statusCode, respBody, sendErr := d.send(reqCtx, resolved, &event, delivery.DeliveryID)
+	statusCode, respBody, signature, sendErr := d.send(reqCtx, resolved, &event, &delivery, now)
 
 	update := map[string]any{
 		"last_attempt_at":      &now,
 		"response_status_code": statusCode,
 		"response_body":        respBody,
+		"webhook_timestamp":    now.Unix(),
+		"webhook_signature":    signature,
 	}
 	if sendErr == nil && statusCode >= 200 && statusCode < 300 {
 		update["status"] = DeliveryStatusSucceeded
@@ -171,29 +177,41 @@ func (d *Dispatcher) dispatchWatcher(ctx context.Context, watcher *database.Watc
 	})
 }
 
-func (d *Dispatcher) send(ctx context.Context, cfg ResolvedConfig, event *database.WebhookEvent, deliveryID string) (int, string, error) {
+func (d *Dispatcher) send(ctx context.Context, cfg ResolvedConfig, event *database.WebhookEvent, delivery *database.WebhookDelivery, timestamp time.Time) (int, string, string, error) {
+	wh, err := NewStandardWebhook(cfg.SigningSecret)
+	if err != nil {
+		return 0, "", "", err
+	}
+	signature, err := wh.Sign(event.EventID, timestamp, []byte(event.Payload))
+	if err != nil {
+		return 0, "", "", err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewBufferString(event.Payload))
 	if err != nil {
-		return 0, "", err
+		return 0, "", signature, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Watcher-Event", event.EventType)
-	req.Header.Set("X-Watcher-Delivery-ID", deliveryID)
-	if strings.TrimSpace(cfg.BearerToken) != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.BearerToken)
-	}
+	req.Header.Set("X-Watcher-Delivery-ID", delivery.DeliveryID)
+	req.Header.Set(HeaderWebhookID, event.EventID)
+	req.Header.Set(HeaderWebhookTimestamp, fmt.Sprintf("%d", timestamp.Unix()))
+	req.Header.Set(HeaderWebhookSignature, signature)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return 0, "", err
+		return 0, "", signature, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-	return resp.StatusCode, string(body), nil
+	return resp.StatusCode, string(body), signature, nil
 }
 
 func isRetryable(status int, err error) bool {
 	if err != nil {
+		if errors.Is(err, ErrInvalidSigningSecret) {
+			return false
+		}
 		return true
 	}
 	if status == http.StatusTooManyRequests {

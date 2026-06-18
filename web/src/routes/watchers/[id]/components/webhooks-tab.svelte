@@ -100,7 +100,7 @@
 	}
 
 	function authSource(watcher: Watcher) {
-		return watcher.has_webhook_bearer_token ? 'Watcher override token' : 'Global default token';
+		return watcher.has_webhook_signing_secret ? 'Watcher override secret' : 'Global default secret';
 	}
 
 	const deliverySummary = $derived.by<DeliverySummary>(() => {
@@ -307,13 +307,13 @@
 								class="flex items-center gap-2 text-xs tracking-[0.14em] text-muted-foreground uppercase"
 							>
 								<KeyRound class="h-3.5 w-3.5" />
-								Auth source
+								Secret source
 							</div>
 							<p class="mt-2 text-sm font-medium">{authSource(watcher)}</p>
 							<p class="mt-1 text-xs text-muted-foreground">
-								{watcher.has_webhook_bearer_token
-									? watcher.webhook_bearer_token_masked || 'Watcher token configured'
-									: 'Bearer token comes from the global webhook defaults'}
+								{watcher.has_webhook_signing_secret
+									? watcher.webhook_signing_secret_masked || 'Watcher signing secret configured'
+									: 'Signing secret comes from the global webhook defaults'}
 							</p>
 						</div>
 						<div class="rounded-xl border border-border/60 bg-background/40 p-3">
@@ -336,7 +336,7 @@
 							{:else}
 								<p class="mt-2 text-sm font-medium">No delivery history yet</p>
 								<p class="mt-1 text-xs text-muted-foreground">
-									Send a test webhook after endpoint and token configuration are ready.
+									Send a test webhook after endpoint and signing secret configuration are ready.
 								</p>
 							{/if}
 						</div>
@@ -529,7 +529,7 @@
 								<div class="space-y-1">
 									<p class="font-mono text-xs break-all">{delivery.resolved_url || '—'}</p>
 									<p class="text-xs text-muted-foreground">
-										Auth {delivery.auth_type || '—'} via {delivery.token_source || '—'}
+										Auth {delivery.auth_type || '—'} via {delivery.secret_source || '—'}
 									</p>
 								</div>
 							</Table.Cell>

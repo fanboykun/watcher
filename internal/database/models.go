@@ -46,7 +46,7 @@ type Watcher struct {
 
 	WebhookEnabled                  bool       `gorm:"not null;default:false" json:"webhook_enabled"`
 	WebhookURL                      string     `gorm:"not null;default:''" json:"webhook_url"`
-	WebhookBearerToken              string     `gorm:"not null;default:''" json:"-"`
+	WebhookSigningSecret            string     `gorm:"not null;default:''" json:"-"`
 	WebhookAutoPauseEnabledOverride *bool      `json:"webhook_auto_pause_enabled_override,omitempty"`
 	WebhookAutoPauseAfterFailures   *int       `json:"webhook_auto_pause_after_failures_override,omitempty"`
 	WebhookPausedAt                 *time.Time `json:"webhook_paused_at,omitempty"`
@@ -67,10 +67,10 @@ type Watcher struct {
 	WebhookDeliveries []WebhookDelivery `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"-"`
 
 	// Derived response-only fields
-	HasGitHubToken           bool   `gorm:"-" json:"has_github_token"`
-	GitHubTokenMasked        string `gorm:"-" json:"github_token_masked,omitempty"`
-	HasWebhookBearerToken    bool   `gorm:"-" json:"has_webhook_bearer_token"`
-	WebhookBearerTokenMasked string `gorm:"-" json:"webhook_bearer_token_masked,omitempty"`
+	HasGitHubToken             bool   `gorm:"-" json:"has_github_token"`
+	GitHubTokenMasked          string `gorm:"-" json:"github_token_masked,omitempty"`
+	HasWebhookSigningSecret    bool   `gorm:"-" json:"has_webhook_signing_secret"`
+	WebhookSigningSecretMasked string `gorm:"-" json:"webhook_signing_secret_masked,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -186,8 +186,10 @@ type WebhookDelivery struct {
 	ResponseBody       string     `gorm:"type:text" json:"response_body"`
 	Error              string     `gorm:"not null;default:''" json:"error"`
 	ResolvedURL        string     `gorm:"not null;default:''" json:"resolved_url"`
-	AuthType           string     `gorm:"not null;default:'bearer'" json:"auth_type"`
-	TokenSource        string     `gorm:"not null;default:''" json:"token_source"`
+	AuthType           string     `gorm:"not null;default:'standard_webhooks_hmac_sha256'" json:"auth_type"`
+	SecretSource       string     `gorm:"not null;default:''" json:"secret_source"`
+	WebhookTimestamp   int64      `gorm:"not null;default:0" json:"webhook_timestamp"`
+	WebhookSignature   string     `gorm:"not null;default:''" json:"webhook_signature"`
 	NextRetryAt        *time.Time `json:"next_retry_at,omitempty"`
 	LastAttemptAt      *time.Time `json:"last_attempt_at,omitempty"`
 	CompletedAt        *time.Time `json:"completed_at,omitempty"`
