@@ -112,6 +112,12 @@ func TestInvalidSigningSecretIsNotRetryable(t *testing.T) {
 	}
 }
 
+func TestStandardWebhookRequiresPrefix(t *testing.T) {
+	if _, err := NewStandardWebhook("not-a-standard-secret"); err == nil {
+		t.Fatal("NewStandardWebhook() error = nil, want prefix validation failure")
+	}
+}
+
 func timeString(ts time.Time) string {
 	return strconv.FormatInt(ts.UTC().Unix(), 10)
 }

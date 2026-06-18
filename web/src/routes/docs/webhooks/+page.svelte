@@ -166,6 +166,21 @@
 
 	<Card.Root class="border-border bg-card">
 		<Card.Header>
+			<Card.Title>Signing Secret Format</Card.Title>
+			<Card.Description>
+				What the `whsec_...` value looks like, where to get it, and how both sides should use it.
+			</Card.Description>
+		</Card.Header>
+		<Card.Content class="space-y-3 text-sm text-muted-foreground">
+			<p><span class="font-medium text-foreground">Format:</span> the secret should start with <code>whsec_</code> and the remainder should be a base64-encoded random value.</p>
+			<p><span class="font-medium text-foreground">Generate it:</span> create a new unpredictable secret, store it in your receiver first, then copy the exact same value into Watcher.</p>
+			<p><span class="font-medium text-foreground">Watcher side:</span> Watcher decodes the secret, signs the raw request body, and sends <code>webhook-id</code>, <code>webhook-timestamp</code>, and <code>webhook-signature</code>.</p>
+			<p><span class="font-medium text-foreground">Receiver side:</span> verify the raw body with the exact same secret before trusting the payload. If the secret or body differs, verification fails with <code>invalid signature</code>.</p>
+		</Card.Content>
+	</Card.Root>
+
+	<Card.Root class="border-border bg-card">
+		<Card.Header>
 			<Card.Title>Field Meaning And Types</Card.Title>
 			<Card.Description>
 				Field-name lists are only a summary. Use these contracts when you need to know the actual type and intended meaning.

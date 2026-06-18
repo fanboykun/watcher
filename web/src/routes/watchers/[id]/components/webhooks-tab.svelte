@@ -103,6 +103,13 @@
 		return watcher.has_webhook_signing_secret ? 'Watcher override secret' : 'Global default secret';
 	}
 
+	function authSourceHelp(watcher: Watcher) {
+		if (watcher.has_webhook_signing_secret) {
+			return 'Paste the exact same `whsec_...` value into your receiver and Watcher. The secret must start with `whsec_` and the masked text shown here is only a display hint.';
+		}
+		return 'Watcher will inherit the global `whsec_...` signing secret from system settings. The secret must start with `whsec_`, and your receiver must use the same exact value to verify signatures.';
+	}
+
 	const deliverySummary = $derived.by<DeliverySummary>(() => {
 		let successCount = 0;
 		let failedCount = 0;
@@ -293,16 +300,16 @@
 						<h3 class="font-medium">Routing and credentials</h3>
 					</div>
 					<div class="mt-4 grid gap-3 sm:grid-cols-2">
-						<div class="rounded-xl border border-border/60 bg-background/40 p-3">
+						<div class="min-w-0 rounded-xl border border-border/60 bg-background/40 p-3">
 							<p class="text-xs tracking-[0.14em] text-muted-foreground uppercase">
 								Resolved URL source
 							</p>
 							<p class="mt-2 text-sm font-medium">{routeSource(watcher.webhook_url)}</p>
-							<p class="mt-1 font-mono text-xs break-all text-muted-foreground">
+							<p class="mt-1 break-all whitespace-normal font-mono text-xs text-muted-foreground">
 								{watcher.webhook_url || 'Uses global default URL from system settings'}
 							</p>
 						</div>
-						<div class="rounded-xl border border-border/60 bg-background/40 p-3">
+						<div class="min-w-0 rounded-xl border border-border/60 bg-background/40 p-3">
 							<div
 								class="flex items-center gap-2 text-xs tracking-[0.14em] text-muted-foreground uppercase"
 							>
@@ -310,32 +317,35 @@
 								Secret source
 							</div>
 							<p class="mt-2 text-sm font-medium">{authSource(watcher)}</p>
-							<p class="mt-1 text-xs text-muted-foreground">
+							<p class="mt-1 break-all whitespace-normal text-xs text-muted-foreground">
 								{watcher.has_webhook_signing_secret
 									? watcher.webhook_signing_secret_masked || 'Watcher signing secret configured'
 									: 'Signing secret comes from the global webhook defaults'}
 							</p>
+							<p class="mt-2 text-xs text-muted-foreground">
+								{authSourceHelp(watcher)}
+							</p>
 						</div>
-						<div class="rounded-xl border border-border/60 bg-background/40 p-3">
+						<div class="min-w-0 rounded-xl border border-border/60 bg-background/40 p-3">
 							<p class="text-xs tracking-[0.14em] text-muted-foreground uppercase">
 								Recent outcome
 							</p>
 							{#if deliverySummary.lastFailed}
 								<p class="mt-2 text-sm font-medium text-red-300">Latest failure needs attention</p>
-								<p class="mt-1 text-xs text-muted-foreground">
+								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
 									{preview(
 										deliverySummary.lastFailed.error || deliverySummary.lastFailed.response_body
 									)}
 								</p>
 							{:else if deliverySummary.lastSuccessful}
 								<p class="mt-2 text-sm font-medium text-emerald-300">Recent delivery succeeded</p>
-								<p class="mt-1 text-xs text-muted-foreground">
+								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
 									HTTP {deliverySummary.lastSuccessful.response_status_code || 'n/a'} on
 									{deliverySummary.lastSuccessful.event_type}
 								</p>
 							{:else}
 								<p class="mt-2 text-sm font-medium">No delivery history yet</p>
-								<p class="mt-1 text-xs text-muted-foreground">
+								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
 									Send a test webhook after endpoint and signing secret configuration are ready.
 								</p>
 							{/if}
@@ -346,12 +356,12 @@
 							</p>
 							{#if watcher.webhook_paused_at}
 								<p class="mt-2 text-sm font-medium text-amber-300">Resume carefully</p>
-								<p class="mt-1 text-xs text-muted-foreground">
+								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
 									Use replay only if the downstream receiver can safely process delayed events.
 								</p>
 							{:else}
 								<p class="mt-2 text-sm font-medium text-blue-300">Safe validation path</p>
-								<p class="mt-1 text-xs text-muted-foreground">
+								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
 									Send a synthetic test event to verify URL, auth, and receiver behavior end to end.
 								</p>
 							{/if}
@@ -365,11 +375,11 @@
 						<h3 class="font-medium">Recovery playbook</h3>
 					</div>
 					<div class="mt-4 space-y-3">
-						<div class="rounded-xl border border-border/60 bg-background/40 p-3">
+						<div class="min-w-0 rounded-xl border border-border/60 bg-background/40 p-3">
 							<div class="flex items-center justify-between gap-3">
 								<div>
 									<p class="font-medium">1. Validate the receiver</p>
-									<p class="mt-1 text-sm text-muted-foreground">
+									<p class="mt-1 break-words whitespace-normal text-sm text-muted-foreground">
 										Queues a synthetic <code>watcher.webhook_test</code> event through the same outbox
 										and retry pipeline as real traffic.
 									</p>
@@ -381,11 +391,11 @@
 							</div>
 						</div>
 
-						<div class="rounded-xl border border-border/60 bg-background/40 p-3">
+						<div class="min-w-0 rounded-xl border border-border/60 bg-background/40 p-3">
 							<div class="flex items-center justify-between gap-3">
 								<div>
 									<p class="font-medium">2. Resume future deliveries only</p>
-									<p class="mt-1 text-sm text-muted-foreground">
+									<p class="mt-1 break-words whitespace-normal text-sm text-muted-foreground">
 										Clears the paused state and lets only new events continue. Use this when older
 										suppressed events should stay frozen for manual review.
 									</p>
@@ -397,7 +407,7 @@
 							</div>
 						</div>
 
-						<div class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+						<div class="min-w-0 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
 							<div class="flex items-center justify-between gap-3">
 								<div>
 									<div
@@ -407,7 +417,7 @@
 										Use only when backlog replay is safe
 									</div>
 									<p class="mt-2 font-medium">3. Resume and replay suppressed events</p>
-									<p class="mt-1 text-sm text-muted-foreground">
+									<p class="mt-1 break-words whitespace-normal text-sm text-muted-foreground">
 										Re-queues suppressed deliveries back to pending and replays them in normal FIFO
 										order. Choose this only if your receiver is idempotent or can handle delayed
 										duplicates safely.
@@ -508,7 +518,7 @@
 							<Table.Cell class="min-w-60">
 								<div class="space-y-1">
 									<p class="font-mono text-xs text-blue-200">{delivery.event_type || '—'}</p>
-									<p class="text-sm">{delivery.summary || 'No summary recorded'}</p>
+							<p class="break-words whitespace-normal text-sm">{delivery.summary || 'No summary recorded'}</p>
 									<p class="text-xs text-muted-foreground">Delivery ID {delivery.delivery_id}</p>
 								</div>
 							</Table.Cell>
@@ -527,8 +537,8 @@
 							</Table.Cell>
 							<Table.Cell class="min-w-52">
 								<div class="space-y-1">
-									<p class="font-mono text-xs break-all">{delivery.resolved_url || '—'}</p>
-									<p class="text-xs text-muted-foreground">
+									<p class="break-all whitespace-normal font-mono text-xs">{delivery.resolved_url || '—'}</p>
+									<p class="break-all whitespace-normal text-xs text-muted-foreground">
 										Auth {delivery.auth_type || '—'} via {delivery.secret_source || '—'}
 									</p>
 								</div>
@@ -550,9 +560,11 @@
 							<Table.Cell class="max-w-80">
 								<div class="space-y-1 text-xs">
 									{#if delivery.error}
-										<p class="text-red-300">{preview(delivery.error, 160)}</p>
+										<p class="break-words whitespace-normal text-red-300">{preview(delivery.error, 160)}</p>
 									{:else if delivery.response_body}
-										<p class="text-muted-foreground">{preview(delivery.response_body, 160)}</p>
+										<p class="break-words whitespace-normal text-muted-foreground">
+											{preview(delivery.response_body, 160)}
+										</p>
 									{:else if delivery.next_retry_at}
 										<p class="text-blue-300">Waiting for retry window.</p>
 									{:else if isSuppressed(delivery.status)}
