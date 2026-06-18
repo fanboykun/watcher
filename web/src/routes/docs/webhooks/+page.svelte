@@ -12,6 +12,21 @@
 
 	const commonEnvelopeFields: FieldContract[] = [
 		{
+			field: 'type',
+			type: 'string',
+			meaning: 'Standard Webhooks event type. Matches webhook payload semantics and the legacy event_type field.'
+		},
+		{
+			field: 'timestamp',
+			type: 'RFC3339 date-time string',
+			meaning: 'When the business event occurred. Matches the legacy occurred_at field.'
+		},
+		{
+			field: 'data',
+			type: 'object',
+			meaning: 'Standard Webhooks event data envelope. Includes watcher, summary, event_id, and event-specific nested objects.'
+		},
+		{
 			field: 'schema_version',
 			type: 'string',
 			meaning: 'Webhook payload contract version. The current public contract is v1.'
@@ -113,8 +128,8 @@
 			<p><span class="font-medium text-foreground">JSON body:</span> accept <code>application/json</code> request bodies and parse nested typed objects.</p>
 			<p><span class="font-medium text-foreground">Success response:</span> return any <code>2xx</code> response after accepting the event.</p>
 			<p><span class="font-medium text-foreground">Idempotency:</span> deduplicate using <code>event_id</code> because delivery is at-least-once.</p>
-			<p><span class="font-medium text-foreground">Auth handling:</span> optionally validate a bearer token if you configure one in Watcher.</p>
-			<p><span class="font-medium text-foreground">Operational visibility:</span> log or store <code>event_type</code>, <code>event_id</code>, and <code>delivery_id</code> so you can trace retries and incidents.</p>
+			<p><span class="font-medium text-foreground">Auth handling:</span> verify the Standard Webhooks HMAC signature using the shared <code>whsec_...</code> secret you configured in Watcher.</p>
+			<p><span class="font-medium text-foreground">Operational visibility:</span> log or store <code>type</code>, <code>event_id</code>, <code>webhook-id</code>, and <code>X-Watcher-Delivery-ID</code> so you can trace retries and incidents.</p>
 		</Card.Content>
 	</Card.Root>
 
@@ -127,22 +142,40 @@
 		</Card.Header>
 		<Card.Content class="space-y-4 text-sm text-muted-foreground">
 			<div class="rounded-md border border-border/70 bg-muted/20 p-4">
-				<p class="font-medium text-foreground">Custom headers</p>
+				<p class="font-medium text-foreground">Standard headers</p>
 				<ul class="mt-2 space-y-1">
 					<li><code>Content-Type: application/json</code></li>
+					<li><code>webhook-id</code>: stable event identifier used for idempotency across retries</li>
+					<li><code>webhook-timestamp</code>: Unix timestamp in seconds for the delivery attempt</li>
+					<li><code>webhook-signature</code>: Standard Webhooks HMAC-SHA256 signature for the exact request body</li>
 					<li><code>X-Watcher-Event</code>: event type name such as <code>watcher.deployment_failed</code></li>
 					<li><code>X-Watcher-Delivery-ID</code>: delivery attempt identifier for this HTTP request</li>
 				</ul>
 			</div>
 			<div class="rounded-md border border-border/70 bg-muted/20 p-4">
-				<p class="font-medium text-foreground">Authorization behavior</p>
+				<p class="font-medium text-foreground">Signature behavior</p>
 				<ul class="mt-2 space-y-1">
-					<li>If no bearer token is configured, Watcher sends no <code>Authorization</code> header.</li>
-					<li>If a token is configured, Watcher sends <code>Authorization: Bearer &lt;token&gt;</code>.</li>
-					<li>The token can come from the global default or a watcher-specific override.</li>
-					<li>If your endpoint requires auth, configure the same token on the watcher or in global settings.</li>
+					<li>Watcher signs the literal request payload bytes using Standard Webhooks HMAC-SHA256.</li>
+					<li>The signing secret can come from the global default or a watcher-specific override.</li>
+					<li>Use the same <code>whsec_...</code> secret on your receiver when verifying the request.</li>
+					<li>The signature covers <code>webhook-id</code>, <code>webhook-timestamp</code>, and the raw request body.</li>
 				</ul>
 			</div>
+		</Card.Content>
+	</Card.Root>
+
+	<Card.Root class="border-border bg-card">
+		<Card.Header>
+			<Card.Title>Signing Secret Format</Card.Title>
+			<Card.Description>
+				What the `whsec_...` value looks like, where to get it, and how both sides should use it.
+			</Card.Description>
+		</Card.Header>
+		<Card.Content class="space-y-3 text-sm text-muted-foreground">
+			<p><span class="font-medium text-foreground">Format:</span> the secret should start with <code>whsec_</code> and the remainder should be a base64-encoded random value.</p>
+			<p><span class="font-medium text-foreground">Generate it:</span> create a new unpredictable secret, store it in your receiver first, then copy the exact same value into Watcher.</p>
+			<p><span class="font-medium text-foreground">Watcher side:</span> Watcher decodes the secret, signs the raw request body, and sends <code>webhook-id</code>, <code>webhook-timestamp</code>, and <code>webhook-signature</code>.</p>
+			<p><span class="font-medium text-foreground">Receiver side:</span> verify the raw body with the exact same secret before trusting the payload. If the secret or body differs, verification fails with <code>invalid signature</code>.</p>
 		</Card.Content>
 	</Card.Root>
 
@@ -221,7 +254,7 @@
 			<div>
 				<p class="font-medium text-foreground">1. Build your receiver endpoint</p>
 				<p class="mt-1">
-					Create an HTTP <code>POST</code> endpoint that accepts JSON, optional bearer authentication, and returns a <code>2xx</code> response when the payload is accepted.
+					Create an HTTP <code>POST</code> endpoint that accepts JSON, verifies the Standard Webhooks signature, and returns a <code>2xx</code> response when the payload is accepted.
 				</p>
 			</div>
 			<div>
@@ -233,13 +266,13 @@
 			<div>
 				<p class="font-medium text-foreground">3. Configure the watcher</p>
 				<p class="mt-1">
-					Open the watcher’s webhook settings, enable delivery, set the URL or inherit the global default, decide whether to use a watcher-specific bearer token, and choose which business events should be emitted.
+					Open the watcher’s webhook settings, enable delivery, set the URL or inherit the global default, decide whether to use a watcher-specific signing secret, and choose which business events should be emitted.
 				</p>
 			</div>
 			<div>
 				<p class="font-medium text-foreground">4. Know the headers and payload contract</p>
 				<p class="mt-1">
-					Watcher sends <code>Content-Type: application/json</code>, <code>X-Watcher-Event</code>, <code>X-Watcher-Delivery-ID</code>, and optionally <code>Authorization: Bearer ...</code>. Payload schemas are documented below, in the repo docs, and in the OpenAPI file.
+					Watcher sends <code>Content-Type: application/json</code>, the Standard Webhooks signature headers, and Watcher’s extra observability headers. Payload schemas are documented below, in the repo docs, and in the OpenAPI file.
 				</p>
 			</div>
 			<div>
@@ -260,6 +293,54 @@
 					If the endpoint keeps failing, Watcher can pause delivery. Resume only continues future events. Resume with replay moves suppressed events back to pending in normal FIFO order.
 				</p>
 			</div>
+		</Card.Content>
+	</Card.Root>
+
+	<Card.Root class="border-border bg-card">
+		<Card.Header>
+			<Card.Title>Secret Setup And Rotation</Card.Title>
+			<Card.Description>
+				How to manage the <code>whsec_...</code> signing secret safely from first setup through rotation.
+			</Card.Description>
+		</Card.Header>
+		<Card.Content class="space-y-3 text-sm text-muted-foreground">
+			<p><span class="font-medium text-foreground">Generate once, store twice:</span> create the secret in your receiver secret store first, then copy the same value into Watcher.</p>
+			<p><span class="font-medium text-foreground">Scope secrets narrowly:</span> prefer one secret per environment or endpoint instead of one shared secret everywhere.</p>
+			<p><span class="font-medium text-foreground">Keep secrets out of logs:</span> Watcher only exposes masked secret presence. Your receiver should do the same.</p>
+			<p><span class="font-medium text-foreground">Rotate carefully:</span> add the new secret to the receiver, update Watcher, send <code>watcher.webhook_test</code>, verify success, then remove the old secret.</p>
+			<p><span class="font-medium text-foreground">Current limitation:</span> Watcher currently signs with one active HMAC secret at a time and does not yet emit multiple signatures for zero-downtime rotation.</p>
+		</Card.Content>
+	</Card.Root>
+
+	<Card.Root class="border-border bg-card">
+		<Card.Header>
+			<Card.Title>Migration Notes</Card.Title>
+			<Card.Description>
+				What existing Watcher webhook consumers need to change.
+			</Card.Description>
+		</Card.Header>
+		<Card.Content class="space-y-3 text-sm text-muted-foreground">
+			<p><span class="font-medium text-foreground">Replace bearer auth assumptions:</span> Watcher no longer expects receivers to verify <code>Authorization: Bearer ...</code> for outbound webhooks.</p>
+			<p><span class="font-medium text-foreground">Add standard verification:</span> verify <code>webhook-id</code>, <code>webhook-timestamp</code>, and <code>webhook-signature</code> with the shared <code>whsec_...</code> secret.</p>
+			<p><span class="font-medium text-foreground">Prefer standard fields for new code:</span> use <code>type</code>, <code>timestamp</code>, and <code>data</code> first.</p>
+			<p><span class="font-medium text-foreground">Compatibility remains:</span> Watcher still includes the legacy convenience fields like <code>event_id</code>, <code>event_type</code>, and <code>occurred_at</code> during the transition.</p>
+		</Card.Content>
+	</Card.Root>
+
+	<Card.Root class="border-border bg-card">
+		<Card.Header>
+			<Card.Title>Production Checklist</Card.Title>
+			<Card.Description>
+				Minimum standards before you consider the integration shipped.
+			</Card.Description>
+		</Card.Header>
+		<Card.Content class="space-y-2 text-sm text-muted-foreground">
+			<p>1. Verify signatures against the raw request body, not re-serialized JSON.</p>
+			<p>2. Deduplicate on <code>event_id</code>, not <code>X-Watcher-Delivery-ID</code>.</p>
+			<p>3. Return <code>2xx</code> only after your receiver has durably accepted the event.</p>
+			<p>4. Log <code>event_id</code>, <code>type</code>, and <code>X-Watcher-Delivery-ID</code> for incident tracing.</p>
+			<p>5. Rehearse pause, resume, and replay handling before relying on the integration operationally.</p>
+			<p>6. Rehearse secret rotation in a non-production environment.</p>
 		</Card.Content>
 	</Card.Root>
 
@@ -386,7 +467,7 @@
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm text-muted-foreground">
-			<p><span class="font-medium text-foreground">401 or 403:</span> bearer token mismatch or wrong endpoint authorization expectations.</p>
+			<p><span class="font-medium text-foreground">401 or 403:</span> signing secret mismatch, stale timestamp rejection, or wrong endpoint authorization expectations.</p>
 			<p><span class="font-medium text-foreground">400:</span> your receiver rejected the payload shape. Check the repo docs and the OpenAPI schema.</p>
 			<p><span class="font-medium text-foreground">429 or 5xx:</span> Watcher retries automatically using the configured retry schedule.</p>
 			<p><span class="font-medium text-foreground">Paused delivery:</span> the watcher hit its consecutive failure threshold. Resume from the watcher webhook controls after fixing the endpoint.</p>

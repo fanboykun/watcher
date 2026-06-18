@@ -16,6 +16,7 @@ import (
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
+	"github.com/fanboykun/watcher/internal/webhook"
 	"github.com/gin-gonic/gin"
 )
 
@@ -169,27 +170,27 @@ func (h *Handler) SelfConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, SelfConfigResponse{
-		Environment:                     h.appCfg.Environment,
-		GitHubDeployEnabled:             h.appCfg.GitHubDeployEnabled,
-		LogDir:                          h.appCfg.LogDir,
-		NssmPath:                        h.appCfg.NssmPath,
-		DBPath:                          h.appCfg.DBPath,
-		APIPort:                         h.appCfg.APIPort,
-		APIBaseURL:                      h.appCfg.APIBaseURL,
-		WatcherRepoURL:                  h.appCfg.WatcherRepoURL,
-		WatcherServiceName:              h.selfServiceName(),
-		HasGitHubToken:                  strings.TrimSpace(h.appCfg.GitHubToken) != "",
-		GitHubTokenMasked:               maskToken(h.appCfg.GitHubToken),
-		WebhookDefaultURL:               h.appCfg.WebhookDefaultURL,
-		HasWebhookDefaultBearerToken:    strings.TrimSpace(h.appCfg.WebhookDefaultBearerToken) != "",
-		WebhookDefaultBearerTokenMasked: maskToken(h.appCfg.WebhookDefaultBearerToken),
-		WebhookTimeoutSec:               h.appCfg.WebhookTimeoutSec,
-		WebhookRetryScheduleSec:         h.appCfg.WebhookRetryScheduleSec,
-		WebhookAutoPauseEnabled:         h.appCfg.WebhookAutoPauseEnabled,
-		WebhookAutoPauseAfterFailures:   h.appCfg.WebhookAutoPauseAfter,
-		WebhookEventRetentionDays:       h.appCfg.WebhookEventRetentionDays,
-		WebhookDeliveryRetentionDays:    h.appCfg.WebhookDeliveryRetentionDays,
-		EnvPath:                         h.envPath,
+		Environment:                       h.appCfg.Environment,
+		GitHubDeployEnabled:               h.appCfg.GitHubDeployEnabled,
+		LogDir:                            h.appCfg.LogDir,
+		NssmPath:                          h.appCfg.NssmPath,
+		DBPath:                            h.appCfg.DBPath,
+		APIPort:                           h.appCfg.APIPort,
+		APIBaseURL:                        h.appCfg.APIBaseURL,
+		WatcherRepoURL:                    h.appCfg.WatcherRepoURL,
+		WatcherServiceName:                h.selfServiceName(),
+		HasGitHubToken:                    strings.TrimSpace(h.appCfg.GitHubToken) != "",
+		GitHubTokenMasked:                 maskToken(h.appCfg.GitHubToken),
+		WebhookDefaultURL:                 h.appCfg.WebhookDefaultURL,
+		HasWebhookDefaultSigningSecret:    strings.TrimSpace(h.appCfg.WebhookDefaultSigningSecret) != "",
+		WebhookDefaultSigningSecretMasked: maskToken(h.appCfg.WebhookDefaultSigningSecret),
+		WebhookTimeoutSec:                 h.appCfg.WebhookTimeoutSec,
+		WebhookRetryScheduleSec:           h.appCfg.WebhookRetryScheduleSec,
+		WebhookAutoPauseEnabled:           h.appCfg.WebhookAutoPauseEnabled,
+		WebhookAutoPauseAfterFailures:     h.appCfg.WebhookAutoPauseAfter,
+		WebhookEventRetentionDays:         h.appCfg.WebhookEventRetentionDays,
+		WebhookDeliveryRetentionDays:      h.appCfg.WebhookDeliveryRetentionDays,
+		EnvPath:                           h.envPath,
 	})
 }
 
@@ -245,8 +246,13 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 	if req.WebhookDefaultURL != nil {
 		next.WebhookDefaultURL = strings.TrimSpace(*req.WebhookDefaultURL)
 	}
-	if req.WebhookDefaultBearerToken != nil {
-		next.WebhookDefaultBearerToken = strings.TrimSpace(*req.WebhookDefaultBearerToken)
+	if req.WebhookDefaultSigningSecret != nil {
+		secret := strings.TrimSpace(*req.WebhookDefaultSigningSecret)
+		if err := validateOptionalWebhookSigningSecret(secret); err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return
+		}
+		next.WebhookDefaultSigningSecret = secret
 	}
 	if req.WebhookTimeoutSec != nil {
 		next.WebhookTimeoutSec = *req.WebhookTimeoutSec
@@ -266,13 +272,17 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 	if req.WebhookDeliveryRetentionDays != nil {
 		next.WebhookDeliveryRetentionDays = *req.WebhookDeliveryRetentionDays
 	}
+	if err := h.validateWebhookDefaultsDependency(&next); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
 
 	updates := map[string]string{
 		"ENVIRONMENT":                       next.Environment,
 		"GITHUB_TOKEN":                      next.GitHubToken,
 		"GITHUB_DEPLOY_ENABLED":             strconv.FormatBool(next.GitHubDeployEnabled),
 		"WEBHOOK_DEFAULT_URL":               next.WebhookDefaultURL,
-		"WEBHOOK_DEFAULT_BEARER_TOKEN":      next.WebhookDefaultBearerToken,
+		"WEBHOOK_DEFAULT_SIGNING_SECRET":    next.WebhookDefaultSigningSecret,
 		"WEBHOOK_TIMEOUT_SEC":               strconv.Itoa(next.WebhookTimeoutSec),
 		"WEBHOOK_RETRY_SCHEDULE_SEC":        next.WebhookRetryScheduleSec,
 		"WEBHOOK_AUTO_PAUSE_ENABLED":        strconv.FormatBool(next.WebhookAutoPauseEnabled),
@@ -309,27 +319,27 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 			"API_PORT and DB_PATH changes require manual service restart to fully take effect",
 		},
 		"config": SelfConfigResponse{
-			Environment:                     next.Environment,
-			GitHubDeployEnabled:             next.GitHubDeployEnabled,
-			LogDir:                          next.LogDir,
-			NssmPath:                        next.NssmPath,
-			DBPath:                          next.DBPath,
-			APIPort:                         next.APIPort,
-			APIBaseURL:                      next.APIBaseURL,
-			WatcherRepoURL:                  next.WatcherRepoURL,
-			WatcherServiceName:              h.selfServiceName(),
-			HasGitHubToken:                  strings.TrimSpace(next.GitHubToken) != "",
-			GitHubTokenMasked:               maskToken(next.GitHubToken),
-			WebhookDefaultURL:               next.WebhookDefaultURL,
-			HasWebhookDefaultBearerToken:    strings.TrimSpace(next.WebhookDefaultBearerToken) != "",
-			WebhookDefaultBearerTokenMasked: maskToken(next.WebhookDefaultBearerToken),
-			WebhookTimeoutSec:               next.WebhookTimeoutSec,
-			WebhookRetryScheduleSec:         next.WebhookRetryScheduleSec,
-			WebhookAutoPauseEnabled:         next.WebhookAutoPauseEnabled,
-			WebhookAutoPauseAfterFailures:   next.WebhookAutoPauseAfter,
-			WebhookEventRetentionDays:       next.WebhookEventRetentionDays,
-			WebhookDeliveryRetentionDays:    next.WebhookDeliveryRetentionDays,
-			EnvPath:                         h.envPath,
+			Environment:                       next.Environment,
+			GitHubDeployEnabled:               next.GitHubDeployEnabled,
+			LogDir:                            next.LogDir,
+			NssmPath:                          next.NssmPath,
+			DBPath:                            next.DBPath,
+			APIPort:                           next.APIPort,
+			APIBaseURL:                        next.APIBaseURL,
+			WatcherRepoURL:                    next.WatcherRepoURL,
+			WatcherServiceName:                h.selfServiceName(),
+			HasGitHubToken:                    strings.TrimSpace(next.GitHubToken) != "",
+			GitHubTokenMasked:                 maskToken(next.GitHubToken),
+			WebhookDefaultURL:                 next.WebhookDefaultURL,
+			HasWebhookDefaultSigningSecret:    strings.TrimSpace(next.WebhookDefaultSigningSecret) != "",
+			WebhookDefaultSigningSecretMasked: maskToken(next.WebhookDefaultSigningSecret),
+			WebhookTimeoutSec:                 next.WebhookTimeoutSec,
+			WebhookRetryScheduleSec:           next.WebhookRetryScheduleSec,
+			WebhookAutoPauseEnabled:           next.WebhookAutoPauseEnabled,
+			WebhookAutoPauseAfterFailures:     next.WebhookAutoPauseAfter,
+			WebhookEventRetentionDays:         next.WebhookEventRetentionDays,
+			WebhookDeliveryRetentionDays:      next.WebhookDeliveryRetentionDays,
+			EnvPath:                           h.envPath,
 		},
 	})
 }
@@ -455,6 +465,49 @@ func validatePort(port string) error {
 	if err != nil || n < 1 || n > 65535 {
 		return fmt.Errorf("api_port must be a valid number between 1 and 65535")
 	}
+	return nil
+}
+
+func validateOptionalWebhookSigningSecret(secret string) error {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return nil
+	}
+	if _, err := webhook.NewStandardWebhook(secret); err != nil {
+		return fmt.Errorf("webhook signing secret must start with whsec_ and contain a valid base64 secret")
+	}
+	return nil
+}
+
+func (h *Handler) validateWebhookDefaultsDependency(next *config.AppConfig) error {
+	if h == nil || h.db == nil || next == nil {
+		return nil
+	}
+
+	if strings.TrimSpace(next.WebhookDefaultURL) == "" {
+		var count int64
+		if err := h.db.Model(&database.Watcher{}).
+			Where("webhook_enabled = ? AND (webhook_url IS NULL OR TRIM(webhook_url) = '')", true).
+			Count(&count).Error; err != nil {
+			return fmt.Errorf("count watchers using default webhook url: %w", err)
+		}
+		if count > 0 {
+			return fmt.Errorf("cannot clear webhook_default_url while %d enabled watcher(s) still inherit it", count)
+		}
+	}
+
+	if strings.TrimSpace(next.WebhookDefaultSigningSecret) == "" {
+		var count int64
+		if err := h.db.Model(&database.Watcher{}).
+			Where("webhook_enabled = ? AND (webhook_signing_secret IS NULL OR TRIM(webhook_signing_secret) = '')", true).
+			Count(&count).Error; err != nil {
+			return fmt.Errorf("count watchers using default webhook signing secret: %w", err)
+		}
+		if count > 0 {
+			return fmt.Errorf("cannot clear webhook_default_signing_secret while %d enabled watcher(s) still inherit it", count)
+		}
+	}
+
 	return nil
 }
 

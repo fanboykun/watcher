@@ -66,8 +66,8 @@
 
 	let webhookEnabled = $state(false);
 	let webhookURL = $state('');
-	let webhookBearerToken = $state('');
-	let useCustomWebhookBearerToken = $state(false);
+	let webhookSigningSecret = $state('');
+	let useCustomWebhookSigningSecret = $state(false);
 	let webhookSelections = $state<WebhookSelectionState>({
 		notify_version_found: false,
 		notify_deployment_succeeded: false,
@@ -363,7 +363,7 @@
 			hc_url: healthCheckURL.trim(),
 			webhook_enabled: webhookEnabled,
 			webhook_url: webhookURL.trim(),
-			webhook_bearer_token: useCustomWebhookBearerToken ? webhookBearerToken.trim() : '',
+			webhook_signing_secret: useCustomWebhookSigningSecret ? webhookSigningSecret.trim() : '',
 			notify_version_found: webhookSelections.notify_version_found,
 			notify_deployment_succeeded: webhookSelections.notify_deployment_succeeded,
 			notify_deployment_failed: webhookSelections.notify_deployment_failed,
@@ -774,7 +774,7 @@
 			{:else}
 				<div class="space-y-4">
 					<div class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-						Webhook delivery is optional. This step only controls watcher-specific endpoint, token override, and event subscriptions.
+						Webhook delivery is optional. This step only controls watcher-specific endpoint, signing-secret override, and event subscriptions.
 					</div>
 
 					<div class="rounded-lg border border-border/70 p-4">
@@ -789,18 +789,19 @@
 								<p class="text-xs text-muted-foreground">Leave empty to inherit the global default URL.</p>
 							</div>
 							<div class="space-y-2">
-								<Label for="webhookBearerToken">Webhook Bearer Token Override</Label>
+								<Label for="webhookSigningSecret">Webhook Signing Secret Override</Label>
 								<Input
-									id="webhookBearerToken"
+									id="webhookSigningSecret"
 									type="password"
-									bind:value={webhookBearerToken}
-									disabled={!useCustomWebhookBearerToken}
-									placeholder="Bearer token override"
+									bind:value={webhookSigningSecret}
+									disabled={!useCustomWebhookSigningSecret}
+									placeholder="whsec_..."
 								/>
 								<div class="mt-2 flex items-center gap-2">
-									<Checkbox id="useCustomWebhookBearerToken" bind:checked={useCustomWebhookBearerToken} />
-									<Label for="useCustomWebhookBearerToken">Use watcher-specific webhook bearer token</Label>
+									<Checkbox id="useCustomWebhookSigningSecret" bind:checked={useCustomWebhookSigningSecret} />
+									<Label for="useCustomWebhookSigningSecret">Use watcher-specific webhook signing secret</Label>
 								</div>
+								<p class="text-xs text-muted-foreground">Uses the Standard Webhooks <code>whsec_...</code> secret format.</p>
 							</div>
 						</div>
 					</div>

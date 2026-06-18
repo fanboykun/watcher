@@ -13,8 +13,8 @@ func ResolveConfig(cfg *config.AppConfig, watcher *database.Watcher) ResolvedCon
 	resolved := ResolvedConfig{
 		Enabled:               watcher != nil && watcher.WebhookEnabled,
 		URL:                   strings.TrimSpace(cfg.WebhookDefaultURL),
-		BearerToken:           strings.TrimSpace(cfg.WebhookDefaultBearerToken),
-		TokenSource:           "global_default",
+		SigningSecret:         strings.TrimSpace(cfg.WebhookDefaultSigningSecret),
+		SecretSource:          "global_default",
 		Timeout:               time.Duration(max(cfg.WebhookTimeoutSec, 1)) * time.Second,
 		RetrySchedule:         parseRetrySchedule(cfg.WebhookRetryScheduleSec),
 		AutoPauseEnabled:      cfg.WebhookAutoPauseEnabled,
@@ -28,9 +28,9 @@ func ResolveConfig(cfg *config.AppConfig, watcher *database.Watcher) ResolvedCon
 	if url := strings.TrimSpace(watcher.WebhookURL); url != "" {
 		resolved.URL = url
 	}
-	if token := strings.TrimSpace(watcher.WebhookBearerToken); token != "" {
-		resolved.BearerToken = token
-		resolved.TokenSource = "watcher_override"
+	if secret := strings.TrimSpace(watcher.WebhookSigningSecret); secret != "" {
+		resolved.SigningSecret = secret
+		resolved.SecretSource = "watcher_override"
 	}
 	if watcher.WebhookAutoPauseEnabledOverride != nil {
 		resolved.AutoPauseEnabled = *watcher.WebhookAutoPauseEnabledOverride

@@ -193,8 +193,8 @@ export interface Watcher {
 	last_error: string;
 	webhook_enabled: boolean;
 	webhook_url: string;
-	has_webhook_bearer_token: boolean;
-	webhook_bearer_token_masked: string;
+	has_webhook_signing_secret: boolean;
+	webhook_signing_secret_masked: string;
 	webhook_auto_pause_enabled_override?: boolean | null;
 	webhook_auto_pause_after_failures_override?: number | null;
 	webhook_paused_at: string | null;
@@ -230,7 +230,7 @@ export interface WatcherWritePayload {
 	max_kept_versions?: number;
 	webhook_enabled?: boolean;
 	webhook_url?: string;
-	webhook_bearer_token?: string;
+	webhook_signing_secret?: string;
 	webhook_auto_pause_enabled_override?: boolean | null;
 	webhook_auto_pause_after_failures_override?: number | null;
 	notify_version_found?: boolean;
@@ -367,7 +367,9 @@ export interface WebhookDelivery {
 	error: string;
 	resolved_url: string;
 	auth_type: string;
-	token_source: string;
+	secret_source: string;
+	webhook_timestamp: number;
+	webhook_signature: string;
 	next_retry_at: string | null;
 	last_attempt_at: string | null;
 	completed_at: string | null;
@@ -392,9 +394,12 @@ export interface WebhookDeliveryDetails {
 	request: {
 		url: string;
 		auth_type: string;
-		token_source: string;
+		secret_source: string;
 		headers: {
 			content_type: string;
+			webhook_id: string;
+			webhook_timestamp: number;
+			webhook_signature: string;
 			x_watcher_event: string;
 			x_watcher_delivery_id: string;
 		};
@@ -465,8 +470,8 @@ export interface SelfConfigResponse {
 	has_github_token: boolean;
 	github_token_masked: string;
 	webhook_default_url: string;
-	has_webhook_default_bearer_token: boolean;
-	webhook_default_bearer_token_masked: string;
+	has_webhook_default_signing_secret: boolean;
+	webhook_default_signing_secret_masked: string;
 	webhook_timeout_sec: number;
 	webhook_retry_schedule_sec: string;
 	webhook_auto_pause_enabled: boolean;
@@ -488,7 +493,7 @@ export interface UpdateSelfConfigRequest {
 	watcher_repo_url?: string;
 	watcher_service_name?: string;
 	webhook_default_url?: string;
-	webhook_default_bearer_token?: string;
+	webhook_default_signing_secret?: string;
 	webhook_timeout_sec?: number;
 	webhook_retry_schedule_sec?: string;
 	webhook_auto_pause_enabled?: boolean;

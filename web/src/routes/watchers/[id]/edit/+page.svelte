@@ -55,7 +55,7 @@
 	let editUseGlobalToken = $state(false);
 	let editWebhookEnabled = $state(false);
 	let editWebhookURL = $state('');
-	let editWebhookBearerToken = $state('');
+	let editWebhookSigningSecret = $state('');
 	let editUseGlobalWebhookToken = $state(false);
 	let webhookSelections = $state<WebhookSelectionState>({
 		notify_version_found: false,
@@ -93,8 +93,8 @@
 		editUseGlobalToken = !watcher.has_github_token;
 		editWebhookEnabled = watcher.webhook_enabled;
 		editWebhookURL = watcher.webhook_url || '';
-		editWebhookBearerToken = '';
-		editUseGlobalWebhookToken = !watcher.has_webhook_bearer_token;
+		editWebhookSigningSecret = '';
+		editUseGlobalWebhookToken = !watcher.has_webhook_signing_secret;
 		webhookSelections = {
 			notify_version_found: watcher.notify_version_found,
 			notify_deployment_succeeded: watcher.notify_deployment_succeeded,
@@ -118,11 +118,11 @@
 				github_token: editUseGlobalToken ? '' : editGitHubToken.trim() !== '' ? editGitHubToken : undefined,
 				webhook_enabled: editWebhookEnabled,
 				webhook_url: editWebhookURL,
-				webhook_bearer_token:
+				webhook_signing_secret:
 					editUseGlobalWebhookToken
 						? ''
-						: editWebhookBearerToken.trim() !== ''
-							? editWebhookBearerToken
+						: editWebhookSigningSecret.trim() !== ''
+							? editWebhookSigningSecret
 							: undefined,
 				notify_version_found: webhookSelections.notify_version_found,
 				notify_deployment_succeeded: webhookSelections.notify_deployment_succeeded,
@@ -338,7 +338,7 @@
 						<div>
 							<Card.Title>Webhook Settings</Card.Title>
 							<Card.Description>
-								Configure this watcher's endpoint, token override, and event subscriptions.
+								Configure this watcher's endpoint, signing-secret override, and event subscriptions.
 							</Card.Description>
 							<div class="mt-3 flex flex-wrap gap-2">
 								<a href={resolve('/docs/webhooks')}>
@@ -388,23 +388,23 @@
 							</p>
 						</div>
 						<div class="space-y-2">
-							<Label for="editWebhookBearerToken">Webhook Bearer Token Override</Label>
+							<Label for="editWebhookSigningSecret">Webhook Signing Secret Override</Label>
 							<Input
-								id="editWebhookBearerToken"
+								id="editWebhookSigningSecret"
 								type="password"
-								bind:value={editWebhookBearerToken}
-								placeholder="Paste new token to replace override"
+								bind:value={editWebhookSigningSecret}
+								placeholder="Paste new whsec_... secret to replace override"
 								disabled={editUseGlobalWebhookToken}
 							/>
 							<div class="mt-2 flex items-center gap-2">
 								<Checkbox id="editUseGlobalWebhookToken" bind:checked={editUseGlobalWebhookToken} />
-								<Label for="editUseGlobalWebhookToken">Use global default bearer token</Label>
+								<Label for="editUseGlobalWebhookToken">Use global default signing secret</Label>
 							</div>
 							<p class="mt-1 text-xs text-muted-foreground">
 								Current:
-								{watcher.has_webhook_bearer_token
-									? watcher.webhook_bearer_token_masked || 'set'
-									: 'using global webhook token'}
+								{watcher.has_webhook_signing_secret
+									? watcher.webhook_signing_secret_masked || 'set'
+									: 'using global webhook signing secret'}
 							</p>
 						</div>
 					</div>

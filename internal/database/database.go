@@ -101,7 +101,7 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 		{model: &Watcher{}, column: "github_token", field: "GitHubToken"},
 		{model: &Watcher{}, column: "webhook_enabled", field: "WebhookEnabled"},
 		{model: &Watcher{}, column: "webhook_url", field: "WebhookURL"},
-		{model: &Watcher{}, column: "webhook_bearer_token", field: "WebhookBearerToken"},
+		{model: &Watcher{}, column: "webhook_signing_secret", field: "WebhookSigningSecret"},
 		{model: &Watcher{}, column: "webhook_pause_reason", field: "WebhookPauseReason"},
 		{model: &Watcher{}, column: "webhook_failure_streak", field: "WebhookFailureStreak"},
 		{model: &Watcher{}, column: "notify_version_found", field: "NotifyVersionFound"},
@@ -127,6 +127,9 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 		{model: &HealthEvent{}, column: "previous_status", field: "PreviousStatus"},
 		{model: &HealthEvent{}, column: "source", field: "Source"},
 		{model: &WebhookEvent{}, column: "dedupe_key", field: "DedupeKey"},
+		{model: &WebhookDelivery{}, column: "secret_source", field: "SecretSource"},
+		{model: &WebhookDelivery{}, column: "webhook_timestamp", field: "WebhookTimestamp"},
+		{model: &WebhookDelivery{}, column: "webhook_signature", field: "WebhookSignature"},
 	}
 
 	for _, spec := range columns {

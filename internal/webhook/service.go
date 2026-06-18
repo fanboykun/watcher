@@ -34,41 +34,23 @@ func (s *Service) Nudge() {
 
 func (s *Service) EmitTestEvent(watcher *database.Watcher) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		payload := map[string]any{
-			"schema_version": SchemaVersionV1,
-			"event_id":       uuid.NewString(),
-			"event_type":     EventWebhookTest,
-			"occurred_at":    time.Now().UTC().Format(time.RFC3339),
-			"watcher": map[string]any{
-				"id":   watcher.ID,
-				"name": watcher.Name,
-			},
+		payload := buildEventPayload(EventWebhookTest, watcher, fmt.Sprintf("Webhook test for watcher %s", watcher.Name), map[string]any{
 			"triggered_by": "manual",
-			"summary":      fmt.Sprintf("Webhook test for watcher %s", watcher.Name),
-		}
+		})
 		_, err := s.insertEvent(tx, watcher, EventWebhookTest, "", payload, "Webhook test event")
 		return err
 	})
 }
 
 func (s *Service) EmitVersionFoundTx(tx *gorm.DB, watcher *database.Watcher, discoveredVersion, currentVersion string, willDeploy bool, blockReason string) error {
-	_, err := s.insertEvent(tx, watcher, EventVersionFound, fmt.Sprintf("version_found:%d:%s", watcher.ID, discoveredVersion), map[string]any{
-		"schema_version": SchemaVersionV1,
-		"event_id":       uuid.NewString(),
-		"event_type":     EventVersionFound,
-		"occurred_at":    time.Now().UTC().Format(time.RFC3339),
-		"watcher": map[string]any{
-			"id":   watcher.ID,
-			"name": watcher.Name,
-		},
+	_, err := s.insertEvent(tx, watcher, EventVersionFound, fmt.Sprintf("version_found:%d:%s", watcher.ID, discoveredVersion), buildEventPayload(EventVersionFound, watcher, fmt.Sprintf("Watcher %s found version %s", watcher.Name, discoveredVersion), map[string]any{
 		"version": map[string]any{
 			"discovered_version": discoveredVersion,
 			"current_version":    currentVersion,
 			"will_deploy":        willDeploy,
 			"block_reason":       blockReason,
 		},
-		"summary": fmt.Sprintf("Watcher %s found version %s", watcher.Name, discoveredVersion),
-	}, fmt.Sprintf("Watcher %s found version %s", watcher.Name, discoveredVersion))
+	}), fmt.Sprintf("Watcher %s found version %s", watcher.Name, discoveredVersion))
 	return err
 }
 
@@ -96,15 +78,7 @@ func (s *Service) EmitAttemptEventTx(tx *gorm.DB, watcher *database.Watcher, att
 	}
 
 	summary := buildAttemptSummary(watcher, attempt, eventType)
-	payload := map[string]any{
-		"schema_version": SchemaVersionV1,
-		"event_id":       uuid.NewString(),
-		"event_type":     eventType,
-		"occurred_at":    time.Now().UTC().Format(time.RFC3339),
-		"watcher": map[string]any{
-			"id":   watcher.ID,
-			"name": watcher.Name,
-		},
+	payload := buildEventPayload(eventType, watcher, summary, map[string]any{
 		"attempt": map[string]any{
 			"id":                    attempt.ID,
 			"kind":                  attempt.Kind,
@@ -119,8 +93,7 @@ func (s *Service) EmitAttemptEventTx(tx *gorm.DB, watcher *database.Watcher, att
 			"parent_attempt_id":     attempt.ParentAttemptID,
 			"root_attempt_id":       attempt.RootAttemptID,
 		},
-		"summary": summary,
-	}
+	})
 	_, err := s.insertEvent(tx, watcher, eventType, "", payload, summary)
 	return err
 }
@@ -130,15 +103,7 @@ func (s *Service) EmitHealthChangedTx(tx *gorm.DB, watcher *database.Watcher, sv
 		return nil
 	}
 	summary := fmt.Sprintf("Service %s health changed from %s to %s", svc.WindowsServiceName, valueOrUnknown(event.PreviousStatus), event.Status)
-	payload := map[string]any{
-		"schema_version": SchemaVersionV1,
-		"event_id":       uuid.NewString(),
-		"event_type":     EventServiceHealthChanged,
-		"occurred_at":    time.Now().UTC().Format(time.RFC3339),
-		"watcher": map[string]any{
-			"id":   watcher.ID,
-			"name": watcher.Name,
-		},
+	payload := buildEventPayload(EventServiceHealthChanged, watcher, summary, map[string]any{
 		"service": map[string]any{
 			"id":               svc.ID,
 			"name":             svc.WindowsServiceName,
@@ -153,8 +118,7 @@ func (s *Service) EmitHealthChangedTx(tx *gorm.DB, watcher *database.Watcher, sv
 			"checked_at":      event.CheckedAt,
 			"source":          event.Source,
 		},
-		"summary": summary,
-	}
+	})
 	_, err := s.insertEvent(tx, watcher, EventServiceHealthChanged, "", payload, summary)
 	return err
 }
@@ -163,15 +127,7 @@ func (s *Service) EmitDeliveryExhausted(tx *gorm.DB, watcher *database.Watcher, 
 	if ev == nil || delivery == nil || ev.EventType == EventDeliveryExhausted {
 		return nil
 	}
-	payload := map[string]any{
-		"schema_version": SchemaVersionV1,
-		"event_id":       uuid.NewString(),
-		"event_type":     EventDeliveryExhausted,
-		"occurred_at":    time.Now().UTC().Format(time.RFC3339),
-		"watcher": map[string]any{
-			"id":   watcher.ID,
-			"name": watcher.Name,
-		},
+	payload := buildEventPayload(EventDeliveryExhausted, watcher, fmt.Sprintf("Webhook delivery exhausted for %s", ev.EventType), map[string]any{
 		"failed_delivery": map[string]any{
 			"event_id":             ev.EventID,
 			"event_type":           ev.EventType,
@@ -181,8 +137,7 @@ func (s *Service) EmitDeliveryExhausted(tx *gorm.DB, watcher *database.Watcher, 
 			"error":                delivery.Error,
 			"summary":              ev.Summary,
 		},
-		"summary": fmt.Sprintf("Webhook delivery exhausted for %s", ev.EventType),
-	}
+	})
 	_, err := s.insertEvent(tx, watcher, EventDeliveryExhausted, fmt.Sprintf("delivery_exhausted:%s", ev.EventID), payload, fmt.Sprintf("Webhook delivery exhausted for %s", ev.EventType))
 	return err
 }
@@ -215,7 +170,7 @@ func (s *Service) insertEvent(tx *gorm.DB, watcher *database.Watcher, eventType,
 		suppressedAt = &now
 		status = EventStatusSuppressed
 	}
-	if !resolved.Enabled || strings.TrimSpace(resolved.URL) == "" {
+	if !resolved.Enabled || strings.TrimSpace(resolved.URL) == "" || strings.TrimSpace(resolved.SigningSecret) == "" {
 		return nil, nil
 	}
 
@@ -238,6 +193,40 @@ func (s *Service) insertEvent(tx *gorm.DB, watcher *database.Watcher, eventType,
 		s.Nudge()
 	}
 	return event, nil
+}
+
+func buildEventPayload(eventType string, watcher *database.Watcher, summary string, extra map[string]any) map[string]any {
+	eventID := uuid.NewString()
+	occurredAt := time.Now().UTC().Format(time.RFC3339)
+	watcherPayload := map[string]any{
+		"id":   watcher.ID,
+		"name": watcher.Name,
+	}
+	data := map[string]any{
+		"schema_version": SchemaVersionV1,
+		"event_id":       eventID,
+		"watcher":        watcherPayload,
+		"summary":        summary,
+	}
+	for key, value := range extra {
+		data[key] = value
+	}
+
+	payload := map[string]any{
+		"schema_version": SchemaVersionV1,
+		"event_id":       eventID,
+		"event_type":     eventType,
+		"type":           eventType,
+		"occurred_at":    occurredAt,
+		"timestamp":      occurredAt,
+		"watcher":        watcherPayload,
+		"data":           data,
+		"summary":        summary,
+	}
+	for key, value := range extra {
+		payload[key] = value
+	}
+	return payload
 }
 
 func watcherShouldReceive(w *database.Watcher, eventType string) bool {

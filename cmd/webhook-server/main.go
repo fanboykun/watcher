@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	standardwebhooks "github.com/fanboykun/watcher/internal/webhook"
 )
 
 type receivedWebhook struct {
@@ -30,7 +32,7 @@ type receivedWebhook struct {
 type serverConfig struct {
 	Addr      string
 	Path      string
-	Bearer    string
+	Secret    string
 	Status    int
 	MaxEvents int
 }
@@ -117,8 +119,8 @@ var indexTemplate = template.Must(template.New("index").Funcs(template.FuncMap{
         <div><strong>POST endpoint:</strong> <span class="mono">{{.Config.Path}}</span></div>
         <div><strong>Events JSON:</strong> <a href="/events" class="mono">/events</a></div>
         <div><strong>Health:</strong> <a href="/healthz" class="mono">/healthz</a></div>
-        <div><strong>Expected bearer auth:</strong>
-          {{if .Config.Bearer}}<span class="pill">required</span>{{else}}<span class="pill">not required</span>{{end}}
+        <div><strong>Standard signature verification:</strong>
+          {{if .Config.Secret}}<span class="pill">required</span>{{else}}<span class="pill">not required</span>{{end}}
         </div>
         <div><strong>Success response:</strong> HTTP {{.Config.Status}}</div>
       </div>
@@ -163,7 +165,7 @@ func main() {
 	cfg := serverConfig{}
 	flag.StringVar(&cfg.Addr, "addr", ":8091", "listen address")
 	flag.StringVar(&cfg.Path, "path", "/webhook", "webhook POST path")
-	flag.StringVar(&cfg.Bearer, "bearer", "", "optional bearer token to require")
+	flag.StringVar(&cfg.Secret, "secret", "", "optional Standard Webhooks signing secret (whsec_...) to require")
 	flag.IntVar(&cfg.Status, "status", http.StatusOK, "HTTP status to return for accepted webhook requests")
 	flag.IntVar(&cfg.MaxEvents, "max-events", 100, "maximum recent webhook events to keep in memory")
 	flag.Parse()
@@ -213,11 +215,11 @@ func main() {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"message":         "Watcher webhook receiver is ready",
-				"post_to":         cfg.Path,
-				"events_json":     "/events",
-				"healthz":         "/healthz",
-				"requires_bearer": strings.TrimSpace(cfg.Bearer) != "",
+				"message":            "Watcher webhook receiver is ready",
+				"post_to":            cfg.Path,
+				"events_json":        "/events",
+				"healthz":            "/healthz",
+				"requires_signature": strings.TrimSpace(cfg.Secret) != "",
 			})
 			return
 		}
@@ -226,13 +228,27 @@ func main() {
 			return
 		}
 
-		if cfg.Bearer != "" && strings.TrimSpace(r.Header.Get("Authorization")) != "Bearer "+cfg.Bearer {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": "invalid bearer token",
-			})
-			return
+		if cfg.Secret != "" {
+			wh, err := standardwebhooks.NewStandardWebhook(cfg.Secret)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("invalid -secret: %v", err), http.StatusInternalServerError)
+				return
+			}
+			payload, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				http.Error(w, fmt.Sprintf("read body: %v", err), http.StatusBadRequest)
+				return
+			}
+			r.Body.Close()
+			if err := wh.Verify(payload, r.Header); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+			r.Body = io.NopCloser(strings.NewReader(string(payload)))
 		}
 
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))

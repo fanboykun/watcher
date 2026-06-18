@@ -14,7 +14,7 @@ paths:
     post:
       summary: Receive Watcher webhook events
       description: |
-        Watcher sends outbound POST requests with JSON bodies. The payload shape varies by `event_type`.
+        Watcher sends outbound POST requests with JSON bodies and Standard Webhooks signature headers. The payload shape varies by `event_type`.
       requestBody:
         required: true
         content:
@@ -32,10 +32,24 @@ paths:
             examples:
               version_found:
                 value:
+                  type: watcher.version_found
+                  timestamp: '2026-06-17T02:15:10Z'
                   schema_version: v1
                   event_id: evt_01j0versionfound
                   event_type: watcher.version_found
                   occurred_at: '2026-06-17T02:15:10Z'
+                  data:
+                    schema_version: v1
+                    event_id: evt_01j0versionfound
+                    watcher:
+                      id: 12
+                      name: api-prod
+                    summary: Watcher api-prod found version v1.4.2
+                    version:
+                      discovered_version: v1.4.2
+                      current_version: v1.4.1
+                      will_deploy: false
+                      block_reason: watcher paused
                   watcher:
                     id: 12
                     name: api-prod
@@ -62,8 +76,16 @@ components:
     BaseEvent:
       type: object
       additionalProperties: true
-      required: [schema_version, event_id, event_type, occurred_at, watcher, summary]
+      required: [type, timestamp, data, schema_version, event_id, event_type, occurred_at, watcher, summary]
       properties:
+        type:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        data:
+          type: object
+          additionalProperties: true
         schema_version:
           type: string
           const: v1

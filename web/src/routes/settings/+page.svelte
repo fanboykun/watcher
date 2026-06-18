@@ -66,8 +66,8 @@
 	let cfgWebhookAutoPauseAfterFailures = $state(5);
 	let cfgWebhookEventRetentionDays = $state(90);
 	let cfgWebhookDeliveryRetentionDays = $state(30);
-	let webhookDefaultBearerTokenInput = $state('');
-	let clearWebhookDefaultBearerToken = $state(false);
+	let webhookDefaultSigningSecretInput = $state('');
+	let clearWebhookDefaultSigningSecret = $state(false);
 	let showRestartDialog = $state(false);
 	let showUpdateDialog = $state(false);
 
@@ -142,10 +142,10 @@
 			} else if (githubTokenInput.trim()) {
 				payload.github_token = githubTokenInput.trim();
 			}
-			if (clearWebhookDefaultBearerToken) {
-				payload.webhook_default_bearer_token = '';
-			} else if (webhookDefaultBearerTokenInput.trim()) {
-				payload.webhook_default_bearer_token = webhookDefaultBearerTokenInput.trim();
+			if (clearWebhookDefaultSigningSecret) {
+				payload.webhook_default_signing_secret = '';
+			} else if (webhookDefaultSigningSecretInput.trim()) {
+				payload.webhook_default_signing_secret = webhookDefaultSigningSecretInput.trim();
 			}
 
 			const res = await api.updateSelfConfig(payload);
@@ -153,8 +153,8 @@
 			syncConfigForm();
 			githubTokenInput = '';
 			clearGitHubToken = false;
-			webhookDefaultBearerTokenInput = '';
-			clearWebhookDefaultBearerToken = false;
+			webhookDefaultSigningSecretInput = '';
+			clearWebhookDefaultSigningSecret = false;
 			success = res.message;
 			setTimeout(() => (success = ''), 4000);
 		} catch (e) {
@@ -489,27 +489,30 @@
 						</p>
 					</div>
 					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-bearer-token">
-							Default Webhook Bearer Token (leave blank to keep current)
+						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-signing-secret">
+							Default Webhook Signing Secret (leave blank to keep current)
 						</label>
 						<Input
-							id="cfg-webhook-default-bearer-token"
+							id="cfg-webhook-default-signing-secret"
 							type="password"
-							placeholder={agentConfig.webhook_default_bearer_token_masked || 'not set'}
-							bind:value={webhookDefaultBearerTokenInput}
+							placeholder={agentConfig.webhook_default_signing_secret_masked || 'not set'}
+							bind:value={webhookDefaultSigningSecretInput}
 						/>
 						<div class="mt-2 flex items-center gap-2">
 							<Checkbox
-								id="clear-webhook-default-bearer-token"
-								bind:checked={clearWebhookDefaultBearerToken}
+								id="clear-webhook-default-signing-secret"
+								bind:checked={clearWebhookDefaultSigningSecret}
 							/>
 							<label
 								class="text-xs text-muted-foreground select-none"
-								for="clear-webhook-default-bearer-token"
+								for="clear-webhook-default-signing-secret"
 							>
-								Clear existing default webhook bearer token
+								Clear existing default webhook signing secret
 							</label>
 						</div>
+						<p class="text-xs text-muted-foreground">
+							Use a Standard Webhooks HMAC secret in the <code>whsec_...</code> format.
+						</p>
 					</div>
 					<div class="space-y-2">
 						<label class="text-sm text-muted-foreground" for="cfg-webhook-timeout-sec"
@@ -583,7 +586,7 @@
 				</div>
 
 				<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-					These values act as global defaults. Watchers can still override URL, bearer token, and
+					These values act as global defaults. Watchers can still override URL, signing secret, and
 					subscriptions individually.
 				</div>
 

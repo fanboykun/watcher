@@ -255,6 +255,14 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
+	if err := validateOptionalWebhookSigningSecret(req.WebhookSigningSecret); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	if err := validateResolvedWebhookConfig(req.WebhookEnabled, strings.TrimSpace(req.WebhookURL), strings.TrimSpace(req.WebhookSigningSecret), h.appCfg); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
 
 	watcher := database.Watcher{
 		Name:                            req.Name,
@@ -275,7 +283,7 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		MaxKeptVersions:                 withDefault(req.MaxKeptVersions, 3),
 		WebhookEnabled:                  req.WebhookEnabled,
 		WebhookURL:                      strings.TrimSpace(req.WebhookURL),
-		WebhookBearerToken:              strings.TrimSpace(req.WebhookBearerToken),
+		WebhookSigningSecret:            strings.TrimSpace(req.WebhookSigningSecret),
 		WebhookAutoPauseEnabledOverride: req.WebhookAutoPauseEnabledOverride,
 		WebhookAutoPauseAfterFailures:   req.WebhookAutoPauseAfterFailures,
 		NotifyVersionFound:              req.NotifyVersionFound,
@@ -337,6 +345,29 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
+	if req.WebhookSigningSecret != nil {
+		if err := validateOptionalWebhookSigningSecret(*req.WebhookSigningSecret); err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return
+		}
+	}
+
+	nextWebhookEnabled := watcher.WebhookEnabled
+	if req.WebhookEnabled != nil {
+		nextWebhookEnabled = *req.WebhookEnabled
+	}
+	nextWebhookURL := watcher.WebhookURL
+	if req.WebhookURL != nil {
+		nextWebhookURL = strings.TrimSpace(*req.WebhookURL)
+	}
+	nextWebhookSecret := watcher.WebhookSigningSecret
+	if req.WebhookSigningSecret != nil {
+		nextWebhookSecret = strings.TrimSpace(*req.WebhookSigningSecret)
+	}
+	if err := validateResolvedWebhookConfig(nextWebhookEnabled, nextWebhookURL, nextWebhookSecret, h.appCfg); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
 
 	updates := map[string]any{}
 	if req.Name != nil {
@@ -393,8 +424,8 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	if req.WebhookURL != nil {
 		updates["webhook_url"] = strings.TrimSpace(*req.WebhookURL)
 	}
-	if req.WebhookBearerToken != nil {
-		updates["webhook_bearer_token"] = strings.TrimSpace(*req.WebhookBearerToken)
+	if req.WebhookSigningSecret != nil {
+		updates["webhook_signing_secret"] = strings.TrimSpace(*req.WebhookSigningSecret)
 	}
 	if req.WebhookAutoPauseEnabledOverride != nil {
 		updates["webhook_auto_pause_enabled_override"] = *req.WebhookAutoPauseEnabledOverride
@@ -1223,9 +1254,32 @@ func enrichWatcherSecrets(w *database.Watcher) {
 	token := strings.TrimSpace(w.GitHubToken)
 	w.HasGitHubToken = token != ""
 	w.GitHubTokenMasked = maskToken(token)
-	webhookToken := strings.TrimSpace(w.WebhookBearerToken)
-	w.HasWebhookBearerToken = webhookToken != ""
-	w.WebhookBearerTokenMasked = maskToken(webhookToken)
+	webhookSecret := strings.TrimSpace(w.WebhookSigningSecret)
+	w.HasWebhookSigningSecret = webhookSecret != ""
+	w.WebhookSigningSecretMasked = maskToken(webhookSecret)
+}
+
+func validateResolvedWebhookConfig(enabled bool, watcherURL, watcherSecret string, cfg *config.AppConfig) error {
+	if !enabled {
+		return nil
+	}
+
+	resolvedURL := strings.TrimSpace(watcherURL)
+	if resolvedURL == "" && cfg != nil {
+		resolvedURL = strings.TrimSpace(cfg.WebhookDefaultURL)
+	}
+	if resolvedURL == "" {
+		return fmt.Errorf("webhook_url is required when webhook delivery is enabled")
+	}
+
+	resolvedSecret := strings.TrimSpace(watcherSecret)
+	if resolvedSecret == "" && cfg != nil {
+		resolvedSecret = strings.TrimSpace(cfg.WebhookDefaultSigningSecret)
+	}
+	if resolvedSecret == "" {
+		return fmt.Errorf("a webhook signing secret is required when webhook delivery is enabled")
+	}
+	return validateOptionalWebhookSigningSecret(resolvedSecret)
 }
 
 // timeNow returns a pointer to the current UTC time.

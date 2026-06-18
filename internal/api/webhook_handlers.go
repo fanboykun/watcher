@@ -112,11 +112,14 @@ func (h *Handler) GetWebhookDelivery(c *gin.Context) {
 			"payload":        payload,
 		},
 		"request": gin.H{
-			"url":          delivery.ResolvedURL,
-			"auth_type":    delivery.AuthType,
-			"token_source": delivery.TokenSource,
+			"url":           delivery.ResolvedURL,
+			"auth_type":     delivery.AuthType,
+			"secret_source": delivery.SecretSource,
 			"headers": gin.H{
 				"content_type":          "application/json",
+				"webhook_id":            event.EventID,
+				"webhook_timestamp":     delivery.WebhookTimestamp,
+				"webhook_signature":     delivery.WebhookSignature,
 				"x_watcher_event":       event.EventType,
 				"x_watcher_delivery_id": delivery.DeliveryID,
 			},
