@@ -8,21 +8,35 @@
 
 	let {
 		watcher,
-		onAddService,
-		onEditService,
+		readonly = false,
+		manageHref = '',
+		createHref = '',
+		editHrefBase = '',
 		onDeleteService
 	}: {
 		watcher: Watcher;
-		onAddService: () => void;
-		onEditService: (svc: Service) => void;
-		onDeleteService: (svcId: number, name: string) => void;
+		readonly?: boolean;
+		manageHref?: string;
+		createHref?: string;
+		editHrefBase?: string;
+		onDeleteService?: (svcId: number, name: string) => void;
 	} = $props();
 </script>
 
 <div class="mb-4 flex justify-end">
-	<Button.Root size="sm" onclick={onAddService}>
-		<Plus class="mr-2 h-4 w-4" /> Add Service
-	</Button.Root>
+	{#if readonly && manageHref}
+		<a href={manageHref}>
+			<Button.Root size="sm" variant="outline">
+				<Pencil class="mr-2 h-4 w-4" /> Manage Settings
+			</Button.Root>
+		</a>
+	{:else if createHref}
+		<a href={createHref}>
+			<Button.Root size="sm">
+				<Plus class="mr-2 h-4 w-4" /> Add Service
+			</Button.Root>
+		</a>
+	{/if}
 </div>
 
 {#if watcher.services && watcher.services.length > 0}
@@ -34,7 +48,9 @@
 					<Table.Head>Type</Table.Head>
 					<Table.Head>Binary / App Pool</Table.Head>
 					<Table.Head>Health URL</Table.Head>
-					<Table.Head class="text-right">Actions</Table.Head>
+					{#if !readonly}
+						<Table.Head class="text-right">Actions</Table.Head>
+					{/if}
 				</Table.Row>
 			</Table.Header>
 			<Table.Body>
@@ -76,26 +92,28 @@
 						<Table.Cell class="font-mono text-xs text-muted-foreground">
 							{svc.health_check_url || '—'}
 						</Table.Cell>
-						<Table.Cell class="text-right">
-							<Button.Root
-								variant="ghost"
-								size="icon"
-								class="h-8 w-8"
-								onclick={() => onEditService(svc)}
-								title="Edit"
-							>
-								<Pencil class="h-4 w-4" />
-							</Button.Root>
-							<Button.Root
-								variant="ghost"
-								size="icon"
-								class="h-8 w-8 text-red-400 hover:text-red-300"
-								onclick={() => onDeleteService(svc.id, svc.windows_service_name)}
-								title="Delete"
-							>
-								<Trash2 class="h-4 w-4" />
-							</Button.Root>
-						</Table.Cell>
+						{#if !readonly}
+							<Table.Cell class="text-right">
+								{#if editHrefBase}
+									<a href={`${editHrefBase}/${svc.id}/edit`}>
+										<Button.Root variant="ghost" size="icon" class="h-8 w-8" title="Edit">
+											<Pencil class="h-4 w-4" />
+										</Button.Root>
+									</a>
+								{/if}
+								{#if onDeleteService}
+									<Button.Root
+										variant="ghost"
+										size="icon"
+										class="h-8 w-8 text-red-400 hover:text-red-300"
+										onclick={() => onDeleteService(svc.id, svc.windows_service_name)}
+										title="Delete"
+									>
+										<Trash2 class="h-4 w-4" />
+									</Button.Root>
+								{/if}
+							</Table.Cell>
+						{/if}
 					</Table.Row>
 				{/each}
 			</Table.Body>

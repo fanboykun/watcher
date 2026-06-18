@@ -2,7 +2,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
-	import { Select } from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Clock } from '@lucide/svelte';
 	import { timeAgo } from '$lib/utils';
 
@@ -65,19 +65,32 @@
 		<div class="mt-auto flex items-center justify-between border-t border-border px-4 py-4">
 			<div class="flex items-center gap-2 text-xs text-muted-foreground">
 				<span>Status Filter:</span>
-				<Select
-					class="h-7 w-32 text-xs"
+				<Select.Root
+					type="single"
 					value={pollStatus}
-					onchange={(e) => {
-						const val = (e.target as HTMLSelectElement).value;
-						onStatusChange(val);
+					onValueChange={(v) => {
+						if (v) {
+							pollStatus = v;
+							onStatusChange(v);
+						}
 					}}
 				>
-					<option value="all">All</option>
-					<option value="new_release">New Release</option>
-					<option value="up_to_date">Up To Date</option>
-					<option value="error">Error</option>
-				</Select>
+					<Select.Trigger class="h-8 w-32 text-xs">
+						{pollStatus === 'new_release'
+							? 'New Release'
+							: pollStatus === 'up_to_date'
+								? 'Up To Date'
+								: pollStatus === 'error'
+									? 'Error'
+									: 'All'}
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="all" label="All">All</Select.Item>
+						<Select.Item value="new_release" label="New Release">New Release</Select.Item>
+						<Select.Item value="up_to_date" label="Up To Date">Up To Date</Select.Item>
+						<Select.Item value="error" label="Error">Error</Select.Item>
+					</Select.Content>
+				</Select.Root>
 			</div>
 			<div class="flex items-center gap-4 text-xs">
 				<span class="text-muted-foreground">

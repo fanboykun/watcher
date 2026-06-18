@@ -12,6 +12,7 @@ import (
 
 	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
+	"github.com/fanboykun/watcher/internal/webhook"
 	"gorm.io/gorm"
 )
 
@@ -25,6 +26,7 @@ type RepoWatcher struct {
 	deployer  *Deployer
 	db        *gorm.DB
 	watcherID uint
+	webhooks  *webhook.Service
 }
 
 // WatcherConfig is the in-memory representation used by the deploy pipeline.
@@ -155,10 +157,10 @@ func normalizeIISAppKind(kind, runtime string) string {
 	}
 }
 
-func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus) *RepoWatcher {
+func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus, webhookService *webhook.Service) *RepoWatcher {
 	wcfg := WatcherConfigFromDB(dbWatcher)
 	componentLog := log.WithComponent(wcfg.Name)
-	state := NewStateManager(db, dbWatcher.ID, componentLog, events)
+	state := NewStateManager(db, dbWatcher.ID, componentLog, events, webhookService)
 	return &RepoWatcher{
 		wcfg:      wcfg,
 		global:    appCfg,
@@ -167,6 +169,7 @@ func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.App
 		deployer:  NewDeployer(wcfg, appCfg.NssmPath, componentLog, state.AppendDeployLog),
 		db:        db,
 		watcherID: dbWatcher.ID,
+		webhooks:  webhookService,
 	}
 }
 
@@ -215,7 +218,7 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 		return nil
 	}
 
-	if maxIgnoredVersion != "" && !isNewer(targetVersion, maxIgnoredVersion) {
+	if IsVersionBlockedByRollback(targetVersion, maxIgnoredVersion) {
 		r.log.Info("update skipped due to rollback high-watermark", "target", targetVersion, "ignored_upto", maxIgnoredVersion)
 		r.state.RecordPollEvent("skipped", targetVersion, fmt.Sprintf("skipped (<= %s) because of manual rollback", maxIgnoredVersion))
 		return nil
@@ -238,12 +241,86 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 
 	if err := r.deploy(ctx, gh, svcMeta, targetVersion, localVersion); err != nil {
 		if !errors.Is(err, context.Canceled) {
-			_ = r.state.SetFailed(err.Error())
+			phase, originalErr, rollbackTo, rollbackFailed := classifyDeployFailure(err)
+			_ = r.state.SetFailedWithPhase(originalErr, phase)
+			if rollbackTo != "" {
+				deployAttemptID, rootAttemptID := r.latestDeployAttemptIDs()
+				rollbackID, rbErr := r.state.StartRollbackAttempt(rollbackTo, targetVersion, targetVersion, "auto_after_deploy_failure", "agent", deployAttemptID, rootAttemptID)
+				if rbErr == nil {
+					_ = r.state.CompleteRollbackAttempt(rollbackID, rollbackTo, "")
+				}
+				return nil
+			}
+			if rollbackFailed {
+				deployAttemptID, rootAttemptID := r.latestDeployAttemptIDs()
+				rollbackID, rbErr := r.state.StartRollbackAttempt(localVersion, targetVersion, targetVersion, "auto_after_deploy_failure", "agent", deployAttemptID, rootAttemptID)
+				if rbErr == nil {
+					_ = r.state.FailRollbackAttempt(rollbackID, err.Error())
+				}
+			}
 		}
 		return fmt.Errorf("deploy: %w", err)
 	}
 
 	return nil
+}
+
+func (r *RepoWatcher) latestDeployAttemptIDs() (*uint, *uint) {
+	var attempt database.DeployLog
+	if err := r.db.Where("watcher_id = ? AND kind = ?", r.watcherID, "deploy").Order("id desc").First(&attempt).Error; err != nil {
+		return nil, nil
+	}
+	parent := attempt.ID
+	root := parent
+	if attempt.RootAttemptID != nil && *attempt.RootAttemptID != 0 {
+		root = *attempt.RootAttemptID
+	}
+	return &parent, &root
+}
+
+func classifyDeployFailure(err error) (phase string, originalErr string, rollbackTo string, rollbackFailed bool) {
+	if err == nil {
+		return "", "", "", false
+	}
+	msg := err.Error()
+	originalErr = msg
+	if strings.HasPrefix(msg, "deploy failed, rolled back to ") {
+		parts := strings.SplitN(msg, ": ", 2)
+		if len(parts) == 2 {
+			originalErr = parts[1]
+		}
+		prefix := strings.TrimPrefix(parts[0], "deploy failed, rolled back to ")
+		rollbackTo = strings.TrimSpace(prefix)
+	}
+	if strings.HasPrefix(msg, "deploy failed AND rollback failed:") {
+		rollbackFailed = true
+		originalErr = msg
+	}
+	phase = inferFailurePhase(originalErr)
+	return phase, originalErr, rollbackTo, rollbackFailed
+}
+
+func inferFailurePhase(msg string) string {
+	switch {
+	case strings.Contains(msg, "create install dir"):
+		return "prepare"
+	case strings.Contains(msg, "artifact_url missing"):
+		return "prepare"
+	case strings.Contains(msg, "create downloads dir"), strings.Contains(msg, "download artifact"):
+		return "download"
+	case strings.Contains(msg, "extract"):
+		return "extract"
+	case strings.Contains(msg, "stop "):
+		return "stop_services"
+	case strings.Contains(msg, "start "):
+		return "start_services"
+	case strings.Contains(msg, "health check failed"):
+		return "health_check"
+	case strings.Contains(msg, "swap"):
+		return "activate_release"
+	default:
+		return ""
+	}
 }
 
 func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta ServiceMeta, targetVersion, previousVersion string) error {
@@ -392,12 +469,13 @@ type Agent struct {
 	events       *WatcherEventBus
 	checkTrigger chan uint
 	syncTrigger  chan struct{}
+	webhooks     *webhook.Service
 
 	mu       sync.Mutex
 	watchers map[uint]watcherHandle
 }
 
-func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}) *Agent {
+func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service) *Agent {
 	return &Agent{
 		db:           db,
 		appCfg:       appCfg,
@@ -405,6 +483,7 @@ func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *Watche
 		events:       events,
 		checkTrigger: checkTrigger,
 		syncTrigger:  syncTrigger,
+		webhooks:     webhookService,
 		watchers:     make(map[uint]watcherHandle),
 	}
 }
@@ -446,7 +525,7 @@ func (a *Agent) Run(ctx context.Context) {
 
 func (a *Agent) syncWatchers(ctx context.Context) {
 	var dbWatchers []database.Watcher
-	if err := a.db.Preload("Services").Find(&dbWatchers).Error; err != nil {
+	if err := a.db.Preload("Services").Preload("Services.ConfigFiles").Find(&dbWatchers).Error; err != nil {
 		a.log.Error("failed to load watchers from database", "error", err)
 		return
 	}
@@ -499,7 +578,7 @@ func (a *Agent) syncWatchers(ctx context.Context) {
 
 func (a *Agent) runWatcher(ctx context.Context, dbWatcher *database.Watcher, trigger chan struct{}) {
 	log := a.log.WithComponent(dbWatcher.Name)
-	rw := NewRepoWatcher(dbWatcher, a.db, a.appCfg, a.log, a.events)
+	rw := NewRepoWatcher(dbWatcher, a.db, a.appCfg, a.log, a.events, a.webhooks)
 
 	log.Info("watcher starting",
 		"service_name", dbWatcher.ServiceName,

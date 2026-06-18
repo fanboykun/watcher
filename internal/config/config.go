@@ -45,6 +45,16 @@ type AppConfig struct {
 	// WatcherServiceName is the NSSM service name for the watcher itself.
 	// Used by self-update/restart/uninstall actions.
 	WatcherServiceName string `mapstructure:"WATCHER_SERVICE_NAME"`
+
+	// Webhook transport defaults.
+	WebhookDefaultURL            string `mapstructure:"WEBHOOK_DEFAULT_URL"`
+	WebhookDefaultBearerToken    string `mapstructure:"WEBHOOK_DEFAULT_BEARER_TOKEN"`
+	WebhookTimeoutSec            int    `mapstructure:"WEBHOOK_TIMEOUT_SEC"`
+	WebhookRetryScheduleSec      string `mapstructure:"WEBHOOK_RETRY_SCHEDULE_SEC"`
+	WebhookAutoPauseEnabled      bool   `mapstructure:"WEBHOOK_AUTO_PAUSE_ENABLED"`
+	WebhookAutoPauseAfter        int    `mapstructure:"WEBHOOK_AUTO_PAUSE_AFTER_FAILURES"`
+	WebhookEventRetentionDays    int    `mapstructure:"WEBHOOK_EVENT_RETENTION_DAYS"`
+	WebhookDeliveryRetentionDays int    `mapstructure:"WEBHOOK_DELIVERY_RETENTION_DAYS"`
 }
 
 // LoadConfig reads configuration from a .env file and environment variables.
@@ -62,6 +72,12 @@ func LoadConfig(envPath string) (*AppConfig, error) {
 	v.SetDefault("ENVIRONMENT", "production")
 	v.SetDefault("GITHUB_DEPLOY_ENABLED", true)
 	v.SetDefault("WATCHER_SERVICE_NAME", "app-watcher")
+	v.SetDefault("WEBHOOK_TIMEOUT_SEC", 10)
+	v.SetDefault("WEBHOOK_RETRY_SCHEDULE_SEC", "0,10,60,300")
+	v.SetDefault("WEBHOOK_AUTO_PAUSE_ENABLED", true)
+	v.SetDefault("WEBHOOK_AUTO_PAUSE_AFTER_FAILURES", 5)
+	v.SetDefault("WEBHOOK_EVENT_RETENTION_DAYS", 90)
+	v.SetDefault("WEBHOOK_DELIVERY_RETENTION_DAYS", 30)
 
 	// Read .env file
 	if envPath != "" {

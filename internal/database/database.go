@@ -31,6 +31,8 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 		&DeployLog{},
 		&HealthEvent{},
 		&PollEvent{},
+		&WebhookEvent{},
+		&WebhookDelivery{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to auto migrate tables: %w", err)
 	}
@@ -97,10 +99,34 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 		{model: &Watcher{}, column: "deployment_environment", field: "DeploymentEnvironment"},
 		{model: &Watcher{}, column: "release_ref", field: "ReleaseRef"},
 		{model: &Watcher{}, column: "github_token", field: "GitHubToken"},
+		{model: &Watcher{}, column: "webhook_enabled", field: "WebhookEnabled"},
+		{model: &Watcher{}, column: "webhook_url", field: "WebhookURL"},
+		{model: &Watcher{}, column: "webhook_bearer_token", field: "WebhookBearerToken"},
+		{model: &Watcher{}, column: "webhook_pause_reason", field: "WebhookPauseReason"},
+		{model: &Watcher{}, column: "webhook_failure_streak", field: "WebhookFailureStreak"},
+		{model: &Watcher{}, column: "notify_version_found", field: "NotifyVersionFound"},
+		{model: &Watcher{}, column: "notify_deployment_succeeded", field: "NotifyDeploymentSucceeded"},
+		{model: &Watcher{}, column: "notify_deployment_failed", field: "NotifyDeploymentFailed"},
+		{model: &Watcher{}, column: "notify_rollback_succeeded", field: "NotifyRollbackSucceeded"},
+		{model: &Watcher{}, column: "notify_rollback_failed", field: "NotifyRollbackFailed"},
+		{model: &Watcher{}, column: "notify_service_health_changed", field: "NotifyServiceHealthChanged"},
 		{model: &DeployLog{}, column: "triggered_by", field: "TriggeredBy"},
+		{model: &DeployLog{}, column: "kind", field: "Kind"},
+		{model: &DeployLog{}, column: "reason", field: "Reason"},
+		{model: &DeployLog{}, column: "failed_target_version", field: "FailedTargetVersion"},
+		{model: &DeployLog{}, column: "failure_phase", field: "FailurePhase"},
+		{model: &DeployLog{}, column: "parent_attempt_id", field: "ParentAttemptID"},
+		{model: &DeployLog{}, column: "root_attempt_id", field: "RootAttemptID"},
 		{model: &Service{}, column: "env_content", field: "EnvContent"},
 		{model: &Service{}, column: "iis_app_kind", field: "IISAppKind"},
+		{model: &Service{}, column: "last_health_status", field: "LastHealthStatus"},
+		{model: &Service{}, column: "last_health_http_status", field: "LastHealthHTTPStatus"},
+		{model: &Service{}, column: "last_health_error", field: "LastHealthError"},
+		{model: &Service{}, column: "last_health_checked_at", field: "LastHealthCheckedAt"},
 		{model: &ServiceConfigFile{}, column: "target", field: "Target"},
+		{model: &HealthEvent{}, column: "previous_status", field: "PreviousStatus"},
+		{model: &HealthEvent{}, column: "source", field: "Source"},
+		{model: &WebhookEvent{}, column: "dedupe_key", field: "DedupeKey"},
 	}
 
 	for _, spec := range columns {
@@ -117,6 +143,16 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 			return fmt.Errorf("create table service_config_files: %w", err)
 		}
 	}
+	if !db.Migrator().HasTable(&WebhookEvent{}) {
+		if err := db.Migrator().CreateTable(&WebhookEvent{}); err != nil {
+			return fmt.Errorf("create table webhook_events: %w", err)
+		}
+	}
+	if !db.Migrator().HasTable(&WebhookDelivery{}) {
+		if err := db.Migrator().CreateTable(&WebhookDelivery{}); err != nil {
+			return fmt.Errorf("create table webhook_deliveries: %w", err)
+		}
+	}
 
 	if err := ensureWatcherServiceNameIsNonUnique(db); err != nil {
 		return fmt.Errorf("ensure non-unique service_name index: %w", err)
@@ -124,6 +160,50 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 
 	if err := normalizeLegacyServiceTypes(db); err != nil {
 		return fmt.Errorf("normalize legacy service types: %w", err)
+	}
+	if err := normalizeLegacyAttemptFields(db); err != nil {
+		return fmt.Errorf("normalize legacy attempt fields: %w", err)
+	}
+
+	return nil
+}
+
+func normalizeLegacyAttemptFields(db *gorm.DB) error {
+	if err := db.Exec(`
+		UPDATE deploy_logs
+		SET kind = CASE
+			WHEN LOWER(TRIM(COALESCE(status, ''))) = 'rollback' THEN 'rollback'
+			ELSE 'deploy'
+		END
+		WHERE kind IS NULL OR TRIM(kind) = ''
+	`).Error; err != nil {
+		return fmt.Errorf("backfill deploy_logs.kind: %w", err)
+	}
+
+	if err := db.Exec(`
+		UPDATE deploy_logs
+		SET reason = CASE
+			WHEN kind = 'rollback' AND LOWER(TRIM(COALESCE(triggered_by, 'agent'))) = 'manual' THEN 'manual_rollback'
+			WHEN kind = 'deploy' AND LOWER(TRIM(COALESCE(triggered_by, 'agent'))) = 'manual' THEN 'manual_redeploy'
+			ELSE 'new_version'
+		END
+		WHERE reason IS NULL OR TRIM(reason) = ''
+	`).Error; err != nil {
+		return fmt.Errorf("backfill deploy_logs.reason: %w", err)
+	}
+
+	if err := db.Exec(`
+		UPDATE deploy_logs
+		SET status = CASE
+			WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('healthy') THEN 'succeeded'
+			WHEN LOWER(TRIM(COALESCE(status, ''))) IN ('deploying', 'rollback') THEN 'in_progress'
+			WHEN LOWER(TRIM(COALESCE(status, ''))) = 'failed' THEN 'failed'
+			WHEN completed_at IS NOT NULL THEN 'succeeded'
+			ELSE 'in_progress'
+		END
+		WHERE LOWER(TRIM(COALESCE(status, ''))) NOT IN ('pending', 'in_progress', 'succeeded', 'failed')
+	`).Error; err != nil {
+		return fmt.Errorf("normalize deploy_logs.status: %w", err)
 	}
 
 	return nil

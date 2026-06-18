@@ -44,6 +44,14 @@
 				<span class="text-muted-foreground">GitHub Token</span>
 				<span>{watcher.has_github_token ? (watcher.github_token_masked || 'Configured') : 'Global default'}</span>
 			</div>
+			<div class="flex justify-between">
+				<span class="text-muted-foreground">Webhook</span>
+				<span>{watcher.webhook_enabled ? 'Enabled' : 'Disabled'}</span>
+			</div>
+			<div class="flex justify-between">
+				<span class="text-muted-foreground">Webhook URL</span>
+				<span class="max-w-[220px] truncate font-mono text-xs">{watcher.webhook_url || 'Global default / unset'}</span>
+			</div>
 		</Card.Content>
 	</Card.Root>
 

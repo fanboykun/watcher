@@ -74,9 +74,9 @@ func TestIsNewer(t *testing.T) {
 
 func TestExtractComparableVersion(t *testing.T) {
 	tests := []struct {
-		raw     string
-		want    [3]int
-		wantOK  bool
+		raw    string
+		want   [3]int
+		wantOK bool
 	}{
 		{raw: "v1.2.3", want: [3]int{1, 2, 3}, wantOK: true},
 		{raw: "alpha-api/v1.2.3", want: [3]int{1, 2, 3}, wantOK: true},
@@ -94,6 +94,80 @@ func TestExtractComparableVersion(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Fatalf("extractComparableVersion(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompareVersions(t *testing.T) {
+	tests := []struct {
+		name   string
+		a      string
+		b      string
+		want   int
+		wantOK bool
+	}{
+		{name: "plain semver newer", a: "v1.2.0", b: "v1.1.9", want: 1, wantOK: true},
+		{name: "artifact labels equal", a: "alpha-api-v0.1.0.zip", b: "alpha-api/v0.1.0", want: 0, wantOK: true},
+		{name: "artifact labels older", a: "alpha-api-v0.1.0.zip", b: "alpha-api-v0.2.0.zip", want: -1, wantOK: true},
+		{name: "non comparable", a: "release-blue", b: "release-green", want: 0, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := CompareVersions(tt.a, tt.b)
+			if ok != tt.wantOK {
+				t.Fatalf("CompareVersions(%q, %q) ok = %v, want %v", tt.a, tt.b, ok, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Fatalf("CompareVersions(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsVersionBlockedByRollback(t *testing.T) {
+	tests := []struct {
+		name       string
+		target     string
+		maxIgnored string
+		want       bool
+	}{
+		{name: "exact label blocked", target: "release-blue", maxIgnored: "release-blue", want: true},
+		{name: "non comparable different labels not blocked", target: "release-green", maxIgnored: "release-blue", want: false},
+		{name: "older semver blocked", target: "v1.1.0", maxIgnored: "v1.2.0", want: true},
+		{name: "same semver blocked", target: "v1.2.0", maxIgnored: "v1.2.0", want: true},
+		{name: "newer semver not blocked", target: "v1.3.0", maxIgnored: "v1.2.0", want: false},
+		{name: "artifact label semver blocked", target: "alpha-api-v0.1.9.zip", maxIgnored: "alpha-api-v0.2.0.zip", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsVersionBlockedByRollback(tt.target, tt.maxIgnored); got != tt.want {
+				t.Fatalf("IsVersionBlockedByRollback(%q, %q) = %v, want %v", tt.target, tt.maxIgnored, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRollbackHighWatermark(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   string
+		previous string
+		want     string
+	}{
+		{name: "older semver pins previous", target: "v1.0.0", previous: "v1.2.0", want: "v1.2.0"},
+		{name: "same version no pin", target: "v1.2.0", previous: "v1.2.0", want: ""},
+		{name: "newer semver no pin", target: "v1.3.0", previous: "v1.2.0", want: ""},
+		{name: "non comparable fallback pins exact previous", target: "release-blue", previous: "release-green", want: "release-green"},
+		{name: "empty previous no pin", target: "release-blue", previous: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RollbackHighWatermark(tt.target, tt.previous); got != tt.want {
+				t.Fatalf("RollbackHighWatermark(%q, %q) = %q, want %q", tt.target, tt.previous, got, tt.want)
 			}
 		})
 	}

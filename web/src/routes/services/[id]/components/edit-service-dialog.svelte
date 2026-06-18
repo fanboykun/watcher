@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { isIISService, iisAppKindLabel, type Service, type ServiceConfigFile, type IISAppKind } from '$lib/api';
+	import { isIISService, iisAppKindLabel, type Service, type ServiceConfigFile, type IISAppKind, type ServiceWritePayload } from '$lib/api';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Textarea } from '$lib/components/ui/textarea';
-	import { Select } from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Label } from '$lib/components/ui/label';
 	import { Plus, XCircle } from '@lucide/svelte';
 
@@ -15,7 +15,7 @@
 	}: {
 		open: boolean;
 		service: Service | null;
-		onSave: (data: any) => Promise<void> | void;
+		onSave: (data: ServiceWritePayload) => Promise<void> | void;
 	} = $props();
 
 	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
@@ -138,10 +138,15 @@
 				<div class="grid gap-4 md:grid-cols-2">
 					<div class="space-y-2">
 						<Label for="editSvcType">Hosting Mode</Label>
-						<Select id="editSvcType" bind:value={editSvcType}>
-							<option value="nssm">Binary (NSSM)</option>
-							<option value="iis">IIS Site</option>
-						</Select>
+						<Select.Root type="single" bind:value={editSvcType}>
+							<Select.Trigger id="editSvcType">
+								{editSvcType === 'iis' ? 'IIS Site' : 'Binary (NSSM)'}
+							</Select.Trigger>
+							<Select.Content>
+								<Select.Item value="nssm" label="Binary (NSSM)">Binary (NSSM)</Select.Item>
+								<Select.Item value="iis" label="IIS Site">IIS Site</Select.Item>
+							</Select.Content>
+						</Select.Root>
 					</div>
 					<div class="space-y-2">
 						<Label for="editSvcName"
@@ -197,11 +202,16 @@
 					{:else}
 						<div class="space-y-2 md:col-span-2">
 							<Label for="editSvcIISAppKind">IIS App Kind</Label>
-							<Select id="editSvcIISAppKind" bind:value={editSvcIISAppKind}>
-								{#each iisAppKinds as kind (kind.value)}
-									<option value={kind.value}>{kind.label}</option>
-								{/each}
-							</Select>
+							<Select.Root type="single" bind:value={editSvcIISAppKind}>
+								<Select.Trigger id="editSvcIISAppKind">
+									{iisAppKinds.find((k) => k.value === editSvcIISAppKind)?.label || 'Select kind'}
+								</Select.Trigger>
+								<Select.Content>
+									{#each iisAppKinds as kind (kind.value)}
+										<Select.Item value={kind.value} label={kind.label}>{kind.label}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
 							<p class="text-xs text-muted-foreground">
 								{iisAppKinds.find((kind) => kind.value === editSvcIISAppKind)?.hint}
 							</p>
@@ -290,10 +300,15 @@
 											bind:value={file.file_path}
 											placeholder="web.config or settings/appsettings.json"
 										/>
-										<Select bind:value={file.target}>
-											<option value="app_dir">Service/app dir</option>
-											<option value="release_dir">Current dir</option>
-										</Select>
+										<Select.Root type="single" bind:value={file.target}>
+											<Select.Trigger>
+												{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
+											</Select.Trigger>
+											<Select.Content>
+												<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
+												<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
+											</Select.Content>
+										</Select.Root>
 									</div>
 									<Textarea
 										class="min-h-[140px] font-mono text-xs text-blue-300"

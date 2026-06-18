@@ -169,18 +169,27 @@ func (h *Handler) SelfConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, SelfConfigResponse{
-		Environment:         h.appCfg.Environment,
-		GitHubDeployEnabled: h.appCfg.GitHubDeployEnabled,
-		LogDir:              h.appCfg.LogDir,
-		NssmPath:            h.appCfg.NssmPath,
-		DBPath:              h.appCfg.DBPath,
-		APIPort:             h.appCfg.APIPort,
-		APIBaseURL:          h.appCfg.APIBaseURL,
-		WatcherRepoURL:      h.appCfg.WatcherRepoURL,
-		WatcherServiceName:  h.selfServiceName(),
-		HasGitHubToken:      strings.TrimSpace(h.appCfg.GitHubToken) != "",
-		GitHubTokenMasked:   maskToken(h.appCfg.GitHubToken),
-		EnvPath:             h.envPath,
+		Environment:                     h.appCfg.Environment,
+		GitHubDeployEnabled:             h.appCfg.GitHubDeployEnabled,
+		LogDir:                          h.appCfg.LogDir,
+		NssmPath:                        h.appCfg.NssmPath,
+		DBPath:                          h.appCfg.DBPath,
+		APIPort:                         h.appCfg.APIPort,
+		APIBaseURL:                      h.appCfg.APIBaseURL,
+		WatcherRepoURL:                  h.appCfg.WatcherRepoURL,
+		WatcherServiceName:              h.selfServiceName(),
+		HasGitHubToken:                  strings.TrimSpace(h.appCfg.GitHubToken) != "",
+		GitHubTokenMasked:               maskToken(h.appCfg.GitHubToken),
+		WebhookDefaultURL:               h.appCfg.WebhookDefaultURL,
+		HasWebhookDefaultBearerToken:    strings.TrimSpace(h.appCfg.WebhookDefaultBearerToken) != "",
+		WebhookDefaultBearerTokenMasked: maskToken(h.appCfg.WebhookDefaultBearerToken),
+		WebhookTimeoutSec:               h.appCfg.WebhookTimeoutSec,
+		WebhookRetryScheduleSec:         h.appCfg.WebhookRetryScheduleSec,
+		WebhookAutoPauseEnabled:         h.appCfg.WebhookAutoPauseEnabled,
+		WebhookAutoPauseAfterFailures:   h.appCfg.WebhookAutoPauseAfter,
+		WebhookEventRetentionDays:       h.appCfg.WebhookEventRetentionDays,
+		WebhookDeliveryRetentionDays:    h.appCfg.WebhookDeliveryRetentionDays,
+		EnvPath:                         h.envPath,
 	})
 }
 
@@ -233,18 +242,50 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 	if req.WatcherServiceName != nil {
 		next.WatcherServiceName = strings.TrimSpace(*req.WatcherServiceName)
 	}
+	if req.WebhookDefaultURL != nil {
+		next.WebhookDefaultURL = strings.TrimSpace(*req.WebhookDefaultURL)
+	}
+	if req.WebhookDefaultBearerToken != nil {
+		next.WebhookDefaultBearerToken = strings.TrimSpace(*req.WebhookDefaultBearerToken)
+	}
+	if req.WebhookTimeoutSec != nil {
+		next.WebhookTimeoutSec = *req.WebhookTimeoutSec
+	}
+	if req.WebhookRetryScheduleSec != nil {
+		next.WebhookRetryScheduleSec = strings.TrimSpace(*req.WebhookRetryScheduleSec)
+	}
+	if req.WebhookAutoPauseEnabled != nil {
+		next.WebhookAutoPauseEnabled = *req.WebhookAutoPauseEnabled
+	}
+	if req.WebhookAutoPauseAfterFailures != nil {
+		next.WebhookAutoPauseAfter = *req.WebhookAutoPauseAfterFailures
+	}
+	if req.WebhookEventRetentionDays != nil {
+		next.WebhookEventRetentionDays = *req.WebhookEventRetentionDays
+	}
+	if req.WebhookDeliveryRetentionDays != nil {
+		next.WebhookDeliveryRetentionDays = *req.WebhookDeliveryRetentionDays
+	}
 
 	updates := map[string]string{
-		"ENVIRONMENT":           next.Environment,
-		"GITHUB_TOKEN":          next.GitHubToken,
-		"GITHUB_DEPLOY_ENABLED": strconv.FormatBool(next.GitHubDeployEnabled),
-		"LOG_DIR":               next.LogDir,
-		"NSSM_PATH":             next.NssmPath,
-		"DB_PATH":               next.DBPath,
-		"API_PORT":              next.APIPort,
-		"API_BASE_URL":          next.APIBaseURL,
-		"WATCHER_REPO_URL":      next.WatcherRepoURL,
-		"WATCHER_SERVICE_NAME":  next.WatcherServiceName,
+		"ENVIRONMENT":                       next.Environment,
+		"GITHUB_TOKEN":                      next.GitHubToken,
+		"GITHUB_DEPLOY_ENABLED":             strconv.FormatBool(next.GitHubDeployEnabled),
+		"WEBHOOK_DEFAULT_URL":               next.WebhookDefaultURL,
+		"WEBHOOK_DEFAULT_BEARER_TOKEN":      next.WebhookDefaultBearerToken,
+		"WEBHOOK_TIMEOUT_SEC":               strconv.Itoa(next.WebhookTimeoutSec),
+		"WEBHOOK_RETRY_SCHEDULE_SEC":        next.WebhookRetryScheduleSec,
+		"WEBHOOK_AUTO_PAUSE_ENABLED":        strconv.FormatBool(next.WebhookAutoPauseEnabled),
+		"WEBHOOK_AUTO_PAUSE_AFTER_FAILURES": strconv.Itoa(next.WebhookAutoPauseAfter),
+		"WEBHOOK_EVENT_RETENTION_DAYS":      strconv.Itoa(next.WebhookEventRetentionDays),
+		"WEBHOOK_DELIVERY_RETENTION_DAYS":   strconv.Itoa(next.WebhookDeliveryRetentionDays),
+		"LOG_DIR":                           next.LogDir,
+		"NSSM_PATH":                         next.NssmPath,
+		"DB_PATH":                           next.DBPath,
+		"API_PORT":                          next.APIPort,
+		"API_BASE_URL":                      next.APIBaseURL,
+		"WATCHER_REPO_URL":                  next.WatcherRepoURL,
+		"WATCHER_SERVICE_NAME":              next.WatcherServiceName,
 	}
 	if err := config.UpdateEnvFile(h.envPath, updates); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
@@ -268,18 +309,27 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 			"API_PORT and DB_PATH changes require manual service restart to fully take effect",
 		},
 		"config": SelfConfigResponse{
-			Environment:         next.Environment,
-			GitHubDeployEnabled: next.GitHubDeployEnabled,
-			LogDir:              next.LogDir,
-			NssmPath:            next.NssmPath,
-			DBPath:              next.DBPath,
-			APIPort:             next.APIPort,
-			APIBaseURL:          next.APIBaseURL,
-			WatcherRepoURL:      next.WatcherRepoURL,
-			WatcherServiceName:  h.selfServiceName(),
-			HasGitHubToken:      strings.TrimSpace(next.GitHubToken) != "",
-			GitHubTokenMasked:   maskToken(next.GitHubToken),
-			EnvPath:             h.envPath,
+			Environment:                     next.Environment,
+			GitHubDeployEnabled:             next.GitHubDeployEnabled,
+			LogDir:                          next.LogDir,
+			NssmPath:                        next.NssmPath,
+			DBPath:                          next.DBPath,
+			APIPort:                         next.APIPort,
+			APIBaseURL:                      next.APIBaseURL,
+			WatcherRepoURL:                  next.WatcherRepoURL,
+			WatcherServiceName:              h.selfServiceName(),
+			HasGitHubToken:                  strings.TrimSpace(next.GitHubToken) != "",
+			GitHubTokenMasked:               maskToken(next.GitHubToken),
+			WebhookDefaultURL:               next.WebhookDefaultURL,
+			HasWebhookDefaultBearerToken:    strings.TrimSpace(next.WebhookDefaultBearerToken) != "",
+			WebhookDefaultBearerTokenMasked: maskToken(next.WebhookDefaultBearerToken),
+			WebhookTimeoutSec:               next.WebhookTimeoutSec,
+			WebhookRetryScheduleSec:         next.WebhookRetryScheduleSec,
+			WebhookAutoPauseEnabled:         next.WebhookAutoPauseEnabled,
+			WebhookAutoPauseAfterFailures:   next.WebhookAutoPauseAfter,
+			WebhookEventRetentionDays:       next.WebhookEventRetentionDays,
+			WebhookDeliveryRetentionDays:    next.WebhookDeliveryRetentionDays,
+			EnvPath:                         h.envPath,
 		},
 	})
 }

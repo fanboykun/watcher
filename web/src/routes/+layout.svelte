@@ -1,13 +1,33 @@
 <script lang="ts">
 	import './layout.css';
 	import { page } from '$app/state';
-	import { Activity, LayoutDashboard, Eye, Server, Menu, X, Clock, Settings, LogOut, AlertCircle } from '@lucide/svelte';
+	import {
+		Activity,
+		LayoutDashboard,
+		Eye,
+		Server,
+		Menu,
+		X,
+		Clock,
+		Settings,
+		LogOut,
+		AlertCircle,
+		Webhook,
+		Download,
+		BellRing
+	} from '@lucide/svelte';
 	import * as Button from '$lib/components/ui/button';
 	import Separator from '$lib/components/ui/separator/separator.svelte';
 	import { Input } from '$lib/components/ui/input';
 	import { asset, resolve } from '$app/paths';
 	import { onMount } from 'svelte';
-	import { api, auth } from '$lib/api';
+	import { api, auth, type SelfUpdateCheckResponse } from '$lib/api';
+	import {
+		dismissSelfUpdate,
+		getSelfUpdateSnapshot,
+		lookupSelfUpdate,
+		subscribeSelfUpdate
+	} from '$lib/self-update';
 
 	let { children } = $props();
 
@@ -18,18 +38,33 @@
 	let authError = $state('');
 	let loggingIn = $state(false);
 	let defaultPassword = $state('');
+	let selfUpdateInfo = $state<SelfUpdateCheckResponse | null>(null);
+	let showSelfUpdateBanner = $state(false);
+
+	function syncSelfUpdateState() {
+		const snapshot = getSelfUpdateSnapshot();
+		selfUpdateInfo = snapshot.info;
+		showSelfUpdateBanner = snapshot.shouldNotify;
+	}
 
 	const navItems = [
 		{ href: '/', label: 'Dashboard', icon: LayoutDashboard },
 		{ href: '/watchers', label: 'Watchers', icon: Eye },
 		{ href: '/services', label: 'Services', icon: Server },
+		{ href: '/webhooks', label: 'Webhooks', icon: Webhook },
 		{ href: '/polling', label: 'Polling', icon: Clock },
 		{ href: '/logs', label: 'Logs', icon: Activity },
 		{ href: '/settings', label: 'Settings', icon: Settings }
 	] as const;
 
 	onMount(() => {
+		syncSelfUpdateState();
+		const unsubscribe = subscribeSelfUpdate((snapshot) => {
+			selfUpdateInfo = snapshot.info;
+			showSelfUpdateBanner = snapshot.shouldNotify;
+		});
 		validateStoredAuth();
+		return unsubscribe;
 	});
 
 	async function loadAuthBootstrap() {
@@ -51,6 +86,9 @@
 			const status = await api.authStatus();
 			authenticated = status.authenticated;
 			defaultPassword = '';
+			if (status.authenticated) {
+				void lookupSelfUpdate({ silent: true });
+			}
 		} catch {
 			auth.clearPassword();
 			authenticated = false;
@@ -73,6 +111,9 @@
 			auth.setPassword(password);
 			authenticated = status.authenticated;
 			loginPassword = '';
+			if (status.authenticated) {
+				void lookupSelfUpdate({ silent: true });
+			}
 		} catch (e) {
 			auth.clearPassword();
 			authError = e instanceof Error ? e.message : 'Login failed';
@@ -85,6 +126,11 @@
 		auth.clearPassword();
 		authenticated = false;
 		mobileOpen = false;
+	}
+
+	function dismissUpdateBanner() {
+		if (!selfUpdateInfo?.latest_version) return;
+		dismissSelfUpdate(selfUpdateInfo.latest_version);
 	}
 
 	function isActive(href: string) {
@@ -103,19 +149,35 @@
 
 {#if checkingAuth}
 	<div class="dark flex min-h-screen items-center justify-center bg-background text-foreground">
-		<div class="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+		<div
+			class="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"
+		></div>
 	</div>
 {:else if !authenticated}
-	<div class="dark flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
-		<form class="w-full max-w-sm space-y-5 rounded-lg border border-border bg-card p-6 shadow-sm" onsubmit={(e) => { e.preventDefault(); login(); }}>
+	<div
+		class="dark flex min-h-screen items-center justify-center bg-background px-4 text-foreground"
+	>
+		<form
+			class="w-full max-w-sm space-y-5 rounded-lg border border-border bg-card p-6 shadow-sm"
+			onsubmit={(e) => {
+				e.preventDefault();
+				login();
+			}}
+		>
 			<div class="space-y-2 text-center">
-				<img src={asset('/watcher.svg')} alt="Watcher" class="mx-auto h-12 w-12 rounded-lg bg-primary p-2 invert" />
+				<img
+					src={asset('/watcher.svg')}
+					alt="Watcher"
+					class="mx-auto h-12 w-12 rounded-lg bg-primary p-2 invert"
+				/>
 				<h1 class="text-lg font-semibold">Watcher</h1>
 				<p class="text-sm text-muted-foreground">Enter the dashboard password</p>
 			</div>
 
 			{#if authError}
-				<div class="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+				<div
+					class="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400"
+				>
 					<AlertCircle class="h-4 w-4" />
 					{authError}
 				</div>
@@ -123,9 +185,19 @@
 
 			<div class="space-y-2">
 				<label class="text-sm text-muted-foreground" for="watcher-password">Password</label>
-				<Input id="watcher-password" type="password" bind:value={loginPassword} autocomplete="current-password" autofocus />
+				<Input
+					id="watcher-password"
+					type="password"
+					bind:value={loginPassword}
+					autocomplete="current-password"
+					autofocus
+				/>
 				{#if defaultPassword}
-					<p class="text-xs text-muted-foreground">Default password: <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{defaultPassword}</code></p>
+					<p class="text-xs text-muted-foreground">
+						Default password: <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground"
+							>{defaultPassword}</code
+						>
+					</p>
 				{/if}
 			</div>
 
@@ -143,7 +215,11 @@
 				: '-translate-x-full'}"
 		>
 			<div class="flex h-16 items-center gap-3 border-b border-border px-6">
-				<img src={asset('/watcher.svg')} alt="Watcher" class="h-8 w-8 rounded-lg bg-primary p-1.5 invert" />
+				<img
+					src={asset('/watcher.svg')}
+					alt="Watcher"
+					class="h-8 w-8 rounded-lg bg-primary p-1.5 invert"
+				/>
 				<div>
 					<h1 class="text-sm font-semibold">Watcher</h1>
 					<p class="text-[11px] text-muted-foreground">Deploy Agent</p>
@@ -163,6 +239,13 @@
 					>
 						<item.icon class="h-4 w-4" />
 						{item.label}
+						{#if item.href === '/settings' && showSelfUpdateBanner}
+							<span
+								class="ml-auto rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-blue-300 uppercase"
+							>
+								Update
+							</span>
+						{/if}
 					</a>
 				{/each}
 			</nav>
@@ -179,7 +262,11 @@
 					rel="noopener noreferrer"
 					class="inline-flex w-full items-center justify-center gap-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
 				>
-					<svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+					<svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"
+						><path
+							d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+						/></svg
+					>
 					Watcher Agent
 				</a>
 			</div>
@@ -211,6 +298,35 @@
 		<!-- Main content -->
 		<main class="flex-1 lg:ml-64">
 			<div class="mx-auto max-w-6xl p-4 lg:p-6">
+				{#if showSelfUpdateBanner && selfUpdateInfo?.update_available}
+					<div
+						class="mb-4 flex flex-col gap-3 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-50 md:flex-row md:items-center md:justify-between"
+					>
+						<div class="flex items-start gap-3">
+							<div class="rounded-full bg-blue-500/20 p-2 text-blue-300">
+								<BellRing class="h-4 w-4" />
+							</div>
+							<div class="space-y-1">
+								<p class="font-medium text-blue-200">Watcher update available</p>
+								<p>
+									Running <span class="font-mono">{selfUpdateInfo.current_version}</span>, latest is
+									<span class="font-mono">{selfUpdateInfo.latest_version}</span>.
+								</p>
+							</div>
+						</div>
+						<div class="flex flex-wrap gap-2">
+							<a href={resolve('/settings')}>
+								<Button.Root size="sm" class="bg-blue-600 text-white hover:bg-blue-700">
+									<Download class="mr-2 h-4 w-4" />
+									Update Watcher
+								</Button.Root>
+							</a>
+							<Button.Root size="sm" variant="outline" onclick={dismissUpdateBanner}>
+								Dismiss
+							</Button.Root>
+						</div>
+					</div>
+				{/if}
 				{@render children()}
 			</div>
 		</main>

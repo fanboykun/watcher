@@ -3,9 +3,10 @@
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { Select } from '$lib/components/ui/select';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Checkbox } from '$lib/components/ui/checkbox';
+	import WebhookEventReference from '$lib/components/webhook-event-reference.svelte';
 	import { Trash2, Plus, ArrowRight, Check } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
@@ -20,6 +21,7 @@
 		type ConfigFileTarget,
 		type Service
 	} from '$lib/api';
+	import type { WebhookSelectionState } from '$lib/webhooks';
 
 	let {
 		open = $bindable(false),
@@ -45,6 +47,18 @@
 	let formDeploymentEnvironment = $state('');
 	let formGitHubToken = $state('');
 	let useCustomGitHubToken = $state(false);
+	let formWebhookEnabled = $state(false);
+	let formWebhookURL = $state('');
+	let formWebhookBearerToken = $state('');
+	let useCustomWebhookBearerToken = $state(false);
+	let webhookSelections = $state<WebhookSelectionState>({
+		notify_version_found: false,
+		notify_deployment_succeeded: false,
+		notify_deployment_failed: false,
+		notify_rollback_succeeded: false,
+		notify_rollback_failed: false,
+		notify_service_health_changed: false
+	});
 	let formServices = $state<Partial<Service>[]>([]);
 
 	let inspecting = $state(false);
@@ -201,6 +215,15 @@
 				release_ref: formReleaseRef.trim() || 'latest',
 				deployment_environment: formDeploymentEnvironment,
 				github_token: useCustomGitHubToken ? formGitHubToken.trim() : '',
+				webhook_enabled: formWebhookEnabled,
+				webhook_url: formWebhookURL,
+				webhook_bearer_token: useCustomWebhookBearerToken ? formWebhookBearerToken.trim() : '',
+				notify_version_found: webhookSelections.notify_version_found,
+				notify_deployment_succeeded: webhookSelections.notify_deployment_succeeded,
+				notify_deployment_failed: webhookSelections.notify_deployment_failed,
+				notify_rollback_succeeded: webhookSelections.notify_rollback_succeeded,
+				notify_rollback_failed: webhookSelections.notify_rollback_failed,
+				notify_service_health_changed: webhookSelections.notify_service_health_changed,
 				install_dir: formInstallDir,
 				check_interval_sec: formInterval,
 				hc_enabled: formHcEnabled,
@@ -241,6 +264,18 @@
 		formDeploymentEnvironment = '';
 		formGitHubToken = '';
 		useCustomGitHubToken = false;
+		formWebhookEnabled = false;
+		formWebhookURL = '';
+		formWebhookBearerToken = '';
+		useCustomWebhookBearerToken = false;
+		webhookSelections = {
+			notify_version_found: false,
+			notify_deployment_succeeded: false,
+			notify_deployment_failed: false,
+			notify_rollback_succeeded: false,
+			notify_rollback_failed: false,
+			notify_service_health_changed: false
+		};
 		formServices = [];
 		inspectResult = null;
 		selectedInspectService = '';
@@ -466,6 +501,34 @@
 							</div>
 						</div>
 
+						<div class="rounded-lg border border-border/60 p-4 space-y-4">
+							<div class="flex items-center gap-2">
+								<Checkbox id="webhookEnabled" bind:checked={formWebhookEnabled} />
+								<Label for="webhookEnabled" class="select-none">Enable webhook delivery for this watcher</Label>
+							</div>
+							<div class="grid gap-4 sm:grid-cols-2">
+								<div class="space-y-2">
+									<Label for="webhookURL">Webhook URL</Label>
+									<Input id="webhookURL" placeholder="https://example.com/hooks/watcher" bind:value={formWebhookURL} />
+									<p class="text-xs text-muted-foreground">Leave empty to inherit the global default URL.</p>
+								</div>
+								<div class="space-y-2">
+									<Label for="webhookBearerToken">Webhook Bearer Token Override</Label>
+									<Input id="webhookBearerToken" type="password" placeholder="Bearer token override" bind:value={formWebhookBearerToken} disabled={!useCustomWebhookBearerToken} />
+									<div class="flex items-center gap-2 mt-2">
+										<Checkbox id="useCustomWebhookBearerToken" bind:checked={useCustomWebhookBearerToken} />
+										<Label for="useCustomWebhookBearerToken" class="text-sm select-none">Use watcher-specific webhook bearer token</Label>
+									</div>
+								</div>
+							</div>
+							<WebhookEventReference
+								title="Webhook Event Subscriptions"
+								description="Choose which watcher events should be delivered. Each event entry explains when it fires and what payload fields receivers should expect."
+								bind:selections={webhookSelections}
+								showSelection={true}
+							/>
+						</div>
+
 						<div class="flex items-center gap-2 mt-4">
 							<Checkbox id="hcEnabled" bind:checked={formHcEnabled} />
 							<Label for="hcEnabled" class="select-none">Enable Health Checks across services</Label>
@@ -483,10 +546,15 @@
 								<div class="grid gap-3 sm:grid-cols-2">
 									<div class="space-y-1">
 										<Label class="text-xs">Hosting Mode</Label>
-										<Select bind:value={svc.service_type} class="h-8 text-xs">
-											<option value="nssm">NSSM Native Windows</option>
-											<option value="iis">IIS Site</option>
-										</Select>
+										<Select.Root type="single" bind:value={svc.service_type}>
+											<Select.Trigger class="h-8 text-xs">
+												{isIISService(svc.service_type || 'nssm') ? 'IIS Site' : 'NSSM Native Windows'}
+											</Select.Trigger>
+											<Select.Content>
+												<Select.Item value="nssm" label="NSSM Native Windows">NSSM Native Windows</Select.Item>
+												<Select.Item value="iis" label="IIS Site">IIS Site</Select.Item>
+											</Select.Content>
+										</Select.Root>
 									</div>
 									<div class="space-y-1">
 										<Label class="text-xs">{isIISService(svc.service_type || 'nssm') ? 'Service Identifier' : 'Windows Service Name'}</Label>
@@ -519,11 +587,16 @@
 									{:else}
 										<div class="space-y-1 sm:col-span-2">
 											<Label class="text-xs">IIS App Kind</Label>
-											<Select bind:value={svc.iis_app_kind} class="h-8 text-xs">
-												{#each iisAppKinds as kind (kind.value)}
-													<option value={kind.value}>{kind.label}</option>
-												{/each}
-											</Select>
+											<Select.Root type="single" bind:value={svc.iis_app_kind}>
+												<Select.Trigger class="h-8 text-xs">
+													{iisAppKinds.find((kind) => kind.value === (svc.iis_app_kind || 'static'))?.label || 'Select kind'}
+												</Select.Trigger>
+												<Select.Content>
+													{#each iisAppKinds as kind (kind.value)}
+														<Select.Item value={kind.value} label={kind.label}>{kind.label}</Select.Item>
+													{/each}
+												</Select.Content>
+											</Select.Root>
 											<p class="text-[11px] text-muted-foreground">
 												{iisAppKinds.find((kind) => kind.value === (svc.iis_app_kind || 'static'))?.hint}
 											</p>
@@ -570,10 +643,15 @@
 														</div>
 														<div class="grid gap-2 sm:grid-cols-[1fr_150px]">
 															<Input class="h-8 text-xs" bind:value={file.file_path} placeholder="web.config or config/appsettings.json" />
-															<Select bind:value={file.target} class="h-8 text-xs">
-																<option value="app_dir">Service/app dir</option>
-																<option value="release_dir">Current dir</option>
-															</Select>
+															<Select.Root type="single" bind:value={file.target}>
+																<Select.Trigger class="h-8 text-xs">
+																	{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
+																</Select.Trigger>
+																<Select.Content>
+																	<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
+																	<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
+																</Select.Content>
+															</Select.Root>
 														</div>
 														<Textarea
 															class="min-h-[120px] font-mono text-xs text-blue-300"

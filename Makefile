@@ -41,12 +41,13 @@ INSTALLER_LDFLAGS := $(LDFLAGS) -H=windowsgui
 # ── Output path ───────────────────────────────────────────────
 OUT := $(BIN_DIR)/$(BINARY_NAME)
 INSTALLER_OUT := $(BIN_DIR)/$(INSTALLER_BINARY_NAME)
+PACKAGE_DIR := $(BIN_DIR)/$(APP_NAME)-$(VERSION)
 
 # ==============================================================
 # Targets
 # ==============================================================
 
-.PHONY: all build build-go build-installer build-web package test test-github test-verbose run dev clean info help
+.PHONY: all build build-go build-installer build-web package test test-github test-verbose run webhook-server dev clean info help
 
 ## all: run tests then build
 all: test build
@@ -133,23 +134,23 @@ build-installer:
 	@echo "    OK: $(INSTALLER_OUT)"
 	@echo ""
 
-## package: build watcher.exe and zip with shell/ scripts + .env.example + INSTALL.md
+## package: build a clean production-style release directory (no zip)
 package: build build-installer
 	@echo ""
-	@echo ">>> Packaging release zip"
-	@mkdir -p $(BIN_DIR)/staging/shell
-	@cp $(OUT)                       $(BIN_DIR)/staging/
-	@cp $(INSTALLER_OUT)             $(BIN_DIR)/staging/
-	@cp install.bat                  $(BIN_DIR)/staging/
-	@cp install-debug.bat            $(BIN_DIR)/staging/
-	@cp shell/install-watcher.ps1    $(BIN_DIR)/staging/shell/
-	@cp .env.example                 $(BIN_DIR)/staging/
-	@cp INSTALL.md                   $(BIN_DIR)/staging/
-	@cd $(BIN_DIR)/staging && zip -r ../$(APP_NAME)-$(VERSION).zip . && cd ../..
+	@echo ">>> Packaging release directory"
+	@rm -rf $(PACKAGE_DIR)
+	@mkdir -p $(PACKAGE_DIR)/shell
+	@cp $(OUT)                    $(PACKAGE_DIR)/
+	@cp $(INSTALLER_OUT)          $(PACKAGE_DIR)/
+	@cp install.bat               $(PACKAGE_DIR)/
+	@cp install-debug.bat         $(PACKAGE_DIR)/
+	@cp shell/install-watcher.ps1 $(PACKAGE_DIR)/shell/
+	@cp .env.example              $(PACKAGE_DIR)/
+	@cp INSTALL.md                $(PACKAGE_DIR)/
 	@echo ""
-	@echo "    OK: $(BIN_DIR)/$(APP_NAME)-$(VERSION).zip"
+	@echo "    OK: $(PACKAGE_DIR)"
 	@echo "    Contents:"
-	@unzip -l $(BIN_DIR)/$(APP_NAME)-$(VERSION).zip
+	@find $(PACKAGE_DIR) -maxdepth 2 -type f | sort
 	@echo ""
 
 ## test: run all tests
@@ -182,6 +183,15 @@ run:
 	@echo "    Config : .env"
 	@echo ""
 	$(GO) run $(CMD_PATH) -config .env
+
+## webhook-server: run the example webhook receiver locally
+webhook-server:
+	@echo ""
+	@echo ">>> Running example webhook server"
+	@echo "    UI      : http://localhost:8091"
+	@echo "    Webhook : http://localhost:8091/webhook"
+	@echo ""
+	$(GO) run ./cmd/webhook-server -addr :8091 -path /webhook
 
 ## clean: remove build artifacts
 clean:

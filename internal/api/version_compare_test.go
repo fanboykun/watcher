@@ -11,6 +11,8 @@ func TestCompareSemver(t *testing.T) {
 		{a: "1.2.0", b: "v1.2.0", want: 0},
 		{a: "v1.0.0", b: "v1.2.0", want: -1},
 		{a: "v2", b: "v1.9.9", want: 1},
+		{a: "alpha-api-v0.2.0-windows-amd64.zip", b: "alpha-api/v0.1.9", want: 1},
+		{a: "release-blue", b: "release-green", want: 0},
 	}
 
 	for _, tt := range tests {

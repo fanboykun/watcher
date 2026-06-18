@@ -9,7 +9,6 @@
 		CheckCircle2,
 		XCircle,
 		Loader2,
-		RotateCcw,
 		Copy
 	} from '@lucide/svelte';
 	import { resolve } from '$app/paths';
@@ -73,14 +72,12 @@
 
 	function deployIcon(s: string) {
 		switch (s) {
-			case 'healthy':
+			case 'succeeded':
 				return CheckCircle2;
 			case 'failed':
 				return XCircle;
-			case 'deploying':
+			case 'in_progress':
 				return Loader2;
-			case 'rollback':
-				return RotateCcw;
 			default:
 				return Clock;
 		}
@@ -182,11 +179,17 @@
 	{/if}
 
 	{#if deployLog}
-		<div class="grid flex-none grid-cols-2 gap-4 md:grid-cols-5">
+		<div class="grid flex-none grid-cols-2 gap-4 md:grid-cols-6">
 			<Card.Root class="bg-card">
 				<Card.Content class="p-4">
 					<div class="mb-1 text-xs text-muted-foreground">Previous Version</div>
 					<div class="font-mono text-sm">{deployLog.from_version || 'N/A'}</div>
+				</Card.Content>
+			</Card.Root>
+			<Card.Root class="bg-card">
+				<Card.Content class="p-4">
+					<div class="mb-1 text-xs text-muted-foreground">Attempt</div>
+					<div class="text-sm capitalize">{deployLog.kind} / {deployLog.reason}</div>
 				</Card.Content>
 			</Card.Root>
 			<Card.Root class="bg-card">
@@ -220,11 +223,14 @@
 				<Card.Header class="border-b border-border/50 pb-3">
 					<Card.Title class="flex items-center text-sm font-medium text-red-500">
 						<XCircle class="mr-2 h-4 w-4" />
-						Deployment Error
+						Attempt Error
 					</Card.Title>
 				</Card.Header>
 				<Card.Content class="p-4">
 					<p class="font-mono text-sm wrap-break-word text-red-400">{deployLog.error}</p>
+					{#if deployLog.failure_phase}
+						<p class="mt-2 text-xs text-red-300">Failure phase: {deployLog.failure_phase}</p>
+					{/if}
 				</Card.Content>
 			</Card.Root>
 		{/if}

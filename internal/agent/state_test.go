@@ -31,7 +31,7 @@ func TestStateManagerHasPendingManualDeploy(t *testing.T) {
 		t.Fatalf("create watcher: %v", err)
 	}
 
-	state := NewStateManager(db, watcher.ID, NewLogger("test"), nil)
+	state := NewStateManager(db, watcher.ID, NewLogger("test"), nil, nil)
 	if state.HasPendingManualDeploy() {
 		t.Fatalf("expected no pending manual deploy initially")
 	}
@@ -39,8 +39,9 @@ func TestStateManagerHasPendingManualDeploy(t *testing.T) {
 	log := database.DeployLog{
 		WatcherID:   watcher.ID,
 		TriggeredBy: "manual",
+		Kind:        "deploy",
 		Version:     "alpha-api/v0.1.0",
-		Status:      string(StatusDeploying),
+		Status:      "in_progress",
 	}
 	if err := db.Create(&log).Error; err != nil {
 		t.Fatalf("create manual deploy log: %v", err)

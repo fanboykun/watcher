@@ -191,9 +191,55 @@ export interface Watcher {
 	last_checked: string | null;
 	last_deployed: string | null;
 	last_error: string;
+	webhook_enabled: boolean;
+	webhook_url: string;
+	has_webhook_bearer_token: boolean;
+	webhook_bearer_token_masked: string;
+	webhook_auto_pause_enabled_override?: boolean | null;
+	webhook_auto_pause_after_failures_override?: number | null;
+	webhook_paused_at: string | null;
+	webhook_pause_reason: string;
+	webhook_failure_streak: number;
+	notify_version_found: boolean;
+	notify_deployment_succeeded: boolean;
+	notify_deployment_failed: boolean;
+	notify_rollback_succeeded: boolean;
+	notify_rollback_failed: boolean;
+	notify_service_health_changed: boolean;
 	services: Service[];
 	created_at: string;
 	updated_at: string;
+}
+
+export interface WatcherWritePayload {
+	name?: string;
+	service_name?: string;
+	metadata_url?: string;
+	release_ref?: string;
+	deployment_environment?: string;
+	github_token?: string;
+	check_interval_sec?: number;
+	download_retries?: number;
+	install_dir?: string;
+	hc_enabled?: boolean;
+	hc_url?: string;
+	hc_retries?: number;
+	hc_interval_sec?: number;
+	hc_timeout_sec?: number;
+	paused?: boolean;
+	max_kept_versions?: number;
+	webhook_enabled?: boolean;
+	webhook_url?: string;
+	webhook_bearer_token?: string;
+	webhook_auto_pause_enabled_override?: boolean | null;
+	webhook_auto_pause_after_failures_override?: number | null;
+	notify_version_found?: boolean;
+	notify_deployment_succeeded?: boolean;
+	notify_deployment_failed?: boolean;
+	notify_rollback_succeeded?: boolean;
+	notify_rollback_failed?: boolean;
+	notify_service_health_changed?: boolean;
+	services?: ServiceWritePayload[];
 }
 
 export type ServiceType = 'nssm' | 'iis';
@@ -219,6 +265,22 @@ export interface Service {
 	updated_at: string;
 }
 
+export interface ServiceWritePayload {
+	service_type?: ServiceType | 'static';
+	windows_service_name?: string;
+	binary_name?: string;
+	start_arguments?: string;
+	env_file?: string;
+	health_check_url?: string;
+	iis_app_kind?: IISAppKind;
+	iis_app_pool?: string;
+	iis_site_name?: string;
+	iis_managed_runtime?: string;
+	public_url?: string;
+	env_content?: string;
+	config_files?: ServiceConfigFile[];
+}
+
 export type ConfigFileTarget = 'app_dir' | 'release_dir';
 
 export interface ServiceConfigFile {
@@ -238,12 +300,18 @@ export interface DeployLog {
 	id: number;
 	watcher_id: number;
 	triggered_by: 'agent' | 'manual' | string;
+	kind: 'deploy' | 'rollback' | string;
+	reason: string;
 	version: string;
 	from_version: string;
+	failed_target_version: string;
 	status: string;
 	error: string;
+	failure_phase: string;
 	duration_ms: number;
 	github_deployment_id: number;
+	parent_attempt_id?: number | null;
+	root_attempt_id?: number | null;
 	logs: string | null;
 	started_at: string | null;
 	completed_at: string | null;
@@ -260,9 +328,77 @@ export interface HealthEvent {
 	id: number;
 	service_id: number;
 	status: string;
+	previous_status: string;
+	source: string;
 	http_status: number;
 	error: string;
 	checked_at: string | null;
+}
+
+export interface WebhookEvent {
+	id: number;
+	watcher_id: number;
+	event_id: string;
+	schema_version: string;
+	event_type: string;
+	dedupe_key: string;
+	status: string;
+	summary: string;
+	payload: string;
+	occurred_at: string;
+	suppressed_at: string | null;
+	last_delivery_at: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface WebhookDelivery {
+	id: number;
+	watcher_id: number;
+	webhook_event_id: number;
+	event_id: string;
+	event_type: string;
+	summary: string;
+	delivery_id: string;
+	status: string;
+	attempt_number: number;
+	response_status_code: number;
+	response_body: string;
+	error: string;
+	resolved_url: string;
+	auth_type: string;
+	token_source: string;
+	next_retry_at: string | null;
+	last_attempt_at: string | null;
+	completed_at: string | null;
+	replayed_at: string | null;
+	replayed_by: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface WebhookDeliveryDetails {
+	delivery: WebhookDelivery;
+	event: {
+		id: number;
+		event_id: string;
+		event_type: string;
+		schema_version: string;
+		status: string;
+		summary: string;
+		occurred_at: string;
+		payload: unknown;
+	};
+	request: {
+		url: string;
+		auth_type: string;
+		token_source: string;
+		headers: {
+			content_type: string;
+			x_watcher_event: string;
+			x_watcher_delivery_id: string;
+		};
+	};
 }
 
 export interface PollEvent {
@@ -328,6 +464,15 @@ export interface SelfConfigResponse {
 	watcher_service_name: string;
 	has_github_token: boolean;
 	github_token_masked: string;
+	webhook_default_url: string;
+	has_webhook_default_bearer_token: boolean;
+	webhook_default_bearer_token_masked: string;
+	webhook_timeout_sec: number;
+	webhook_retry_schedule_sec: string;
+	webhook_auto_pause_enabled: boolean;
+	webhook_auto_pause_after_failures: number;
+	webhook_event_retention_days: number;
+	webhook_delivery_retention_days: number;
 	env_path: string;
 }
 
@@ -342,6 +487,14 @@ export interface UpdateSelfConfigRequest {
 	api_base_url?: string;
 	watcher_repo_url?: string;
 	watcher_service_name?: string;
+	webhook_default_url?: string;
+	webhook_default_bearer_token?: string;
+	webhook_timeout_sec?: number;
+	webhook_retry_schedule_sec?: string;
+	webhook_auto_pause_enabled?: boolean;
+	webhook_auto_pause_after_failures?: number;
+	webhook_event_retention_days?: number;
+	webhook_delivery_retention_days?: number;
 }
 
 export function isIISService(serviceType: Service['service_type'] | ServiceType): boolean {
@@ -394,8 +547,8 @@ export const api = {
 	// Watchers
 	listWatchers: () => request<Watcher[]>('/watchers'),
 	getWatcher: (id: number) => request<Watcher>(`/watchers/${id}`),
-	createWatcher: (data: Partial<Watcher>) => request<Watcher>('/watchers', { method: 'POST', body: JSON.stringify(data) }),
-	updateWatcher: (id: number, data: Partial<Watcher>) => request<Watcher>(`/watchers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+	createWatcher: (data: WatcherWritePayload) => request<Watcher>('/watchers', { method: 'POST', body: JSON.stringify(data) }),
+	updateWatcher: (id: number, data: WatcherWritePayload) => request<Watcher>(`/watchers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 	deleteWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}`, { method: 'DELETE' }),
 	triggerCheck: (id: number) => request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
 	redeployWatcher: (id: number) =>
@@ -422,6 +575,11 @@ export const api = {
 	resumeWatcherUpdates: (id: number) => request<{ message: string }>(`/watchers/${id}/resume`, { method: 'POST' }),
 	deleteWatcherVersion: (id: number, version: string) => request<{ message: string }>(`/watchers/${id}/versions/${version}`, { method: 'DELETE' }),
 	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') => request<{ data: PollEvent[], total: number, page: number, pageSize: number }>(`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`),
+	watcherWebhookEvents: (id: number) => request<WebhookEvent[]>(`/watchers/${id}/webhook-events`),
+	watcherWebhookDeliveries: (id: number, page = 1, pageSize = 20) => request<PaginatedResponse<WebhookDelivery>>(`/watchers/${id}/webhook-deliveries?page=${page}&pageSize=${pageSize}`),
+	watcherWebhookDelivery: (id: number, deliveryId: number) => request<WebhookDeliveryDetails>(`/watchers/${id}/webhook-deliveries/${deliveryId}`),
+	sendWatcherWebhookTest: (id: number) => request<{ message: string }>(`/watchers/${id}/webhook/test`, { method: 'POST' }),
+	resumeWatcherWebhook: (id: number, replaySuppressed = false) => request<{ message: string; replay_suppressed: boolean }>(`/watchers/${id}/webhook/resume`, { method: 'POST', body: JSON.stringify({ replay_suppressed: replaySuppressed }) }),
 	streamWatcherEvents: (id: number, onMessage: (data: string) => void | Promise<void>, onError?: (error: unknown) => void) =>
 		openAuthenticatedEventStream(`/watchers/${id}/events`, { onMessage, onError }, { reconnect: true }),
 	streamDeployLog: (id: number, logId: number, onMessage: (data: string) => void | Promise<void>, onError?: (error: unknown) => void) =>
@@ -440,8 +598,8 @@ export const api = {
 	syncServiceEnv: (id: number, envContent: string) => request<{ message: string }>(`/services/${id}/env`, { method: 'PUT', body: JSON.stringify({ env_content: envContent }) }),
 
 	// Services (nested under watcher)
-	createService: (watcherId: number, data: Partial<Service>) => request<Service>(`/watchers/${watcherId}/services`, { method: 'POST', body: JSON.stringify(data) }),
-	updateService: (watcherId: number, serviceId: number, data: Partial<Service>) =>
+	createService: (watcherId: number, data: ServiceWritePayload) => request<Service>(`/watchers/${watcherId}/services`, { method: 'POST', body: JSON.stringify(data) }),
+	updateService: (watcherId: number, serviceId: number, data: ServiceWritePayload) =>
 		request<Service>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'PUT', body: JSON.stringify(data) }),
 	deleteService: (watcherId: number, serviceId: number) => request<{ message: string }>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'DELETE' }),
 
