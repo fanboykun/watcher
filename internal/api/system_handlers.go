@@ -474,7 +474,7 @@ func validateOptionalWebhookSigningSecret(secret string) error {
 		return nil
 	}
 	if _, err := webhook.NewStandardWebhook(secret); err != nil {
-		return fmt.Errorf("webhook signing secret must start with whsec_ and contain a valid base64 secret")
+		return fmt.Errorf("webhook signing secret must be valid base64 secret material; optional whsec_ prefix is allowed")
 	}
 	return nil
 }

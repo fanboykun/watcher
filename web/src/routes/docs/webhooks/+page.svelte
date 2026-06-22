@@ -128,7 +128,7 @@
 			<p><span class="font-medium text-foreground">JSON body:</span> accept <code>application/json</code> request bodies and parse nested typed objects.</p>
 			<p><span class="font-medium text-foreground">Success response:</span> return any <code>2xx</code> response after accepting the event.</p>
 			<p><span class="font-medium text-foreground">Idempotency:</span> deduplicate using <code>event_id</code> because delivery is at-least-once.</p>
-			<p><span class="font-medium text-foreground">Auth handling:</span> verify the Standard Webhooks HMAC signature using the shared <code>whsec_...</code> secret you configured in Watcher.</p>
+			<p><span class="font-medium text-foreground">Auth handling:</span> verify the Standard Webhooks HMAC signature using the shared signing secret you configured in Watcher.</p>
 			<p><span class="font-medium text-foreground">Operational visibility:</span> log or store <code>type</code>, <code>event_id</code>, <code>webhook-id</code>, and <code>X-Watcher-Delivery-ID</code> so you can trace retries and incidents.</p>
 		</Card.Content>
 	</Card.Root>
@@ -157,7 +157,7 @@
 				<ul class="mt-2 space-y-1">
 					<li>Watcher signs the literal request payload bytes using Standard Webhooks HMAC-SHA256.</li>
 					<li>The signing secret can come from the global default or a watcher-specific override.</li>
-					<li>Use the same <code>whsec_...</code> secret on your receiver when verifying the request.</li>
+					<li>Use the same signing secret on your receiver when verifying the request.</li>
 					<li>The signature covers <code>webhook-id</code>, <code>webhook-timestamp</code>, and the raw request body.</li>
 				</ul>
 			</div>
@@ -168,11 +168,11 @@
 		<Card.Header>
 			<Card.Title>Signing Secret Format</Card.Title>
 			<Card.Description>
-				What the `whsec_...` value looks like, where to get it, and how both sides should use it.
+				What the signing secret looks like, where to get it, and how both sides should use it.
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm text-muted-foreground">
-			<p><span class="font-medium text-foreground">Format:</span> the secret should start with <code>whsec_</code> and the remainder should be a base64-encoded random value.</p>
+			<p><span class="font-medium text-foreground">Format:</span> use high-entropy base64 secret material. The conventional <code>whsec_</code> prefix is allowed but not required.</p>
 			<p><span class="font-medium text-foreground">Generate it:</span> create a new unpredictable secret, store it in your receiver first, then copy the exact same value into Watcher.</p>
 			<p><span class="font-medium text-foreground">Watcher side:</span> Watcher decodes the secret, signs the raw request body, and sends <code>webhook-id</code>, <code>webhook-timestamp</code>, and <code>webhook-signature</code>.</p>
 			<p><span class="font-medium text-foreground">Receiver side:</span> verify the raw body with the exact same secret before trusting the payload. If the secret or body differs, verification fails with <code>invalid signature</code>.</p>
@@ -300,7 +300,7 @@
 		<Card.Header>
 			<Card.Title>Secret Setup And Rotation</Card.Title>
 			<Card.Description>
-				How to manage the <code>whsec_...</code> signing secret safely from first setup through rotation.
+				How to manage the webhook signing secret safely from first setup through rotation.
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm text-muted-foreground">
@@ -321,7 +321,7 @@
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm text-muted-foreground">
 			<p><span class="font-medium text-foreground">Replace bearer auth assumptions:</span> Watcher no longer expects receivers to verify <code>Authorization: Bearer ...</code> for outbound webhooks.</p>
-			<p><span class="font-medium text-foreground">Add standard verification:</span> verify <code>webhook-id</code>, <code>webhook-timestamp</code>, and <code>webhook-signature</code> with the shared <code>whsec_...</code> secret.</p>
+			<p><span class="font-medium text-foreground">Add standard verification:</span> verify <code>webhook-id</code>, <code>webhook-timestamp</code>, and <code>webhook-signature</code> with the shared signing secret.</p>
 			<p><span class="font-medium text-foreground">Prefer standard fields for new code:</span> use <code>type</code>, <code>timestamp</code>, and <code>data</code> first.</p>
 			<p><span class="font-medium text-foreground">Compatibility remains:</span> Watcher still includes the legacy convenience fields like <code>event_id</code>, <code>event_type</code>, and <code>occurred_at</code> during the transition.</p>
 		</Card.Content>

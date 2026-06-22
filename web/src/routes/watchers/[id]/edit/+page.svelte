@@ -393,7 +393,7 @@
 								id="editWebhookSigningSecret"
 								type="password"
 								bind:value={editWebhookSigningSecret}
-								placeholder="Paste new whsec_... secret to replace override"
+								placeholder="Paste new base64 or whsec_... secret to replace override"
 								disabled={editUseGlobalWebhookToken}
 							/>
 							<div class="mt-2 flex items-center gap-2">
