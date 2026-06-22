@@ -126,9 +126,9 @@
 
 	function authSourceHelp(watcher: Watcher) {
 		if (watcher.has_webhook_signing_secret) {
-			return 'Paste the exact same `whsec_...` value into your receiver and Watcher. The secret must start with `whsec_` and the masked text shown here is only a display hint.';
+			return 'Paste the exact same signing secret into your receiver and Watcher. Raw base64 secret material or the conventional `whsec_...` form both work, and the masked text shown here is only a display hint.';
 		}
-		return 'Watcher will inherit the global `whsec_...` signing secret from system settings. The secret must start with `whsec_`, and your receiver must use the same exact value to verify signatures.';
+		return 'Watcher will inherit the global signing secret from system settings. Raw base64 secret material or the conventional `whsec_...` form both work, and your receiver must use the same exact value to verify signatures.';
 	}
 
 	const deliverySummary = $derived.by<DeliverySummary>(() => {

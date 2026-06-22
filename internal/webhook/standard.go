@@ -26,7 +26,6 @@ var (
 	tolerance = 5 * time.Minute
 
 	ErrInvalidSigningSecret = errors.New("invalid signing secret")
-	ErrMissingSigningPrefix = errors.New("missing whsec_ prefix")
 	ErrRequiredHeaders      = errors.New("missing required headers")
 	ErrInvalidHeaders       = errors.New("invalid signature headers")
 	ErrNoMatchingSignature  = errors.New("no matching signature found")
@@ -42,9 +41,6 @@ func NewStandardWebhook(secret string) (*StandardWebhook, error) {
 	trimmed := strings.TrimSpace(secret)
 	if trimmed == "" {
 		return nil, fmt.Errorf("unable to create webhook, err: %w", ErrInvalidSigningSecret)
-	}
-	if !strings.HasPrefix(trimmed, WebhookSecretPrefix) {
-		return nil, fmt.Errorf("unable to create webhook, err: %w", errors.Join(ErrInvalidSigningSecret, ErrMissingSigningPrefix))
 	}
 	key, err := base64enc.DecodeString(strings.TrimPrefix(trimmed, WebhookSecretPrefix))
 	if err != nil {

@@ -44,7 +44,7 @@ When delivering an event, Watcher sends an HTTP request with the following detai
 
 ### 2.1 Signing Secret Format
 
-Watcher uses a Standard Webhooks HMAC signing secret. The value should look like:
+Watcher uses a Standard Webhooks HMAC signing secret. The conventional value looks like:
 
 ```text
 whsec_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd
@@ -52,11 +52,11 @@ whsec_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd
 
 What that means:
 
-- `whsec_` is the required prefix.
-- The part after the prefix is a base64-encoded random secret.
+- The secret material is a base64-encoded random value.
+- The `whsec_` prefix is optional. Watcher accepts either raw base64 secret material or the conventional `whsec_...` form.
 - The secret itself should be high entropy and unpredictable.
 - It is not a password, token, or user-visible label.
-- There is no semantic naming pattern beyond the `whsec_...` format.
+- There is no semantic naming pattern beyond the secret bytes themselves.
 
 How to get one:
 
@@ -66,14 +66,14 @@ How to get one:
 
 How Watcher uses it:
 
-- Watcher reads the configured `whsec_...` value from the global default or watcher override.
+- Watcher reads the configured signing secret from the global default or watcher override.
 - It decodes the secret and uses it to sign the exact raw request body.
 - It places the signature in `webhook-signature` and sends the matching `webhook-id` and `webhook-timestamp` headers.
 
 How your receiver should use it:
 
 - Read the exact raw request body bytes.
-- Recompute the HMAC using the same `whsec_...` value.
+- Recompute the HMAC using the same secret value.
 - Verify the `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers before trusting the payload.
 - Reject the request if the secret differs, the body changed, or the timestamp is outside your tolerance window.
 
@@ -132,7 +132,7 @@ import (
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 )
 
-const signingSecret = "whsec_your_configured_secret"
+const signingSecret = "whsec_your_configured_secret" // raw base64 secret material also works
 
 func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	// 1. Verify Request Method
@@ -210,7 +210,7 @@ app.use(express.json({
   }
 }));
 
-const SIGNING_SECRET = 'whsec_your_configured_secret';
+const SIGNING_SECRET = 'whsec_your_configured_secret'; // raw base64 secret material also works
 
 type RawBodyRequest = Request & { rawBody?: Buffer };
 
@@ -294,7 +294,7 @@ Use this checklist when wiring a new receiver from scratch:
    - Make sure your reverse proxy, firewall, and TLS settings allow Watcher to reach it.
 
 2. **Generate a signing secret**
-   - Generate a random Standard Webhooks HMAC secret in the `whsec_...` format.
+   - Generate a random Standard Webhooks HMAC secret as high-entropy base64 secret material. Adding the conventional `whsec_` prefix is optional.
    - Use one secret per logical endpoint or consumer whenever practical.
    - Store it in your receiver secret store first, then copy the same value into Watcher.
 
@@ -358,7 +358,7 @@ Treat the signing secret like any other production credential:
 If you already integrated with Watcher’s earlier bearer-token-oriented webhook contract, the migration path is:
 
 1. Remove the old expectation that Watcher authenticates with `Authorization: Bearer ...`.
-2. Add Standard Webhooks verification using the shared `whsec_...` secret.
+2. Add Standard Webhooks verification using the shared signing secret.
 3. Keep reading the existing Watcher event fields if you already depend on them.
 4. Prefer the new standard top-level fields for new integrations:
    - `type`
@@ -387,7 +387,7 @@ Before treating the integration as shipped, confirm all of the following:
   - Usually caused by verifying a parsed JSON body instead of the raw bytes, or by a proxy/body parser consuming the raw stream incorrectly.
 
 - **All requests fail with `401`**
-  - Usually the receiver and Watcher do not share the same `whsec_...` secret, or the receiver’s clock tolerance is too strict.
+  - Usually the receiver and Watcher do not share the same signing secret, or the receiver’s clock tolerance is too strict.
 
 - **Retries keep happening for the same business event**
   - The receiver may be doing real work before responding and timing out, or it may be returning `5xx` after partial processing.

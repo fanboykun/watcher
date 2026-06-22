@@ -514,12 +514,12 @@
 								</div>
 								<div class="space-y-2">
 									<Label for="webhookSigningSecret">Webhook Signing Secret Override</Label>
-									<Input id="webhookSigningSecret" type="password" placeholder="whsec_..." bind:value={formWebhookSigningSecret} disabled={!useCustomWebhookSigningSecret} />
+									<Input id="webhookSigningSecret" type="password" placeholder="base64 secret or whsec_..." bind:value={formWebhookSigningSecret} disabled={!useCustomWebhookSigningSecret} />
 									<div class="flex items-center gap-2 mt-2">
 										<Checkbox id="useCustomWebhookSigningSecret" bind:checked={useCustomWebhookSigningSecret} />
 										<Label for="useCustomWebhookSigningSecret" class="text-sm select-none">Use watcher-specific webhook signing secret</Label>
 									</div>
-									<p class="text-xs text-muted-foreground">Standard Webhooks requires a <code>whsec_...</code> signing secret.</p>
+									<p class="text-xs text-muted-foreground">Use the same signing secret as your receiver. Raw base64 secret material or the conventional <code>whsec_...</code> form both work.</p>
 								</div>
 							</div>
 							<WebhookEventReference

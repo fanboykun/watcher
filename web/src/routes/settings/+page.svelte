@@ -511,7 +511,7 @@
 							</label>
 						</div>
 						<p class="text-xs text-muted-foreground">
-							Use a Standard Webhooks HMAC secret in the <code>whsec_...</code> format.
+							Use a Standard Webhooks HMAC signing secret. Raw base64 secret material or the conventional <code>whsec_...</code> form both work.
 						</p>
 					</div>
 					<div class="space-y-2">

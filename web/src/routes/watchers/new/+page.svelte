@@ -795,13 +795,13 @@
 									type="password"
 									bind:value={webhookSigningSecret}
 									disabled={!useCustomWebhookSigningSecret}
-									placeholder="whsec_..."
+									placeholder="base64 secret or whsec_..."
 								/>
 								<div class="mt-2 flex items-center gap-2">
 									<Checkbox id="useCustomWebhookSigningSecret" bind:checked={useCustomWebhookSigningSecret} />
 									<Label for="useCustomWebhookSigningSecret">Use watcher-specific webhook signing secret</Label>
 								</div>
-								<p class="text-xs text-muted-foreground">Uses the Standard Webhooks <code>whsec_...</code> secret format.</p>
+								<p class="text-xs text-muted-foreground">Use the same signing secret as your receiver. Raw base64 secret material or the conventional <code>whsec_...</code> form both work.</p>
 							</div>
 						</div>
 					</div>

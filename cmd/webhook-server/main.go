@@ -165,7 +165,7 @@ func main() {
 	cfg := serverConfig{}
 	flag.StringVar(&cfg.Addr, "addr", ":8091", "listen address")
 	flag.StringVar(&cfg.Path, "path", "/webhook", "webhook POST path")
-	flag.StringVar(&cfg.Secret, "secret", "", "optional Standard Webhooks signing secret (whsec_...) to require")
+	flag.StringVar(&cfg.Secret, "secret", "", "optional Standard Webhooks signing secret to require (base64 or whsec_...)")
 	flag.IntVar(&cfg.Status, "status", http.StatusOK, "HTTP status to return for accepted webhook requests")
 	flag.IntVar(&cfg.MaxEvents, "max-events", 100, "maximum recent webhook events to keep in memory")
 	flag.Parse()

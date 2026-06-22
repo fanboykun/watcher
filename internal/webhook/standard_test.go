@@ -13,31 +13,43 @@ import (
 )
 
 func TestStandardWebhookSignAndVerify(t *testing.T) {
+	payload := []byte(`{"type":"watcher.webhook_test","timestamp":"2026-06-18T00:00:00Z","data":{"summary":"test"}}`)
 	secret, err := GenerateSigningSecret()
 	if err != nil {
 		t.Fatalf("GenerateSigningSecret() error = %v", err)
 	}
 
-	wh, err := NewStandardWebhook(secret)
-	if err != nil {
-		t.Fatalf("NewStandardWebhook() error = %v", err)
+	tests := []struct {
+		name   string
+		secret string
+	}{
+		{name: "prefixed", secret: secret},
+		{name: "base64 only", secret: strings.TrimPrefix(secret, WebhookSecretPrefix)},
 	}
 
-	payload := []byte(`{"type":"watcher.webhook_test","timestamp":"2026-06-18T00:00:00Z","data":{"summary":"test"}}`)
-	timestamp := time.Now().UTC()
-	signature, err := wh.Sign("evt_test_123", timestamp, payload)
-	if err != nil {
-		t.Fatalf("Sign() error = %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wh, err := NewStandardWebhook(tt.secret)
+			if err != nil {
+				t.Fatalf("NewStandardWebhook() error = %v", err)
+			}
 
-	headers := http.Header{}
-	headers.Set(HeaderWebhookID, "evt_test_123")
-	headers.Set(HeaderWebhookTimestamp, "123")
-	headers.Set(HeaderWebhookSignature, signature)
-	headers.Set(HeaderWebhookTimestamp, timeString(timestamp))
+			timestamp := time.Now().UTC()
+			signature, err := wh.Sign("evt_test_123", timestamp, payload)
+			if err != nil {
+				t.Fatalf("Sign() error = %v", err)
+			}
 
-	if err := wh.Verify(payload, headers); err != nil {
-		t.Fatalf("Verify() error = %v", err)
+			headers := http.Header{}
+			headers.Set(HeaderWebhookID, "evt_test_123")
+			headers.Set(HeaderWebhookTimestamp, "123")
+			headers.Set(HeaderWebhookSignature, signature)
+			headers.Set(HeaderWebhookTimestamp, timeString(timestamp))
+
+			if err := wh.Verify(payload, headers); err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -112,9 +124,20 @@ func TestInvalidSigningSecretIsNotRetryable(t *testing.T) {
 	}
 }
 
-func TestStandardWebhookRequiresPrefix(t *testing.T) {
+func TestStandardWebhookAcceptsBase64OnlySecret(t *testing.T) {
+	secret, err := GenerateSigningSecret()
+	if err != nil {
+		t.Fatalf("GenerateSigningSecret() error = %v", err)
+	}
+
+	if _, err := NewStandardWebhook(strings.TrimPrefix(secret, WebhookSecretPrefix)); err != nil {
+		t.Fatalf("NewStandardWebhook() error = %v", err)
+	}
+}
+
+func TestStandardWebhookRejectsInvalidSecret(t *testing.T) {
 	if _, err := NewStandardWebhook("not-a-standard-secret"); err == nil {
-		t.Fatal("NewStandardWebhook() error = nil, want prefix validation failure")
+		t.Fatal("NewStandardWebhook() error = nil, want invalid secret failure")
 	}
 }
 
