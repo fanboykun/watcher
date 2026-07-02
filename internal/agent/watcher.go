@@ -67,6 +67,7 @@ type ServiceConfig struct {
 	BinaryName         string
 	StartArguments     string
 	EnvFile            string
+	EnvContent         string
 	HealthCheckURL     string
 	IISAppKind         string
 	IISAppPool         string
@@ -111,6 +112,7 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 			BinaryName:         s.BinaryName,
 			StartArguments:     s.StartArguments,
 			EnvFile:            s.EnvFile,
+			EnvContent:         s.EnvContent,
 			HealthCheckURL:     s.HealthCheckURL,
 			IISAppKind:         normalizeIISAppKind(s.IISAppKind, s.IISManagedRuntime),
 			IISAppPool:         s.IISAppPool,
@@ -494,6 +496,9 @@ func (a *Agent) Run(ctx context.Context) {
 	// Initial load
 	a.syncWatchers(ctx)
 
+	// Backfill config snapshots for pre-existing release dirs
+	a.backfillSnapshots()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -520,6 +525,20 @@ func (a *Agent) Run(ctx context.Context) {
 				a.log.Warn("check trigger for unknown watcher", "id", triggerID)
 			}
 		}
+	}
+}
+
+// backfillSnapshots loads all watchers from DB and writes config snapshots
+// for any existing release dirs that don't have one. Called once at startup.
+func (a *Agent) backfillSnapshots() {
+	var dbWatchers []database.Watcher
+	if err := a.db.Preload("Services").Preload("Services.ConfigFiles").Find(&dbWatchers).Error; err != nil {
+		a.log.Error("backfill: failed to load watchers", "error", err)
+		return
+	}
+	for i := range dbWatchers {
+		wcfg := WatcherConfigFromDB(&dbWatchers[i])
+		BackfillConfigSnapshots(wcfg, a.log)
 	}
 }
 

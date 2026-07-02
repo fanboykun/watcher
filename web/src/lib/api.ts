@@ -438,6 +438,7 @@ export interface ReleaseInfo {
 	size_bytes: number;
 	size_human: string;
 	is_current: boolean;
+	has_snapshot: boolean;
 }
 
 export interface SelfVersionResponse {

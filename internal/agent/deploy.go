@@ -152,6 +152,11 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 		return d.tryRollback(ctx, rollbackVersion, err)
 	}
 
+	if err := d.captureConfigSnapshot(releaseDir); err != nil {
+		d.lWarn("failed to capture config snapshot", "error", err)
+		// non-fatal: deploy continues without snapshot
+	}
+
 	d.l("starting services")
 	for _, svc := range d.wcfg.Services {
 		if err := d.ensureServiceByType(svc, currentDir); err != nil {
@@ -234,6 +239,11 @@ func (d *Deployer) Rollback(ctx context.Context, version string) error {
 
 	if err := d.swapCurrent(releaseDir, currentDir); err != nil {
 		return fmt.Errorf("swap during rollback: %w", err)
+	}
+
+	// Restore config snapshot before re-registering services
+	if err := RestoreConfigSnapshot(releaseDir, d.wcfg.InstallDir, currentDir); err != nil {
+		d.lWarn("snapshot restoration failed, proceeding without config restore", "error", err)
 	}
 
 	for _, svc := range d.wcfg.Services {
@@ -351,6 +361,156 @@ func writeManagedFile(rootDir, relativePath, content string) error {
 		return err
 	}
 	return os.WriteFile(targetPath, []byte(content), 0600)
+}
+
+const snapshotDir = ".watcher-snapshot"
+
+// CaptureConfigSnapshot writes a mirrored copy of all managed config for the
+// given watcher config into releaseDir/.watcher-snapshot/. Layout:
+//
+//	.watcher-snapshot/
+//	  env/<windows_service_name>/<env_file>
+//	  app/<windows_service_name>/<file_path>
+//	  release/<windows_service_name>/<file_path>
+func CaptureConfigSnapshot(wcfg *WatcherConfig, releaseDir string) error {
+	snapRoot := filepath.Join(releaseDir, snapshotDir)
+	// Remove any pre-existing snapshot (e.g. from a redeploy of the same version)
+	if err := os.RemoveAll(snapRoot); err != nil {
+		return fmt.Errorf("remove old snapshot: %w", err)
+	}
+
+	for _, svc := range wcfg.Services {
+		name := svc.WindowsServiceName
+
+		// env file
+		if strings.TrimSpace(svc.EnvFile) != "" && strings.TrimSpace(svc.EnvContent) != "" {
+			if err := writeManagedFile(filepath.Join(snapRoot, "env", name), svc.EnvFile, svc.EnvContent); err != nil {
+				return fmt.Errorf("snapshot env %s for %s: %w", svc.EnvFile, name, err)
+			}
+		}
+
+		// config files
+		for _, file := range svc.ConfigFiles {
+			if strings.TrimSpace(file.FilePath) == "" || strings.TrimSpace(file.Content) == "" {
+				continue
+			}
+			target := normalizeConfigFileTarget(file.Target)
+			var category string
+			switch target {
+			case "app_dir":
+				category = "app"
+			case "release_dir":
+				category = "release"
+			default:
+				category = "app"
+			}
+			if err := writeManagedFile(filepath.Join(snapRoot, category, name), file.FilePath, file.Content); err != nil {
+				return fmt.Errorf("snapshot %s config %s for %s: %w", category, file.FilePath, name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// HasConfigSnapshot returns true when a .watcher-snapshot directory exists
+// inside the given release directory.
+func HasConfigSnapshot(releaseDir string) bool {
+	info, err := os.Stat(filepath.Join(releaseDir, snapshotDir))
+	return err == nil && info.IsDir()
+}
+
+// BackfillConfigSnapshots checks all release dirs for a watcher and writes a
+// snapshot from the current WatcherConfig for any that are missing one.
+// Errors are logged but do not halt the backfill.
+func BackfillConfigSnapshots(wcfg *WatcherConfig, log *Logger) {
+	versions, err := ListAvailableVersions(wcfg.InstallDir)
+	if err != nil {
+		log.Warn("backfill: failed to list versions", "watcher", wcfg.Name, "error", err)
+		return
+	}
+	for _, v := range versions {
+		if HasConfigSnapshot(v.Path) {
+			continue
+		}
+		if err := CaptureConfigSnapshot(wcfg, v.Path); err != nil {
+			log.Warn("backfill: failed to write snapshot", "watcher", wcfg.Name, "version", v.Version, "error", err)
+			continue
+		}
+		log.Info("backfilled config snapshot (approximation from current DB config)", "watcher", wcfg.Name, "version", v.Version)
+	}
+}
+
+func (d *Deployer) captureConfigSnapshot(releaseDir string) error {
+	return CaptureConfigSnapshot(d.wcfg, releaseDir)
+}
+
+// RestoreConfigSnapshot reads the config snapshot from releaseDir/.watcher-snapshot/
+// and writes each file to its actual target path on disk.
+// Mapping:
+//
+//	env/<svc>/<file>     → installDir/<file>
+//	app/<svc>/<file>     → installDir/<file>
+//	release/<svc>/<file> → currentDir/<file>
+//
+// Returns nil if no snapshot directory exists (caller should log a warning).
+func RestoreConfigSnapshot(releaseDir, installDir, currentDir string) error {
+	snapRoot := filepath.Join(releaseDir, snapshotDir)
+	if _, err := os.Stat(snapRoot); os.IsNotExist(err) {
+		return nil // no snapshot — degrade gracefully
+	}
+
+	type categoryMapping struct {
+		subdir    string
+		targetDir string
+	}
+	categories := []categoryMapping{
+		{"env", installDir},
+		{"app", installDir},
+		{"release", currentDir},
+	}
+
+	for _, cat := range categories {
+		catDir := filepath.Join(snapRoot, cat.subdir)
+		svcEntries, err := os.ReadDir(catDir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read snapshot %s: %w", cat.subdir, err)
+		}
+		for _, svcEntry := range svcEntries {
+			if !svcEntry.IsDir() {
+				continue
+			}
+			svcDir := filepath.Join(catDir, svcEntry.Name())
+			if err := restoreSnapshotTree(svcDir, cat.targetDir); err != nil {
+				return fmt.Errorf("restore %s/%s: %w", cat.subdir, svcEntry.Name(), err)
+			}
+		}
+	}
+	return nil
+}
+
+// restoreSnapshotTree walks a snapshot service subdirectory and writes each
+// file to the target directory, preserving relative paths.
+func restoreSnapshotTree(srcDir, targetDir string) error {
+	return filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		relPath, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read snapshot file %s: %w", relPath, err)
+		}
+		return writeManagedFile(targetDir, relPath, string(content))
+	})
 }
 
 func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
@@ -934,11 +1094,12 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 // ReleaseInfo describes a version directory on disk.
 type ReleaseInfo struct {
-	Version   string    `json:"version"`
-	Path      string    `json:"path"`
-	SizeBytes int64     `json:"size_bytes"`
-	ModTime   time.Time `json:"mod_time"`
-	IsCurrent bool      `json:"is_current"`
+	Version     string    `json:"version"`
+	Path        string    `json:"path"`
+	SizeBytes   int64     `json:"size_bytes"`
+	ModTime     time.Time `json:"mod_time"`
+	IsCurrent   bool      `json:"is_current"`
+	HasSnapshot bool      `json:"has_snapshot"`
 }
 
 // ListAvailableVersions returns the release directories on disk for a given installDir.
@@ -971,11 +1132,12 @@ func ListAvailableVersions(installDir string) ([]ReleaseInfo, error) {
 		}
 		fullPath := filepath.Join(releasesDir, e.Name())
 		ri := ReleaseInfo{
-			Version:   restoreReleaseVersion(e.Name()),
-			Path:      fullPath,
-			ModTime:   info.ModTime(),
-			SizeBytes: dirSize(fullPath),
-			IsCurrent: fullPath == currentTarget,
+			Version:     restoreReleaseVersion(e.Name()),
+			Path:        fullPath,
+			ModTime:     info.ModTime(),
+			SizeBytes:   dirSize(fullPath),
+			IsCurrent:   fullPath == currentTarget,
+			HasSnapshot: HasConfigSnapshot(fullPath),
 		}
 		versions = append(versions, ri)
 	}
