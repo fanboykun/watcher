@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -144,6 +145,7 @@ func normalizeConfigFileTarget(target string) string {
 type Handler struct {
 	db             *gorm.DB
 	nssmPath       string
+	serviceManager agent.ServiceManager
 	logDir         string
 	version        string
 	githubToken    string
@@ -162,6 +164,7 @@ func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath str
 	return &Handler{
 		db:             db,
 		nssmPath:       nssmPath,
+		serviceManager: agent.NewNSSMServiceManager(nssmPath),
 		logDir:         logDir,
 		version:        version,
 		githubToken:    githubToken,
@@ -474,7 +477,7 @@ func (h *Handler) DeleteWatcher(c *gin.Context) {
 		return
 	}
 
-	if err := h.cleanupWatcherServices(watcher); err != nil {
+	if err := h.cleanupWatcherServices(c.Request.Context(), watcher); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -495,13 +498,13 @@ func (h *Handler) DeleteWatcher(c *gin.Context) {
 	c.JSON(http.StatusOK, MessageResponse{Message: "watcher deleted"})
 }
 
-func (h *Handler) cleanupWatcherServices(watcher *database.Watcher) error {
+func (h *Handler) cleanupWatcherServices(ctx context.Context, watcher *database.Watcher) error {
 	if watcher == nil || runtime.GOOS != "windows" {
 		return nil
 	}
 
 	for _, svc := range watcher.Services {
-		if err := h.cleanupServiceRuntime(&svc); err != nil {
+		if err := h.cleanupServiceRuntime(ctx, &svc); err != nil {
 			return err
 		}
 	}
@@ -536,38 +539,8 @@ func (h *Handler) removeWatcherInstallDir(watcher *database.Watcher) error {
 	return nil
 }
 
-func (h *Handler) stopNSSMService(name string) error {
-	const (
-		gracefulTimeout = 45 * time.Second
-		forceTimeout    = 20 * time.Second
-		pollInterval    = 2 * time.Second
-	)
-
-	out, err := exec.Command(h.nssmPath, "stop", name, "confirm").CombinedOutput()
-	if err != nil && !isServiceMissingOutput(string(out)) && !isServiceStoppedOutput(string(out)) {
-		return fmt.Errorf("failed to stop service %s before watcher deletion: %s", name, strings.TrimSpace(string(out)))
-	}
-
-	state, waitErr := h.waitForNSSMServiceState(name, []string{"SERVICE_STOPPED", "SERVICE_MISSING"}, gracefulTimeout, pollInterval)
-	if waitErr == nil {
-		return nil
-	}
-
-	killOut, killErr := exec.Command("taskkill", "/F", "/FI", fmt.Sprintf("SERVICES eq %s", name)).CombinedOutput()
-	if killErr != nil && !strings.Contains(strings.ToUpper(string(killOut)), "NO TASKS ARE RUNNING") {
-		return fmt.Errorf("failed to force-stop service %s before watcher deletion: %s", name, strings.TrimSpace(string(killOut)))
-	}
-
-	if _, waitErr = h.waitForNSSMServiceState(name, []string{"SERVICE_STOPPED", "SERVICE_MISSING"}, forceTimeout, pollInterval); waitErr != nil {
-		return fmt.Errorf("failed to stop service %s before watcher deletion: %w", name, waitErr)
-	}
-
-	_ = state
-	return nil
-}
-
-func (h *Handler) removeNSSMService(name string) error {
-	out, err := exec.Command(h.nssmPath, "remove", name, "confirm").CombinedOutput()
+func (h *Handler) removeNSSMService(ctx context.Context, name string) error {
+	out, err := exec.CommandContext(ctx, h.nssmPath, "remove", name, "confirm").CombinedOutput()
 	if err == nil || isServiceMissingOutput(string(out)) {
 		return nil
 	}
@@ -581,13 +554,7 @@ func isServiceMissingOutput(out string) bool {
 		strings.Contains(normalized, "OPENSERVICE(): THE SPECIFIED SERVICE DOES NOT EXIST")
 }
 
-func isServiceStoppedOutput(out string) bool {
-	normalized := strings.ToUpper(strings.TrimSpace(out))
-	return strings.Contains(normalized, "SERVICE_STOPPED") ||
-		strings.Contains(normalized, "SERVICE_NOT_ACTIVE")
-}
-
-func (h *Handler) cleanupServiceRuntime(svc *database.Service) error {
+func (h *Handler) cleanupServiceRuntime(ctx context.Context, svc *database.Service) error {
 	if svc == nil || runtime.GOOS != "windows" {
 		return nil
 	}
@@ -600,46 +567,13 @@ func (h *Handler) cleanupServiceRuntime(svc *database.Service) error {
 		return nil
 	}
 
-	if err := h.stopNSSMService(name); err != nil {
-		return err
+	if err := h.serviceManager.Stop(ctx, name); err != nil && !errors.Is(err, agent.ErrServiceNotFound) {
+		return fmt.Errorf("failed to stop service %s before deletion: %w", name, err)
 	}
-	if err := h.removeNSSMService(name); err != nil {
+	if err := h.removeNSSMService(ctx, name); err != nil {
 		return err
 	}
 	return nil
-}
-
-func (h *Handler) waitForNSSMServiceState(name string, expected []string, timeout, interval time.Duration) (string, error) {
-	deadline := time.Now().Add(timeout)
-	expectedUpper := make([]string, 0, len(expected))
-	for _, value := range expected {
-		expectedUpper = append(expectedUpper, strings.ToUpper(strings.TrimSpace(value)))
-	}
-
-	for {
-		out, err := exec.Command(h.nssmPath, "status", name).CombinedOutput()
-		text := strings.TrimSpace(strings.ToUpper(string(out)))
-		if isServiceMissingOutput(text) {
-			text = "SERVICE_MISSING"
-			err = nil
-		}
-		if err == nil {
-			for _, candidate := range expectedUpper {
-				if text == candidate {
-					return text, nil
-				}
-			}
-		}
-
-		if time.Now().After(deadline) {
-			if text == "" {
-				text = "unknown"
-			}
-			return text, fmt.Errorf("timed out waiting for service %s to reach %v (last status: %s)", name, expectedUpper, text)
-		}
-
-		time.Sleep(interval)
-	}
 }
 
 // ── Service CRUD (nested under watcher) ───────────────────────
@@ -902,7 +836,7 @@ func (h *Handler) DeleteService(c *gin.Context) {
 		return
 	}
 
-	if err := h.cleanupServiceRuntime(svc); err != nil {
+	if err := h.cleanupServiceRuntime(c.Request.Context(), svc); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
