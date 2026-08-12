@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -60,15 +59,13 @@ func (h *Handler) StartService(c *gin.Context) {
 		return
 	}
 
-	outBytes, errExec := exec.Command(h.nssmPath, "start", svc.WindowsServiceName).CombinedOutput()
-	out := string(outBytes)
-	if errExec != nil && !strings.Contains(out, "SERVICE_START_PENDING") && !strings.Contains(out, "SERVICE_RUNNING") {
+	if err := h.serviceManager.Start(c.Request.Context(), svc.WindowsServiceName); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: fmt.Sprintf("nssm start %s: %s (output: %s)", svc.WindowsServiceName, errExec, out),
+			Error: err.Error(),
 		})
 		return
 	}
-	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s started (or pending)", svc.WindowsServiceName)})
+	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s reached %s", svc.WindowsServiceName, agent.ServiceStateRunning)})
 }
 
 func (h *Handler) StopService(c *gin.Context) {
@@ -84,14 +81,13 @@ func (h *Handler) StopService(c *gin.Context) {
 		return
 	}
 
-	out, errExec := exec.Command(h.nssmPath, "stop", svc.WindowsServiceName, "confirm").CombinedOutput()
-	if errExec != nil {
+	if err := h.serviceManager.Stop(c.Request.Context(), svc.WindowsServiceName); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: fmt.Sprintf("nssm stop %s: %s (output: %s)", svc.WindowsServiceName, errExec, string(out)),
+			Error: err.Error(),
 		})
 		return
 	}
-	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s stopped", svc.WindowsServiceName)})
+	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s reached %s", svc.WindowsServiceName, agent.ServiceStateStopped)})
 }
 
 func (h *Handler) RestartService(c *gin.Context) {
@@ -107,20 +103,13 @@ func (h *Handler) RestartService(c *gin.Context) {
 		return
 	}
 
-	// Stop
-	exec.Command(h.nssmPath, "stop", svc.WindowsServiceName, "confirm").CombinedOutput()
-	time.Sleep(2 * time.Second)
-
-	// Start
-	outBytes, errExec := exec.Command(h.nssmPath, "start", svc.WindowsServiceName).CombinedOutput()
-	out := string(outBytes)
-	if errExec != nil && !strings.Contains(out, "SERVICE_START_PENDING") && !strings.Contains(out, "SERVICE_RUNNING") {
+	if err := h.serviceManager.Restart(c.Request.Context(), svc.WindowsServiceName); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: fmt.Sprintf("nssm start %s after restart: %s (output: %s)", svc.WindowsServiceName, errExec, out),
+			Error: err.Error(),
 		})
 		return
 	}
-	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s restarted (or pending)", svc.WindowsServiceName)})
+	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("service %s restarted and reached %s", svc.WindowsServiceName, agent.ServiceStateRunning)})
 }
 
 // ── Health status ─────────────────────────────────────────────────────

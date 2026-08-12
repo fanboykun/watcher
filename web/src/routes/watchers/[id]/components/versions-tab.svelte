@@ -2,7 +2,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
-	import { CheckCircle2, RotateCcw, Trash2, Server } from '@lucide/svelte';
+	import { CheckCircle2, RotateCcw, Trash2, Server, Archive } from '@lucide/svelte';
 	import { filesize } from 'filesize';
 	import { formatDate } from '$lib/utils';
 
@@ -38,16 +38,24 @@
 							{v.size_bytes > 0 ? filesize(v.size_bytes) : v.size_human || '0 B'}
 						</Table.Cell>
 						<Table.Cell>
-							{#if v.is_current}
-								<span class="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400">
-									<CheckCircle2 class="h-3 w-3" />
-									Current
-								</span>
-							{:else}
-								<span class="inline-flex items-center gap-1 rounded bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
-									Inactive
-								</span>
-							{/if}
+							<div class="flex items-center gap-1.5">
+								{#if v.is_current}
+									<span class="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400">
+										<CheckCircle2 class="h-3 w-3" />
+										Current
+									</span>
+								{:else}
+									<span class="inline-flex items-center gap-1 rounded bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+										Inactive
+									</span>
+								{/if}
+								{#if v.has_snapshot}
+									<span class="inline-flex items-center gap-1 rounded bg-blue-500/15 px-2 py-0.5 text-xs font-medium text-blue-400" title="Config snapshot available">
+										<Archive class="h-3 w-3" />
+										Snapshot
+									</span>
+								{/if}
+							</div>
 						</Table.Cell>
 						<Table.Cell class="text-right">
 							<div class="flex items-center justify-end gap-2">

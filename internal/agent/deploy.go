@@ -3,6 +3,7 @@ package agent
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,14 +21,21 @@ var runCommand = func(name string, args ...string) ([]byte, error) {
 }
 
 type Deployer struct {
-	wcfg     *WatcherConfig
-	nssmPath string
-	log      *Logger
-	logFn    func(string)
+	wcfg           *WatcherConfig
+	nssmPath       string
+	serviceManager ServiceManager
+	log            *Logger
+	logFn          func(string)
 }
 
 func NewDeployer(wcfg *WatcherConfig, nssmPath string, log *Logger, logFn func(string)) *Deployer {
-	return &Deployer{wcfg: wcfg, nssmPath: nssmPath, log: log, logFn: logFn}
+	return &Deployer{
+		wcfg:           wcfg,
+		nssmPath:       nssmPath,
+		serviceManager: NewNSSMServiceManager(nssmPath),
+		log:            log,
+		logFn:          logFn,
+	}
 }
 
 func (d *Deployer) l(msg string, args ...any) {
@@ -108,6 +116,117 @@ func currentVersionFromCurrentDir(installDir string) (string, error) {
 	return restoreReleaseVersion(parts[0]), nil
 }
 
+type releasePromotion struct {
+	releaseDir string
+	backupDir  string
+}
+
+func (p *releasePromotion) restore() error {
+	if p == nil {
+		return nil
+	}
+	if err := removePath(p.releaseDir); err != nil {
+		return fmt.Errorf("remove promoted release: %w", err)
+	}
+	if p.backupDir == "" {
+		return nil
+	}
+	if err := os.Rename(p.backupDir, p.releaseDir); err != nil {
+		return fmt.Errorf("restore release backup: %w", err)
+	}
+	return nil
+}
+
+func (p *releasePromotion) cleanup() error {
+	if p == nil || p.backupDir == "" {
+		return nil
+	}
+	return removePath(p.backupDir)
+}
+
+func (d *Deployer) prepareRelease(stagedDir string) error {
+	if err := d.validateReleaseArtifacts(stagedDir); err != nil {
+		return err
+	}
+	if err := d.writeReleaseConfigFiles(stagedDir); err != nil {
+		return err
+	}
+	if err := d.captureConfigSnapshot(stagedDir); err != nil {
+		return fmt.Errorf("capture config snapshot: %w", err)
+	}
+	return nil
+}
+
+func (d *Deployer) validateReleaseArtifacts(releaseDir string) error {
+	for _, svc := range d.wcfg.Services {
+		if svc.ServiceType == "iis" || svc.ServiceType == "static" {
+			continue
+		}
+
+		binaryName := strings.TrimSpace(svc.BinaryName)
+		if binaryName == "" {
+			return fmt.Errorf("binary_name is empty for service %s", svc.WindowsServiceName)
+		}
+		binaryPath := filepath.Join(releaseDir, binaryName)
+		rel, err := filepath.Rel(releaseDir, binaryPath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("binary %q for service %s escapes the release directory", binaryName, svc.WindowsServiceName)
+		}
+		info, err := os.Stat(binaryPath)
+		if err != nil {
+			return fmt.Errorf("inspect binary %q for service %s: %w", binaryName, svc.WindowsServiceName, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("binary %q for service %s is a directory", binaryName, svc.WindowsServiceName)
+		}
+	}
+	return nil
+}
+
+func (d *Deployer) promoteRelease(stagedDir, releaseDir string) (*releasePromotion, error) {
+	promotion := &releasePromotion{releaseDir: releaseDir}
+	if _, err := os.Lstat(releaseDir); err == nil {
+		promotion.backupDir = filepath.Join(
+			d.wcfg.InstallDir,
+			fmt.Sprintf(".watcher-release-backup-%d", time.Now().UnixNano()),
+		)
+		if err := os.Rename(releaseDir, promotion.backupDir); err != nil {
+			return nil, fmt.Errorf("backup existing release %s: %w", releaseDir, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect existing release %s: %w", releaseDir, err)
+	}
+
+	if err := os.Rename(stagedDir, releaseDir); err == nil {
+		return promotion, nil
+	} else {
+		d.lWarn("release rename failed, falling back to copy", "error", err)
+		if cleanupErr := removePath(releaseDir); cleanupErr != nil {
+			restoreErr := promotion.restore()
+			failure := errors.Join(fmt.Errorf("prepare release copy target: %w", cleanupErr), fmt.Errorf("rename staged release: %w", err))
+			if restoreErr != nil {
+				failure = errors.Join(failure, restoreErr)
+			}
+			return nil, failure
+		}
+		if copyErr := copyDir(stagedDir, releaseDir); copyErr != nil {
+			restoreErr := promotion.restore()
+			failure := errors.Join(fmt.Errorf("rename staged release: %w", err), fmt.Errorf("copy staged release: %w", copyErr))
+			if restoreErr != nil {
+				failure = errors.Join(failure, restoreErr)
+			}
+			return nil, failure
+		}
+	}
+	return promotion, nil
+}
+
+func (d *Deployer) cleanupPromotion(promotion *releasePromotion) {
+	if err := promotion.cleanup(); err != nil {
+		d.lWarn("failed to remove release backup", "path", promotion.backupDir, "error", err)
+	}
+}
+
 func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion string) error {
 	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(version))
 	currentDir := filepath.Join(d.wcfg.InstallDir, "current")
@@ -122,47 +241,35 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 		os.RemoveAll(tempReleaseDir)
 		return fmt.Errorf("extract zip: %w", err)
 	}
+	defer os.RemoveAll(tempReleaseDir)
+
+	if err := d.prepareRelease(tempReleaseDir); err != nil {
+		return fmt.Errorf("prepare release: %w", err)
+	}
 
 	d.l("stopping services")
-	for _, svc := range d.wcfg.Services {
-		if err := d.stopServiceByType(svc); err != nil {
-			return fmt.Errorf("stop %s: %w", svc.WindowsServiceName, err)
-		}
+	stoppedServices, err := d.stopServices(ctx, "deploy")
+	if err != nil {
+		return err
 	}
 
-	// Now that services are stopped, safely remove the old releaseDir if it exists (for redeploys)
-	if err := os.RemoveAll(releaseDir); err != nil {
-		d.lWarn("failed to remove existing release dir", "dir", releaseDir, "error", err)
-	}
-
-	// Rename temp directory to final release directory
-	if err := os.Rename(tempReleaseDir, releaseDir); err != nil {
-		d.lWarn("rename failed, falling back to copy", "error", err)
-		if err := copyDir(tempReleaseDir, releaseDir); err != nil {
-			return fmt.Errorf("rename fallback copy: %w", err)
-		}
-		os.RemoveAll(tempReleaseDir)
+	promotion, err := d.promoteRelease(tempReleaseDir, releaseDir)
+	if err != nil {
+		return d.recoverStoppedServices(ctx, stoppedServices, fmt.Errorf("promote release: %w", err))
 	}
 
 	if err := d.swapCurrent(releaseDir, currentDir); err != nil {
-		return fmt.Errorf("swap current: %w", err)
-	}
-
-	if err := d.writeReleaseConfigFiles(currentDir); err != nil {
-		return d.tryRollback(ctx, rollbackVersion, err)
+		restoreErr := promotion.restore()
+		failure := fmt.Errorf("swap current: %w", err)
+		if restoreErr != nil {
+			failure = errors.Join(failure, fmt.Errorf("restore previous release: %w", restoreErr))
+		}
+		return d.recoverStoppedServices(ctx, stoppedServices, failure)
 	}
 
 	d.l("starting services")
-	for _, svc := range d.wcfg.Services {
-		if err := d.ensureServiceByType(svc, currentDir); err != nil {
-			return d.tryRollback(ctx, rollbackVersion,
-				fmt.Errorf("ensure service %s: %w", svc.WindowsServiceName, err))
-		}
-
-		if err := d.startServiceByType(svc); err != nil {
-			return d.tryRollback(ctx, rollbackVersion,
-				fmt.Errorf("start %s: %w", svc.WindowsServiceName, err))
-		}
+	if err := d.startServices(ctx, currentDir, "deploy"); err != nil {
+		return d.recoverActivatedDeployment(ctx, version, currentDir, rollbackVersion, err, promotion)
 	}
 
 	if d.wcfg.HealthCheck.Enabled {
@@ -175,12 +282,13 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 				continue
 			}
 			if err := d.healthCheck(ctx, svc.WindowsServiceName, url); err != nil {
-				return d.tryRollback(ctx, rollbackVersion,
-					fmt.Errorf("health check failed for %s: %w", svc.WindowsServiceName, err))
+				return d.recoverActivatedDeployment(ctx, version, currentDir, rollbackVersion,
+					fmt.Errorf("health check failed for %s: %w", svc.WindowsServiceName, err), promotion)
 			}
 		}
 	}
 
+	d.cleanupPromotion(promotion)
 	d.l("deploy successful", "version", version)
 	return nil
 }
@@ -217,32 +325,52 @@ func (d *Deployer) resolveRollbackVersion(targetVersion, previousVersion string)
 }
 
 func (d *Deployer) Rollback(ctx context.Context, version string) error {
+	return d.rollback(ctx, version, true)
+}
+
+func (d *Deployer) rollback(ctx context.Context, version string, restoreOriginalOnFailure bool) error {
 	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(version))
 	currentDir := filepath.Join(d.wcfg.InstallDir, "current")
+	originalVersion := ""
+	originalReleaseDir := ""
+	if restoreOriginalOnFailure {
+		if currentVersion, err := currentVersionFromCurrentDir(d.wcfg.InstallDir); err == nil && currentVersion != "" && currentVersion != version {
+			candidate := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(currentVersion))
+			if _, statErr := os.Stat(candidate); statErr == nil {
+				originalVersion = currentVersion
+				originalReleaseDir = candidate
+			}
+		}
+	}
 
 	d.lWarn("rolling back", "to_version", version)
 
-	if _, err := os.Stat(releaseDir); os.IsNotExist(err) {
-		return fmt.Errorf("rollback target %s not on disk", releaseDir)
+	if _, err := os.Stat(releaseDir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("rollback target %s not on disk", releaseDir)
+		}
+		return fmt.Errorf("inspect rollback target %s: %w", releaseDir, err)
+	}
+	if err := d.validateReleaseArtifacts(releaseDir); err != nil {
+		return fmt.Errorf("validate rollback target: %w", err)
 	}
 
-	for _, svc := range d.wcfg.Services {
-		if err := d.stopServiceByType(svc); err != nil {
-			return fmt.Errorf("stop %s during rollback: %w", svc.WindowsServiceName, err)
-		}
+	stoppedServices, err := d.stopServices(ctx, "rollback")
+	if err != nil {
+		return err
 	}
 
 	if err := d.swapCurrent(releaseDir, currentDir); err != nil {
-		return fmt.Errorf("swap during rollback: %w", err)
+		return d.recoverStoppedServices(ctx, stoppedServices, fmt.Errorf("swap during rollback: %w", err))
 	}
 
-	for _, svc := range d.wcfg.Services {
-		if err := d.ensureServiceByType(svc, currentDir); err != nil {
-			return fmt.Errorf("ensure service %s during rollback: %w", svc.WindowsServiceName, err)
-		}
-		if err := d.startServiceByType(svc); err != nil {
-			return fmt.Errorf("start %s during rollback: %w", svc.WindowsServiceName, err)
-		}
+	// Restore config snapshot before re-registering services
+	if err := RestoreConfigSnapshot(releaseDir, d.wcfg.InstallDir, currentDir); err != nil {
+		d.lWarn("snapshot restoration failed, proceeding without config restore", "error", err)
+	}
+
+	if err := d.startServices(ctx, currentDir, "rollback"); err != nil {
+		return d.recoverManualRollback(ctx, version, originalVersion, originalReleaseDir, currentDir, err)
 	}
 
 	if d.wcfg.HealthCheck.Enabled {
@@ -255,7 +383,8 @@ func (d *Deployer) Rollback(ctx context.Context, version string) error {
 				continue
 			}
 			if err := d.healthCheck(ctx, svc.WindowsServiceName, url); err != nil {
-				return fmt.Errorf("health check failed after rollback for %s: %w", svc.WindowsServiceName, err)
+				return d.recoverManualRollback(ctx, version, originalVersion, originalReleaseDir, currentDir,
+					fmt.Errorf("health check failed after rollback for %s: %w", svc.WindowsServiceName, err))
 			}
 		}
 	}
@@ -264,15 +393,93 @@ func (d *Deployer) Rollback(ctx context.Context, version string) error {
 	return nil
 }
 
-func (d *Deployer) tryRollback(ctx context.Context, previousVersion string, originalErr error) error {
+func (d *Deployer) recoverManualRollback(
+	ctx context.Context,
+	targetVersion string,
+	originalVersion string,
+	originalReleaseDir string,
+	currentDir string,
+	originalErr error,
+) error {
+	if originalReleaseDir == "" {
+		return originalErr
+	}
+
+	d.lWarn("rollback target failed; restoring original release", "target", targetVersion, "original", originalVersion, "reason", originalErr)
+	recoveryCtx := context.WithoutCancel(ctx)
+	stoppedServices, err := d.stopServices(recoveryCtx, "manual rollback recovery")
+	if err != nil {
+		return errors.Join(originalErr, fmt.Errorf("restore original release: %w", err))
+	}
+	if err := d.swapCurrent(originalReleaseDir, currentDir); err != nil {
+		return d.recoverStoppedServices(recoveryCtx, stoppedServices,
+			errors.Join(originalErr, fmt.Errorf("restore original current: %w", err)))
+	}
+	if err := RestoreConfigSnapshot(originalReleaseDir, d.wcfg.InstallDir, currentDir); err != nil {
+		d.lWarn("original config snapshot restoration failed", "version", originalVersion, "error", err)
+	}
+	if err := d.startServices(recoveryCtx, currentDir, "manual rollback recovery"); err != nil {
+		return errors.Join(originalErr, fmt.Errorf("restart original release %s: %w", originalVersion, err))
+	}
+	return fmt.Errorf("rollback to %s failed, restored %s: %w", targetVersion, originalVersion, originalErr)
+}
+
+func (d *Deployer) tryRollbackWithResult(ctx context.Context, previousVersion string, originalErr error) (bool, error) {
 	if previousVersion == "" {
-		return fmt.Errorf("%w (no previous version to roll back to)", originalErr)
+		return false, fmt.Errorf("%w (no previous version to roll back to)", originalErr)
 	}
 	d.lWarn("attempting rollback", "to", previousVersion, "reason", originalErr)
-	if rbErr := d.Rollback(ctx, previousVersion); rbErr != nil {
-		return fmt.Errorf("deploy failed AND rollback failed: deploy=%w rollback=%v", originalErr, rbErr)
+	if rbErr := d.rollback(ctx, previousVersion, false); rbErr != nil {
+		return false, fmt.Errorf("deploy failed AND rollback failed: deploy=%w rollback=%v", originalErr, rbErr)
 	}
-	return fmt.Errorf("deploy failed, rolled back to %s: %w", previousVersion, originalErr)
+	return true, fmt.Errorf("deploy failed, rolled back to %s: %w", previousVersion, originalErr)
+}
+
+func (d *Deployer) recoverActivatedDeployment(
+	ctx context.Context,
+	version string,
+	currentDir string,
+	rollbackVersion string,
+	originalErr error,
+	promotion *releasePromotion,
+) error {
+	// Once activation has started, request cancellation must not prevent the
+	// bounded compensation path from restoring a runnable release.
+	recoveryCtx := context.WithoutCancel(ctx)
+	rolledBack, rollbackErr := d.tryRollbackWithResult(recoveryCtx, rollbackVersion, originalErr)
+	if rolledBack {
+		d.cleanupPromotion(promotion)
+		return rollbackErr
+	}
+	if promotion == nil || promotion.backupDir == "" {
+		return rollbackErr
+	}
+
+	d.lWarn("standard rollback unavailable; restoring release backup", "path", promotion.backupDir, "reason", rollbackErr)
+	if backupErr := d.restorePromotionAndRestart(recoveryCtx, currentDir, promotion); backupErr != nil {
+		combinedRollbackErr := errors.Join(rollbackErr, fmt.Errorf("release backup recovery failed: %w", backupErr))
+		return fmt.Errorf("deploy failed AND rollback failed: deploy=%w rollback=%v", originalErr, combinedRollbackErr)
+	}
+	d.cleanupPromotion(promotion)
+	return fmt.Errorf("deploy failed, rolled back to %s: %w", version, originalErr)
+}
+
+func (d *Deployer) restorePromotionAndRestart(ctx context.Context, currentDir string, promotion *releasePromotion) error {
+	recoveryCtx := context.WithoutCancel(ctx)
+	stoppedServices, err := d.stopServices(recoveryCtx, "release backup recovery")
+	if err != nil {
+		return err
+	}
+	if err := promotion.restore(); err != nil {
+		return d.recoverStoppedServices(recoveryCtx, stoppedServices, err)
+	}
+	if err := d.swapCurrent(promotion.releaseDir, currentDir); err != nil {
+		return d.recoverStoppedServices(recoveryCtx, stoppedServices, fmt.Errorf("reactivate restored release: %w", err))
+	}
+	if err := d.startServices(recoveryCtx, currentDir, "release backup recovery"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (d *Deployer) extractZip(zipPath, destDir string) error {
@@ -346,27 +553,244 @@ func normalizeConfigFileTarget(target string) string {
 }
 
 func writeManagedFile(rootDir, relativePath, content string) error {
-	targetPath := filepath.Join(rootDir, relativePath)
+	targetPath, err := managedFilePath(rootDir, relativePath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(targetPath, []byte(content), 0600)
 }
 
-func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
-	if _, err := os.Lstat(currentDir); err == nil {
-		if err := os.Remove(currentDir); err != nil {
-			if err2 := os.RemoveAll(currentDir); err2 != nil {
-				return fmt.Errorf("remove old current: %w", err2)
+func managedFilePath(rootDir, relativePath string) (string, error) {
+	if strings.TrimSpace(relativePath) == "" {
+		return "", errors.New("managed file path is empty")
+	}
+	root, err := filepath.Abs(rootDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve managed file root: %w", err)
+	}
+	target, err := filepath.Abs(filepath.Join(root, relativePath))
+	if err != nil {
+		return "", fmt.Errorf("resolve managed file path %q: %w", relativePath, err)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("managed file path %q escapes root %s", relativePath, rootDir)
+	}
+	return target, nil
+}
+
+const snapshotDir = ".watcher-snapshot"
+
+// CaptureConfigSnapshot writes a mirrored copy of all managed config for the
+// given watcher config into releaseDir/.watcher-snapshot/. Layout:
+//
+//	.watcher-snapshot/
+//	  env/<windows_service_name>/<env_file>
+//	  app/<windows_service_name>/<file_path>
+//	  release/<windows_service_name>/<file_path>
+func CaptureConfigSnapshot(wcfg *WatcherConfig, releaseDir string) error {
+	snapRoot := filepath.Join(releaseDir, snapshotDir)
+	// Remove any pre-existing snapshot (e.g. from a redeploy of the same version)
+	if err := os.RemoveAll(snapRoot); err != nil {
+		return fmt.Errorf("remove old snapshot: %w", err)
+	}
+
+	for _, svc := range wcfg.Services {
+		name := svc.WindowsServiceName
+
+		// env file
+		if strings.TrimSpace(svc.EnvFile) != "" && strings.TrimSpace(svc.EnvContent) != "" {
+			if err := writeManagedFile(filepath.Join(snapRoot, "env", name), svc.EnvFile, svc.EnvContent); err != nil {
+				return fmt.Errorf("snapshot env %s for %s: %w", svc.EnvFile, name, err)
+			}
+		}
+
+		// config files
+		for _, file := range svc.ConfigFiles {
+			if strings.TrimSpace(file.FilePath) == "" || strings.TrimSpace(file.Content) == "" {
+				continue
+			}
+			target := normalizeConfigFileTarget(file.Target)
+			var category string
+			switch target {
+			case "app_dir":
+				category = "app"
+			case "release_dir":
+				category = "release"
+			default:
+				category = "app"
+			}
+			if err := writeManagedFile(filepath.Join(snapRoot, category, name), file.FilePath, file.Content); err != nil {
+				return fmt.Errorf("snapshot %s config %s for %s: %w", category, file.FilePath, name, err)
 			}
 		}
 	}
-	out, err := runCommand("cmd", "/C", "mklink", "/J", currentDir, releaseDir)
+	return nil
+}
+
+// HasConfigSnapshot returns true when a .watcher-snapshot directory exists
+// inside the given release directory.
+func HasConfigSnapshot(releaseDir string) bool {
+	info, err := os.Stat(filepath.Join(releaseDir, snapshotDir))
+	return err == nil && info.IsDir()
+}
+
+// BackfillConfigSnapshots checks all release dirs for a watcher and writes a
+// snapshot from the current WatcherConfig for any that are missing one.
+// Errors are logged but do not halt the backfill.
+func BackfillConfigSnapshots(wcfg *WatcherConfig, log *Logger) {
+	versions, err := ListAvailableVersions(wcfg.InstallDir)
 	if err != nil {
-		d.lWarn("mklink /J failed, falling back to copy", "output", string(out))
-		return copyDir(releaseDir, currentDir)
+		log.Warn("backfill: failed to list versions", "watcher", wcfg.Name, "error", err)
+		return
+	}
+	for _, v := range versions {
+		if HasConfigSnapshot(v.Path) {
+			continue
+		}
+		if err := CaptureConfigSnapshot(wcfg, v.Path); err != nil {
+			log.Warn("backfill: failed to write snapshot", "watcher", wcfg.Name, "version", v.Version, "error", err)
+			continue
+		}
+		log.Info("backfilled config snapshot (approximation from current DB config)", "watcher", wcfg.Name, "version", v.Version)
+	}
+}
+
+func (d *Deployer) captureConfigSnapshot(releaseDir string) error {
+	return CaptureConfigSnapshot(d.wcfg, releaseDir)
+}
+
+// RestoreConfigSnapshot reads the config snapshot from releaseDir/.watcher-snapshot/
+// and writes each file to its actual target path on disk.
+// Mapping:
+//
+//	env/<svc>/<file>     → installDir/<file>
+//	app/<svc>/<file>     → installDir/<file>
+//	release/<svc>/<file> → currentDir/<file>
+//
+// Returns nil if no snapshot directory exists (caller should log a warning).
+func RestoreConfigSnapshot(releaseDir, installDir, currentDir string) error {
+	snapRoot := filepath.Join(releaseDir, snapshotDir)
+	if _, err := os.Stat(snapRoot); os.IsNotExist(err) {
+		return nil // no snapshot — degrade gracefully
+	}
+
+	type categoryMapping struct {
+		subdir    string
+		targetDir string
+	}
+	categories := []categoryMapping{
+		{"env", installDir},
+		{"app", installDir},
+		{"release", currentDir},
+	}
+
+	for _, cat := range categories {
+		catDir := filepath.Join(snapRoot, cat.subdir)
+		svcEntries, err := os.ReadDir(catDir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read snapshot %s: %w", cat.subdir, err)
+		}
+		for _, svcEntry := range svcEntries {
+			if !svcEntry.IsDir() {
+				continue
+			}
+			svcDir := filepath.Join(catDir, svcEntry.Name())
+			if err := restoreSnapshotTree(svcDir, cat.targetDir); err != nil {
+				return fmt.Errorf("restore %s/%s: %w", cat.subdir, svcEntry.Name(), err)
+			}
+		}
 	}
 	return nil
+}
+
+// restoreSnapshotTree walks a snapshot service subdirectory and writes each
+// file to the target directory, preserving relative paths.
+func restoreSnapshotTree(srcDir, targetDir string) error {
+	return filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		relPath, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read snapshot file %s: %w", relPath, err)
+		}
+		return writeManagedFile(targetDir, relPath, string(content))
+	})
+}
+
+func (d *Deployer) swapCurrent(releaseDir, currentDir string) error {
+	suffix := time.Now().UnixNano()
+	candidateDir := fmt.Sprintf("%s.next-%d", currentDir, suffix)
+	previousDir := fmt.Sprintf("%s.previous-%d", currentDir, suffix)
+	defer removePath(candidateDir)
+
+	out, err := runCommand("cmd", "/C", "mklink", "/J", candidateDir, releaseDir)
+	if err != nil {
+		d.lWarn("mklink /J failed, falling back to copy", "output", string(out))
+		if err := removePath(candidateDir); err != nil {
+			return fmt.Errorf("remove failed current candidate: %w", err)
+		}
+		if err := copyDir(releaseDir, candidateDir); err != nil {
+			return fmt.Errorf("prepare current candidate: %w", err)
+		}
+	}
+
+	hadCurrent := false
+	if _, err := os.Lstat(currentDir); err == nil {
+		hadCurrent = true
+		if err := os.Rename(currentDir, previousDir); err != nil {
+			return fmt.Errorf("preserve old current: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect current path: %w", err)
+	}
+
+	if err := os.Rename(candidateDir, currentDir); err != nil {
+		failure := fmt.Errorf("activate current candidate: %w", err)
+		if hadCurrent {
+			if restoreErr := os.Rename(previousDir, currentDir); restoreErr != nil {
+				failure = errors.Join(failure, fmt.Errorf("restore old current: %w", restoreErr))
+			}
+		}
+		return failure
+	}
+
+	if hadCurrent {
+		if err := removePath(previousDir); err != nil {
+			d.lWarn("failed to remove previous current path", "path", previousDir, "error", err)
+		}
+	}
+	return nil
+}
+
+func removePath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.Remove(path); err == nil {
+		return nil
+	}
+	return os.RemoveAll(path)
 }
 
 // ensureServiceByType dispatches to the correct ensure logic based on ServiceType.
@@ -470,87 +894,99 @@ func (d *Deployer) serviceExists(name string) bool {
 	return true
 }
 
+func (d *Deployer) stopServices(ctx context.Context, phase string) ([]ServiceConfig, error) {
+	stopped := make([]ServiceConfig, 0, len(d.wcfg.Services))
+	for _, svc := range d.wcfg.Services {
+		wasActive, err := d.stopServiceByType(ctx, svc)
+		if err != nil {
+			failure := fmt.Errorf("stop %s during %s: %w", svc.WindowsServiceName, phase, err)
+			return nil, d.recoverStoppedServices(ctx, stopped, failure)
+		}
+		if wasActive {
+			stopped = append(stopped, svc)
+		}
+	}
+	return stopped, nil
+}
+
+func (d *Deployer) recoverStoppedServices(ctx context.Context, services []ServiceConfig, cause error) error {
+	if len(services) == 0 {
+		return cause
+	}
+
+	d.lWarn("recovering previously running services", "count", len(services), "reason", cause)
+	recoveryCtx := context.WithoutCancel(ctx)
+	var recoveryErrors []error
+	for _, svc := range services {
+		if err := d.startServiceByType(recoveryCtx, svc); err != nil {
+			recoveryErrors = append(recoveryErrors, fmt.Errorf("restart %s during recovery: %w", svc.WindowsServiceName, err))
+		}
+	}
+	if len(recoveryErrors) == 0 {
+		return cause
+	}
+	return errors.Join(cause, fmt.Errorf("service recovery failed: %w", errors.Join(recoveryErrors...)))
+}
+
+func (d *Deployer) startServices(ctx context.Context, currentDir, phase string) error {
+	var startErrors []error
+	for _, svc := range d.wcfg.Services {
+		if err := d.ensureServiceByType(svc, currentDir); err != nil {
+			startErrors = append(startErrors, fmt.Errorf("ensure service %s during %s: %w", svc.WindowsServiceName, phase, err))
+			continue
+		}
+		if err := d.startServiceByType(ctx, svc); err != nil {
+			startErrors = append(startErrors, fmt.Errorf("start service %s during %s: %w", svc.WindowsServiceName, phase, err))
+		}
+	}
+	return errors.Join(startErrors...)
+}
+
 // stopServiceByType dispatches to the correct stop logic based on ServiceType.
-func (d *Deployer) stopServiceByType(svc ServiceConfig) error {
+// The boolean reports whether the service was active and may need compensation.
+func (d *Deployer) stopServiceByType(ctx context.Context, svc ServiceConfig) (bool, error) {
 	switch svc.ServiceType {
 	case "iis", "static":
 		// IIS targets do not have a service process to stop here.
 		// IIS continues serving from the stable current/ path.
 		d.l("iis service -- skipping stop", "name", svc.WindowsServiceName, "kind", svc.IISAppKind)
-		return nil
+		return false, nil
 	default: // "nssm"
-		return d.stopService(svc.WindowsServiceName)
+		state, err := d.serviceManager.Status(ctx, svc.WindowsServiceName)
+		if err != nil {
+			if errors.Is(err, ErrServiceNotFound) {
+				d.l("service is not registered; skipping stop", "name", svc.WindowsServiceName)
+				return false, nil
+			}
+			return false, err
+		}
+		if state == ServiceStateStopped {
+			d.l("service already stopped", "name", svc.WindowsServiceName)
+			return false, nil
+		}
+
+		d.l("stopping service", "name", svc.WindowsServiceName)
+		if err := d.serviceManager.Stop(ctx, svc.WindowsServiceName); err != nil {
+			return false, err
+		}
+		d.l("service stopped", "name", svc.WindowsServiceName, "state", ServiceStateStopped)
+		return true, nil
 	}
-}
-
-func (d *Deployer) stopService(name string) error {
-	const (
-		gracefulTimeout = 45 * time.Second
-		forceTimeout    = 20 * time.Second
-		pollInterval    = 2 * time.Second
-	)
-
-	d.l("stopping service", "name", name)
-	out, err := runCommand(d.nssmPath, "stop", name, "confirm")
-	if err != nil && !isServiceMissingOutput(string(out)) {
-		d.lWarn("nssm stop returned non-zero", "name", name, "error", err, "output", string(out))
-	}
-
-	state, waitErr := d.waitForServiceState(name, []string{"SERVICE_STOPPED", "SERVICE_MISSING"}, gracefulTimeout, pollInterval)
-	if waitErr == nil {
-		d.l("service stopped", "name", name, "state", state)
-		return nil
-	}
-
-	d.lWarn("service did not stop gracefully, forcing stop", "name", name, "error", waitErr)
-	killOut, killErr := runCommand("taskkill", "/F", "/FI", fmt.Sprintf("SERVICES eq %s", name))
-	if killErr != nil {
-		d.lWarn("taskkill fallback failed", "name", name, "error", killErr, "output", string(killOut))
-	}
-
-	state, waitErr = d.waitForServiceState(name, []string{"SERVICE_STOPPED", "SERVICE_MISSING"}, forceTimeout, pollInterval)
-	if waitErr != nil {
-		return fmt.Errorf("failed to stop service %s: %w", name, waitErr)
-	}
-
-	d.lWarn("service stopped after force fallback", "name", name, "state", state)
-	return nil
 }
 
 // startServiceByType dispatches to the correct start logic based on ServiceType.
-func (d *Deployer) startServiceByType(svc ServiceConfig) error {
+func (d *Deployer) startServiceByType(ctx context.Context, svc ServiceConfig) error {
 	switch svc.ServiceType {
 	case "iis", "static":
 		return d.recycleAppPool(svc)
 	default: // "nssm"
-		return d.startService(svc.WindowsServiceName)
+		d.l("starting service", "name", svc.WindowsServiceName)
+		if err := d.serviceManager.Start(ctx, svc.WindowsServiceName); err != nil {
+			return err
+		}
+		d.l("service running", "name", svc.WindowsServiceName, "state", ServiceStateRunning)
+		return nil
 	}
-}
-
-func (d *Deployer) startService(name string) error {
-	const (
-		startTimeout = 60 * time.Second
-		pollInterval = 2 * time.Second
-	)
-
-	d.l("starting service", "name", name)
-	outBytes, err := runCommand(d.nssmPath, "start", name)
-	out := string(outBytes)
-
-	if err != nil && !strings.Contains(out, "SERVICE_START_PENDING") && !strings.Contains(out, "SERVICE_RUNNING") {
-		return fmt.Errorf("nssm start %s: %w (output: %s)", name, err, out)
-	}
-	if err != nil {
-		d.l("service start pending or already running", "name", name, "output", out)
-	}
-
-	state, waitErr := d.waitForServiceState(name, []string{"SERVICE_RUNNING"}, startTimeout, pollInterval)
-	if waitErr != nil {
-		return fmt.Errorf("service %s did not reach running state: %w", name, waitErr)
-	}
-
-	d.l("service running", "name", name, "state", state)
-	return nil
 }
 
 func appcmdPath() string {
@@ -828,79 +1264,6 @@ func containsAny(s string, subs ...string) bool {
 	return false
 }
 
-func parseServiceState(output string) string {
-	up := strings.ToUpper(output)
-	for _, state := range []string{
-		"SERVICE_RUNNING",
-		"SERVICE_STOPPED",
-		"SERVICE_START_PENDING",
-		"SERVICE_STOP_PENDING",
-		"SERVICE_PAUSED",
-	} {
-		if strings.Contains(up, state) {
-			return state
-		}
-	}
-	return ""
-}
-
-func isServiceMissingOutput(output string) bool {
-	return containsAny(output,
-		"Can't open service",
-		"does not exist",
-		"OpenService()",
-		"SERVICE_DOES_NOT_EXIST",
-	)
-}
-
-func (d *Deployer) queryServiceState(name string) (string, error) {
-	out, err := runCommand(d.nssmPath, "status", name)
-	text := string(out)
-	state := parseServiceState(text)
-	if err != nil {
-		if isServiceMissingOutput(text) {
-			return "SERVICE_MISSING", nil
-		}
-		if state != "" {
-			return state, nil
-		}
-		return "", fmt.Errorf("nssm status %s: %w (output: %s)", name, err, text)
-	}
-	if state == "" {
-		return "", fmt.Errorf("nssm status %s returned unknown state (output: %s)", name, text)
-	}
-	return state, nil
-}
-
-func (d *Deployer) waitForServiceState(name string, expected []string, timeout, interval time.Duration) (string, error) {
-	deadline := time.Now().Add(timeout)
-	lastState := ""
-	var lastErr error
-	for {
-		state, err := d.queryServiceState(name)
-		lastState = state
-		lastErr = err
-		if err == nil {
-			for _, exp := range expected {
-				if state == exp {
-					return state, nil
-				}
-			}
-			d.l("waiting for service state", "name", name, "current", state, "expected", strings.Join(expected, ","))
-		} else {
-			d.lWarn("service status check failed", "name", name, "error", err)
-		}
-
-		if time.Now().After(deadline) {
-			if lastErr != nil {
-				return "", fmt.Errorf("timeout waiting for %s; last status error: %w", strings.Join(expected, ","), lastErr)
-			}
-			return "", fmt.Errorf("timeout waiting for %s; last observed state=%s", strings.Join(expected, ","), lastState)
-		}
-		time.Sleep(interval)
-	}
-}
-
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -934,11 +1297,12 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 // ReleaseInfo describes a version directory on disk.
 type ReleaseInfo struct {
-	Version   string    `json:"version"`
-	Path      string    `json:"path"`
-	SizeBytes int64     `json:"size_bytes"`
-	ModTime   time.Time `json:"mod_time"`
-	IsCurrent bool      `json:"is_current"`
+	Version     string    `json:"version"`
+	Path        string    `json:"path"`
+	SizeBytes   int64     `json:"size_bytes"`
+	ModTime     time.Time `json:"mod_time"`
+	IsCurrent   bool      `json:"is_current"`
+	HasSnapshot bool      `json:"has_snapshot"`
 }
 
 // ListAvailableVersions returns the release directories on disk for a given installDir.
@@ -971,11 +1335,12 @@ func ListAvailableVersions(installDir string) ([]ReleaseInfo, error) {
 		}
 		fullPath := filepath.Join(releasesDir, e.Name())
 		ri := ReleaseInfo{
-			Version:   restoreReleaseVersion(e.Name()),
-			Path:      fullPath,
-			ModTime:   info.ModTime(),
-			SizeBytes: dirSize(fullPath),
-			IsCurrent: fullPath == currentTarget,
+			Version:     restoreReleaseVersion(e.Name()),
+			Path:        fullPath,
+			ModTime:     info.ModTime(),
+			SizeBytes:   dirSize(fullPath),
+			IsCurrent:   fullPath == currentTarget,
+			HasSnapshot: HasConfigSnapshot(fullPath),
 		}
 		versions = append(versions, ri)
 	}

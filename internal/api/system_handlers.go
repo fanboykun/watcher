@@ -306,6 +306,7 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 	*h.appCfg = next
 	h.githubToken = next.GitHubToken
 	h.nssmPath = next.NssmPath
+	h.serviceManager = agent.NewNSSMServiceManager(next.NssmPath)
 	h.logDir = next.LogDir
 
 	// Recreate watcher goroutines so they pick up updated global values.

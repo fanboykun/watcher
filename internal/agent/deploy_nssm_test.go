@@ -6,7 +6,7 @@ func TestParseServiceState(t *testing.T) {
 	tests := []struct {
 		name   string
 		input  string
-		expect string
+		expect ServiceState
 	}{
 		{name: "running", input: "SERVICE_RUNNING", expect: "SERVICE_RUNNING"},
 		{name: "stopped with text", input: "AppSvc: SERVICE_STOPPED", expect: "SERVICE_STOPPED"},
