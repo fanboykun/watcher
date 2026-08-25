@@ -29,7 +29,7 @@ func (h *Handler) ListWebhookEvents(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, events)
+	c.JSON(http.StatusOK, nonNilSlice(events))
 }
 
 func (h *Handler) ListWebhookDeliveries(c *gin.Context) {
@@ -67,7 +67,7 @@ func (h *Handler) ListWebhookDeliveries(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"data":     deliveries,
+		"data":     nonNilSlice(deliveries),
 		"total":    total,
 		"page":     page,
 		"pageSize": pageSize,

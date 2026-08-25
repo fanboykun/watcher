@@ -473,6 +473,13 @@ export interface PaginatedResponse<T> {
 	pageSize: number;
 }
 
+function normalizePaginatedResponse<T>(response: PaginatedResponse<T>): PaginatedResponse<T> {
+	return {
+		...response,
+		data: Array.isArray(response?.data) ? response.data : []
+	};
+}
+
 export interface SystemStatus {
 	status: string;
 	version: string;
@@ -633,7 +640,12 @@ export const api = {
 	deleteWatcherVersion: (id: number, version: string) => request<{ message: string }>(`/watchers/${id}/versions/${version}`, { method: 'DELETE' }),
 	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') => request<{ data: PollEvent[], total: number, page: number, pageSize: number }>(`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`),
 	watcherWebhookEvents: (id: number) => request<WebhookEvent[]>(`/watchers/${id}/webhook-events`),
-	watcherWebhookDeliveries: (id: number, page = 1, pageSize = 20) => request<PaginatedResponse<WebhookDelivery>>(`/watchers/${id}/webhook-deliveries?page=${page}&pageSize=${pageSize}`),
+	watcherWebhookDeliveries: async (id: number, page = 1, pageSize = 20) =>
+		normalizePaginatedResponse(
+			await request<PaginatedResponse<WebhookDelivery>>(
+				`/watchers/${id}/webhook-deliveries?page=${page}&pageSize=${pageSize}`
+			)
+		),
 	watcherWebhookDelivery: (id: number, deliveryId: number) => request<WebhookDeliveryDetails>(`/watchers/${id}/webhook-deliveries/${deliveryId}`),
 	sendWatcherWebhookTest: (id: number) => request<{ message: string }>(`/watchers/${id}/webhook/test`, { method: 'POST' }),
 	resumeWatcherWebhook: (id: number, replaySuppressed = false) => request<{ message: string; replay_suppressed: boolean }>(`/watchers/${id}/webhook/resume`, { method: 'POST', body: JSON.stringify({ replay_suppressed: replaySuppressed }) }),

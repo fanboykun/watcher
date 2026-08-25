@@ -51,6 +51,7 @@
 	let selectedDeliveryDetails = $state<WebhookDeliveryDetails | null>(null);
 	let selectedDeliveryLoading = $state(false);
 	let selectedDeliveryError = $state('');
+	const safeDeliveries = $derived(Array.isArray(deliveries) ? deliveries : []);
 
 	type DeliverySummary = {
 		successCount: number;
@@ -140,7 +141,7 @@
 		let lastFailed: WebhookDelivery | null = null;
 		let nextRetry: WebhookDelivery | null = null;
 
-		for (const delivery of deliveries) {
+		for (const delivery of safeDeliveries) {
 			const status = normalizeStatus(delivery.status);
 			if (isSucceeded(status)) {
 				successCount += 1;
@@ -491,7 +492,7 @@
 		</div>
 		<div class="flex items-center gap-2">
 			<div class="text-xs text-muted-foreground">
-				Showing {deliveries.length === 0 ? 0 : (deliveryPage - 1) * deliveryPageSize + 1} -
+				Showing {safeDeliveries.length === 0 ? 0 : (deliveryPage - 1) * deliveryPageSize + 1} -
 				{Math.min(deliveryPage * deliveryPageSize, deliveryTotal)} of {deliveryTotal}
 			</div>
 			<Select.Root
@@ -543,7 +544,7 @@
 				</Table.Row>
 			</Table.Header>
 			<Table.Body>
-				{#if deliveries.length === 0}
+				{#if safeDeliveries.length === 0}
 					<Table.Row class="border-border">
 						<Table.Cell colspan={5} class="py-10 text-center">
 							<div class="mx-auto max-w-md space-y-2">
@@ -556,7 +557,7 @@
 						</Table.Cell>
 					</Table.Row>
 				{:else}
-					{#each deliveries as delivery (delivery.id)}
+					{#each safeDeliveries as delivery (delivery.id)}
 						<Table.Row class="border-border align-top">
 							<Table.Cell class="min-w-60">
 								<div class="space-y-1">

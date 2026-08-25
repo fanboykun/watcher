@@ -25,6 +25,7 @@ INSTALLER_CMD_PATH := ./cmd/installer
 INSTALLER_BINARY_NAME := $(APP_NAME)-installer.exe
 BIN_DIR     := bin
 TEST_PKG    := ./internal/...
+E2E_PKG     := ./internal/e2e
 WEB_DIR     := web
 
 # ── Build config ──────────────────────────────────────────────
@@ -47,7 +48,7 @@ PACKAGE_DIR := $(BIN_DIR)/$(APP_NAME)-$(VERSION)
 # Targets
 # ==============================================================
 
-.PHONY: all build build-go build-installer build-web package test test-github test-verbose run webhook-server dev clean info help
+.PHONY: all build build-go build-installer build-web package test test-e2e test-github test-verbose run webhook-server dev clean info help
 
 ## all: run tests then build
 all: test build
@@ -161,6 +162,13 @@ test:
 	@echo "    Pkg : $(TEST_PKG)"
 	@echo ""
 	$(GO) test $(TEST_PKG) -count=1
+
+## test-e2e: run backend end-to-end tests with fake GitHub and NSSM boundaries
+test-e2e:
+	@echo ""
+	@echo ">>> Running backend end-to-end tests"
+	@echo ""
+	$(GO) test -p=1 -tags=e2e $(E2E_PKG) -count=1 -v
 
 ## test-github: run only github.go tests
 test-github:

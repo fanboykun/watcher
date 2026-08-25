@@ -51,6 +51,9 @@ Full installation guide: [INSTALL.md](INSTALL.md)
 
 ## Runtime Architecture
 
+The detailed agent ownership, NSSM state matrix, deployment sequencing, and
+compensation invariants are documented in [docs/agent.md](docs/agent.md).
+
 ```text
 cmd/watcher/main.go
   ├─ load .env config (Viper)
@@ -69,13 +72,14 @@ Each watcher loop:
 3. Enforce rollback high-watermark (`max_ignored_version`)
 4. Deploy if needed:
    - download artifact (retry with backoff)
-   - extract to `releases/<version>`
-   - stop services
-   - swap `current` junction (`mklink /J`, copy fallback)
+   - extract and validate in a temporary staging directory
+   - write managed release config and capture its private version snapshot under `.watcher/snapshots/`
+   - stop services only after preparation succeeds
+   - promote the staged release and swap `current` (`mklink /J`, copy fallback)
    - ensure service registration (NSSM for `nssm` type)
    - start services / recycle IIS app pools
    - health checks
-   - rollback on failure
+   - rollback or restore the promotion backup on failure
 5. Persist state and deploy logs in SQLite
 
 ---
@@ -355,6 +359,7 @@ make dev
 make build-web
 make build
 make test
+make test-e2e
 make test-verbose
 make test-github
 make run

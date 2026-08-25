@@ -30,6 +30,7 @@ type Logger struct {
 	closer io.Closer
 }
 
+// NewLogger creates a configured logger.
 func NewLogger(component string) *Logger {
 	return NewLoggerWithWriter(component, os.Stdout, "info")
 }
@@ -44,6 +45,7 @@ func NewFileLogger(component, logDir string, cfg LogConfig) (*Logger, error) {
 	return newFileLogger(component, logDir, cfg, os.Stdout)
 }
 
+// newFileLogger creates a logger that writes JSON records to rotating storage and stdout.
 func newFileLogger(component, logDir string, cfg LogConfig, stdout io.Writer) (*Logger, error) {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return nil, fmt.Errorf("create log dir: %w", err)
@@ -59,6 +61,7 @@ func newFileLogger(component, logDir string, cfg LogConfig, stdout io.Writer) (*
 	return newLogger(component, io.MultiWriter(stdout, rotator), cfg.Level, rotator), nil
 }
 
+// newLogger creates the shared slog wrapper and records ownership of its output closer.
 func newLogger(component string, out io.Writer, level string, closer io.Closer) *Logger {
 	parsedLevel := slog.LevelInfo
 	if err := parsedLevel.UnmarshalText([]byte(strings.ToUpper(strings.TrimSpace(level)))); err != nil {
@@ -76,9 +79,16 @@ func (l *Logger) WithComponent(component string) *Logger {
 	return &Logger{logger: slog.New(l.logger.Handler()).With("component", component)}
 }
 
-func (l *Logger) Info(msg string, args ...any)  { l.logger.Info(msg, args...) }
-func (l *Logger) Warn(msg string, args ...any)  { l.logger.Warn(msg, args...) }
+// Info writes an informational structured log entry.
+func (l *Logger) Info(msg string, args ...any) { l.logger.Info(msg, args...) }
+
+// Warn writes a warning structured log entry.
+func (l *Logger) Warn(msg string, args ...any) { l.logger.Warn(msg, args...) }
+
+// Error writes an error-level structured log entry.
 func (l *Logger) Error(msg string, args ...any) { l.logger.Error(msg, args...) }
+
+// Debug writes a debug structured log entry.
 func (l *Logger) Debug(msg string, args ...any) { l.logger.Debug(msg, args...) }
 
 // Close releases the rotating log file. It is safe to call on stdout-only and

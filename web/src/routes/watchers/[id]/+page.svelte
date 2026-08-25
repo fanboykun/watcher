@@ -93,7 +93,7 @@
 
 	const loadWebhookDeliveries = async () => {
 		const res = await api.watcherWebhookDeliveries(id, deliveryPage, deliveryPageSize);
-		webhookDeliveries = res.data;
+		webhookDeliveries = Array.isArray(res.data) ? res.data : [];
 		deliveryTotal = res.total;
 	};
 

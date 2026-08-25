@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -52,7 +53,7 @@ func UpdateEnvFile(path string, updates map[string]string) error {
 		"GITHUB_TOKEN",
 		"GITHUB_DEPLOY_ENABLED",
 		"WEBHOOK_DEFAULT_URL",
-		"WEBHOOK_DEFAULT_BEARER_TOKEN",
+		"WEBHOOK_DEFAULT_SIGNING_SECRET",
 		"WEBHOOK_TIMEOUT_SEC",
 		"WEBHOOK_RETRY_SCHEDULE_SEC",
 		"WEBHOOK_AUTO_PAUSE_ENABLED",
@@ -78,6 +79,18 @@ func UpdateEnvFile(path string, updates map[string]string) error {
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("%s=%s", key, val))
+		seen[key] = true
+	}
+
+	remainingKeys := make([]string, 0, len(updates))
+	for key := range updates {
+		if !seen[key] {
+			remainingKeys = append(remainingKeys, key)
+		}
+	}
+	sort.Strings(remainingKeys)
+	for _, key := range remainingKeys {
+		lines = append(lines, fmt.Sprintf("%s=%s", key, updates[key]))
 	}
 
 	out := strings.Join(lines, "\n")
