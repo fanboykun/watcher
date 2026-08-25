@@ -130,6 +130,11 @@ type SelfConfigResponse struct {
 	Environment                       string `json:"environment"`
 	GitHubDeployEnabled               bool   `json:"github_deploy_enabled"`
 	LogDir                            string `json:"log_dir"`
+	LogLevel                          string `json:"log_level"`
+	LogMaxSizeMB                      int    `json:"log_max_size_mb"`
+	LogMaxBackups                     int    `json:"log_max_backups"`
+	LogMaxAgeDays                     int    `json:"log_max_age_days"`
+	LogCompress                       bool   `json:"log_compress"`
 	NssmPath                          string `json:"nssm_path"`
 	DBPath                            string `json:"db_path"`
 	APIPort                           string `json:"api_port"`
@@ -155,6 +160,11 @@ type UpdateSelfConfigRequest struct {
 	GitHubToken                   *string `json:"github_token"`
 	GitHubDeployEnabled           *bool   `json:"github_deploy_enabled"`
 	LogDir                        *string `json:"log_dir"`
+	LogLevel                      *string `json:"log_level"`
+	LogMaxSizeMB                  *int    `json:"log_max_size_mb"`
+	LogMaxBackups                 *int    `json:"log_max_backups"`
+	LogMaxAgeDays                 *int    `json:"log_max_age_days"`
+	LogCompress                   *bool   `json:"log_compress"`
 	NssmPath                      *string `json:"nssm_path"`
 	DBPath                        *string `json:"db_path"`
 	APIPort                       *string `json:"api_port"`

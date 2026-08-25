@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/spf13/viper v1.21.0
 	golang.org/x/crypto v0.48.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gorm.io/gorm v1.31.1
 )
 

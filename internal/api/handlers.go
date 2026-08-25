@@ -151,6 +151,7 @@ type Handler struct {
 	githubToken    string
 	envPath        string
 	appCfg         *config.AppConfig
+	log            *agent.Logger
 	events         *agent.WatcherEventBus
 	startTime      time.Time
 	checkTrigger   chan uint     // send watcher ID for immediate poll
@@ -160,7 +161,10 @@ type Handler struct {
 }
 
 // NewHandler creates a new Handler with the given dependencies.
-func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *Handler {
+func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, log *agent.Logger, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *Handler {
+	if log == nil {
+		log = agent.NewLogger("api")
+	}
 	return &Handler{
 		db:             db,
 		nssmPath:       nssmPath,
@@ -170,6 +174,7 @@ func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath str
 		githubToken:    githubToken,
 		envPath:        envPath,
 		appCfg:         appCfg,
+		log:            log,
 		events:         events,
 		startTime:      time.Now(),
 		checkTrigger:   checkTrigger,
@@ -1252,8 +1257,7 @@ func (h *Handler) InspectGitHubRepo(c *gin.Context) {
 	if token == "" {
 		token = h.githubToken
 	}
-	logger := agent.NewLogger("") // Temporary logger to stdout
-	client := agent.NewGitHubClient(token, logger)
+	client := agent.NewGitHubClient(token, h.log.WithComponent("github-inspect"))
 
 	resp, err := client.InspectRepository(c.Request.Context(), req.RepoURL, req.ReleaseRef)
 	if err != nil {
@@ -1307,11 +1311,11 @@ func (h *Handler) syncServiceFiles(svc *database.Service, installDir string) {
 func (h *Handler) writeServiceFile(installDir, relativePath, content string) {
 	targetPath := filepath.Join(installDir, relativePath)
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-		fmt.Printf("Error creating config dir %s: %v\n", targetPath, err)
+		h.log.Error("create service config directory", "path", targetPath, "error", err)
 		return
 	}
 	if err := os.WriteFile(targetPath, []byte(content), 0600); err != nil {
-		fmt.Printf("Error writing config file %s: %v\n", targetPath, err)
+		h.log.Error("write service config file", "path", targetPath, "error", err)
 	}
 }
 
@@ -1391,7 +1395,7 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 
 	// Create deploy log first and process rollback asynchronously so API can return immediately.
 	wcfg := agent.WatcherConfigFromDB(watcher)
-	logger := agent.NewLogger(wcfg.Name)
+	logger := h.log.WithComponent(wcfg.Name)
 
 	now := time.Now().UTC()
 	dlog := database.DeployLog{

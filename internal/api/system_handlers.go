@@ -53,8 +53,7 @@ func (h *Handler) AgentLogs(c *gin.Context) {
 		}
 	}
 
-	logType := c.DefaultQuery("type", "out") // "out" or "err"
-	logFile := filepath.Join(h.logDir, "watcher."+logType+".log")
+	logFile := filepath.Join(h.logDir, agent.LogFilename)
 
 	content, err := tailFile(logFile, lines)
 	if err != nil {
@@ -66,15 +65,14 @@ func (h *Handler) AgentLogs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"log_file": logFile,
-		"type":     logType,
+		"format":   "json",
 		"lines":    content,
 	})
 }
 
 // StreamAgentLogs streams the agent logs using Server-Sent Events (SSE).
 func (h *Handler) StreamAgentLogs(c *gin.Context) {
-	logType := c.DefaultQuery("type", "out")
-	logFile := filepath.Join(h.logDir, "watcher."+logType+".log")
+	logFile := filepath.Join(h.logDir, agent.LogFilename)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -173,6 +171,11 @@ func (h *Handler) SelfConfig(c *gin.Context) {
 		Environment:                       h.appCfg.Environment,
 		GitHubDeployEnabled:               h.appCfg.GitHubDeployEnabled,
 		LogDir:                            h.appCfg.LogDir,
+		LogLevel:                          h.appCfg.LogLevel,
+		LogMaxSizeMB:                      h.appCfg.LogMaxSizeMB,
+		LogMaxBackups:                     h.appCfg.LogMaxBackups,
+		LogMaxAgeDays:                     h.appCfg.LogMaxAgeDays,
+		LogCompress:                       h.appCfg.LogCompress,
 		NssmPath:                          h.appCfg.NssmPath,
 		DBPath:                            h.appCfg.DBPath,
 		APIPort:                           h.appCfg.APIPort,
@@ -219,6 +222,25 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 	}
 	if req.LogDir != nil {
 		next.LogDir = strings.TrimSpace(*req.LogDir)
+	}
+	if req.LogLevel != nil {
+		next.LogLevel = strings.TrimSpace(*req.LogLevel)
+	}
+	if req.LogMaxSizeMB != nil {
+		next.LogMaxSizeMB = *req.LogMaxSizeMB
+	}
+	if req.LogMaxBackups != nil {
+		next.LogMaxBackups = *req.LogMaxBackups
+	}
+	if req.LogMaxAgeDays != nil {
+		next.LogMaxAgeDays = *req.LogMaxAgeDays
+	}
+	if req.LogCompress != nil {
+		next.LogCompress = *req.LogCompress
+	}
+	if err := next.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
 	}
 	if req.NssmPath != nil {
 		next.NssmPath = strings.TrimSpace(*req.NssmPath)
@@ -290,6 +312,11 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 		"WEBHOOK_EVENT_RETENTION_DAYS":      strconv.Itoa(next.WebhookEventRetentionDays),
 		"WEBHOOK_DELIVERY_RETENTION_DAYS":   strconv.Itoa(next.WebhookDeliveryRetentionDays),
 		"LOG_DIR":                           next.LogDir,
+		"LOG_LEVEL":                         next.LogLevel,
+		"LOG_MAX_SIZE_MB":                   strconv.Itoa(next.LogMaxSizeMB),
+		"LOG_MAX_BACKUPS":                   strconv.Itoa(next.LogMaxBackups),
+		"LOG_MAX_AGE_DAYS":                  strconv.Itoa(next.LogMaxAgeDays),
+		"LOG_COMPRESS":                      strconv.FormatBool(next.LogCompress),
 		"NSSM_PATH":                         next.NssmPath,
 		"DB_PATH":                           next.DBPath,
 		"API_PORT":                          next.APIPort,
@@ -317,12 +344,17 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 		"message": "agent configuration saved",
 		"notes": []string{
 			"watcher loops were reloaded to apply runtime fields",
-			"API_PORT and DB_PATH changes require manual service restart to fully take effect",
+			"API_PORT, DB_PATH, and logging changes require a manual service restart to fully take effect",
 		},
 		"config": SelfConfigResponse{
 			Environment:                       next.Environment,
 			GitHubDeployEnabled:               next.GitHubDeployEnabled,
 			LogDir:                            next.LogDir,
+			LogLevel:                          next.LogLevel,
+			LogMaxSizeMB:                      next.LogMaxSizeMB,
+			LogMaxBackups:                     next.LogMaxBackups,
+			LogMaxAgeDays:                     next.LogMaxAgeDays,
+			LogCompress:                       next.LogCompress,
 			NssmPath:                          next.NssmPath,
 			DBPath:                            next.DBPath,
 			APIPort:                           next.APIPort,

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -22,6 +23,15 @@ type AppConfig struct {
 
 	// LogDir is where watcher writes its own logs
 	LogDir string `mapstructure:"LOG_DIR"`
+
+	// LogLevel controls the minimum structured log level: debug, info, warn, or error.
+	LogLevel string `mapstructure:"LOG_LEVEL"`
+
+	// Log rotation is handled by lumberjack. Sizes are in megabytes and ages in days.
+	LogMaxSizeMB  int  `mapstructure:"LOG_MAX_SIZE_MB"`
+	LogMaxBackups int  `mapstructure:"LOG_MAX_BACKUPS"`
+	LogMaxAgeDays int  `mapstructure:"LOG_MAX_AGE_DAYS"`
+	LogCompress   bool `mapstructure:"LOG_COMPRESS"`
 
 	// NssmPath is the full path to nssm.exe
 	NssmPath string `mapstructure:"NSSM_PATH"`
@@ -64,6 +74,11 @@ func LoadConfig(envPath string) (*AppConfig, error) {
 
 	// Defaults
 	v.SetDefault("LOG_DIR", `D:\apps\watcher\logs`)
+	v.SetDefault("LOG_LEVEL", "info")
+	v.SetDefault("LOG_MAX_SIZE_MB", 100)
+	v.SetDefault("LOG_MAX_BACKUPS", 10)
+	v.SetDefault("LOG_MAX_AGE_DAYS", 30)
+	v.SetDefault("LOG_COMPRESS", true)
 	v.SetDefault("NSSM_PATH", `C:\ProgramData\chocolatey\bin\nssm.exe`)
 	v.SetDefault("DB_PATH", `watcher.db`)
 	v.SetDefault("API_PORT", "8080")
@@ -105,7 +120,7 @@ func LoadConfig(envPath string) (*AppConfig, error) {
 	cfg.LogDir = cleanWindowsPath(cfg.LogDir)
 	cfg.DBPath = cleanWindowsPath(cfg.DBPath)
 
-	return &cfg, cfg.validate()
+	return &cfg, cfg.Validate()
 }
 
 func cleanWindowsPath(s string) string {
@@ -117,6 +132,20 @@ func cleanWindowsPath(s string) string {
 	return s
 }
 
-func (c *AppConfig) validate() error {
+// Validate checks configuration values that can be changed through the API.
+func (c *AppConfig) Validate() error {
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(strings.ToUpper(strings.TrimSpace(c.LogLevel)))); err != nil {
+		return fmt.Errorf("LOG_LEVEL must be debug, info, warn, or error: %w", err)
+	}
+	if c.LogMaxSizeMB <= 0 {
+		return fmt.Errorf("LOG_MAX_SIZE_MB must be greater than zero")
+	}
+	if c.LogMaxBackups < 0 {
+		return fmt.Errorf("LOG_MAX_BACKUPS cannot be negative")
+	}
+	if c.LogMaxAgeDays < 0 {
+		return fmt.Errorf("LOG_MAX_AGE_DAYS cannot be negative")
+	}
 	return nil
 }

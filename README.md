@@ -236,6 +236,11 @@ Example is in `.env.example`.
 ENVIRONMENT=production
 GITHUB_TOKEN=
 LOG_DIR=D:\apps\watcher\logs
+LOG_LEVEL=info
+LOG_MAX_SIZE_MB=100
+LOG_MAX_BACKUPS=10
+LOG_MAX_AGE_DAYS=30
+LOG_COMPRESS=true
 NSSM_PATH=C:\ProgramData\chocolatey\bin\nssm.exe
 DB_PATH=D:\apps\watcher\watcher.db
 API_PORT=8080
@@ -245,6 +250,7 @@ WATCHER_REPO_URL=https://github.com/fanboykun/watcher
 
 Notes:
 - `GITHUB_TOKEN` is required for private repos.
+- Logs are JSON records written to `watcher.log`. They rotate at `LOG_MAX_SIZE_MB`; rotated logs are retained according to `LOG_MAX_BACKUPS` and `LOG_MAX_AGE_DAYS`, and can be gzip-compressed with `LOG_COMPRESS`.
 - `API_BASE_URL` enables GitHub Deployment API `log_url` linking.
 - `WATCHER_REPO_URL` is used by self-update check/update.
 - `GITHUB_DEPLOY_ENABLED=true|false` toggles GitHub Deployment API reporting globally.

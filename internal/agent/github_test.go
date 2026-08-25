@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +17,7 @@ import (
 
 // newTestLogger returns a logger that discards output during tests
 func newTestLogger() *Logger {
-	return NewLogger("test")
+	return NewLoggerWithWriter("test", io.Discard, "error")
 }
 
 // newTestClient returns a GitHubClient pointing at the test server for both
