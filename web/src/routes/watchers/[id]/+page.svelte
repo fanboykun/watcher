@@ -36,6 +36,7 @@
 	import WebhooksTab from './components/webhooks-tab.svelte';
 	import RollbackDialog from './components/rollback-dialog.svelte';
 	import ConfirmationDialog from './components/confirmation-dialog.svelte';
+	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let watcher = $state<Watcher | null>(null);
 	let deploys = $state<DeployLog[]>([]);
@@ -53,6 +54,7 @@
 	let pollStatus = $state('all');
 	let pollTotal = $state(0);
 	let error = $state('');
+	let loading = $state(true);
 	let triggerMsg = $state('');
 
 	let showRollbackDialog = $state(false);
@@ -146,6 +148,8 @@
 				});
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to load watcher';
+			} finally {
+				loading = false;
 			}
 		};
 		init();
@@ -432,7 +436,9 @@
 		</div>
 	{/if}
 
-	{#if watcher}
+	{#if loading}
+		<RequestLoading label="Loading watcher details…" />
+	{:else if watcher}
 		{#if hasActiveRollbackPin(watcher)}
 			<div class="mb-4 flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
 				<div class="flex items-center gap-2">

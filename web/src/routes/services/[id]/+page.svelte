@@ -35,6 +35,7 @@
 	import DeploysTab from './components/deploys-tab.svelte';
 	import LogsTab from './components/logs-tab.svelte';
 	import EnvTab from './components/env-tab.svelte';
+	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let service = $state<Service | null>(null);
 	let watcher = $state<Watcher | null>(null);
@@ -45,6 +46,7 @@
 	let deployTotal = $state(0);
 	let logLines = $state<string[]>([]);
 	let error = $state('');
+	let loading = $state(true);
 	let actionMsg = $state('');
 	let logError = $state('');
 	let logType = $state<'out' | 'err'>('out');
@@ -67,6 +69,8 @@
 			await loadDeploys();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load service';
+		} finally {
+			loading = false;
 		}
 		loadLogs();
 	});
@@ -228,7 +232,9 @@
 		</div>
 	{/if}
 
-	{#if service}
+	{#if loading}
+		<RequestLoading label="Loading service details…" />
+	{:else if service}
 		<!-- Service Info Card -->
 		<Card.Root class="border-border bg-card">
 			<Card.Content class="grid gap-4 p-6 sm:grid-cols-4">

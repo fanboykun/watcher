@@ -6,16 +6,18 @@
 	import * as Tabs from '$lib/components/ui/tabs';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Activity, AlertCircle, RefreshCw } from '@lucide/svelte';
+	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let agentLines = $state<string[]>([]);
 	let error = $state('');
-	let loading = $state(false);
+	let loading = $state(true);
 	let lineCount = $state('100');
 
 	onMount(() => loadLogs());
 
 	async function loadLogs() {
 		loading = true;
+		error = '';
 		try {
 			const res = await api.agentLogs(Number(lineCount));
 			agentLines = res.lines ?? [];
@@ -61,7 +63,9 @@
 
 	<Card.Root class="border-border bg-card">
 		<Card.Content class="p-0">
-			{#if agentLines.length > 0}
+			{#if loading}
+				<RequestLoading label="Loading agent logs…" />
+			{:else if agentLines.length > 0}
 				<div class="max-h-150 overflow-auto">
 					<pre class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">
 						{#each agentLines as line, i (`${i}-${line}`)}
