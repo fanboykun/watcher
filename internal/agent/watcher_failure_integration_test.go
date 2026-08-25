@@ -18,7 +18,7 @@ func newWatcherFailureFixture(t *testing.T) (*RepoWatcher, *gorm.DB, database.Wa
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	if err := db.AutoMigrate(&database.Watcher{}, &database.DeployLog{}); err != nil {
+	if err := db.AutoMigrate(&database.Watcher{}, &database.Service{}, &database.ServiceConfigFile{}, &database.DeployLog{}); err != nil {
 		t.Fatalf("migrate database: %v", err)
 	}
 	watcher := database.Watcher{
@@ -38,6 +38,10 @@ func TestWatcherFailurePersistenceIntegration(t *testing.T) {
 
 	t.Run("successful version rollback creates linked successful attempt", func(t *testing.T) {
 		watcherRuntime, db, watcher := newWatcherFailureFixture(t)
+		watcherRuntime.wcfg = &WatcherConfig{InstallDir: watcher.InstallDir}
+		if err := CaptureConfigSnapshot(watcherRuntime.wcfg, "v1", SnapshotSourceDeployment); err != nil {
+			t.Fatalf("capture rollback config: %v", err)
+		}
 		if _, err := watcherRuntime.state.SetDeploying("v2", "v1"); err != nil {
 			t.Fatal(err)
 		}

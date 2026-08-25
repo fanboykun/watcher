@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/fanboykun/watcher/internal/database"
@@ -15,6 +16,13 @@ func (r *RepoWatcher) recordDeployFailure(err error, targetVersion, localVersion
 		deployAttemptID, rootAttemptID := r.latestDeployAttemptIDs()
 		rollbackID, rbErr := r.state.StartRollbackAttempt(rollbackTo, targetVersion, targetVersion, "auto_after_deploy_failure", "agent", deployAttemptID, rootAttemptID)
 		if rbErr == nil {
+			services, reconcileErr := ReconcileConfigSnapshot(r.db, r.watcherID, rollbackTo)
+			if reconcileErr != nil {
+				message := fmt.Sprintf("rollback to %s restored runtime but failed to reconcile persisted config: %v", rollbackTo, reconcileErr)
+				_ = r.state.FailRollbackAttempt(rollbackID, message)
+				return false
+			}
+			r.wcfg.Services = services
 			_ = r.state.CompleteRollbackAttempt(rollbackID, rollbackTo, "")
 		}
 		return true

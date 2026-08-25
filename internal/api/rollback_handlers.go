@@ -148,18 +148,24 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 	deployer := agent.NewDeployer(wcfg, h.nssmPath, logger, appendRollbackLog)
 	appendRollbackLog(fmt.Sprintf("rollback: started target=%s from=%s", targetVersion, previousVersion))
 
-	if err := deployer.Rollback(context.Background(), targetVersion); err != nil {
+	rollbackErr := deployer.Rollback(context.Background(), targetVersion)
+	if rollbackErr == nil {
+		if _, err := agent.ReconcileConfigSnapshot(h.db, watcher.ID, targetVersion); err != nil {
+			rollbackErr = fmt.Errorf("rollback activated %s but failed to reconcile persisted config: %w", targetVersion, err)
+		}
+	}
+	if rollbackErr != nil {
 		completed := time.Now().UTC()
 		durationMs := completed.Sub(startedAt).Milliseconds()
 		_ = h.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).Updates(map[string]any{
 			"status":       "failed",
-			"error":        err.Error(),
+			"error":        rollbackErr.Error(),
 			"completed_at": &completed,
 			"duration_ms":  durationMs,
 		}).Error
 		_ = h.db.Model(&database.Watcher{}).Where("id = ?", watcher.ID).Updates(map[string]any{
 			"status":     "failed",
-			"last_error": err.Error(),
+			"last_error": rollbackErr.Error(),
 		}).Error
 		if h.events != nil {
 			h.events.Publish(watcher.ID, agent.WatcherEvent{
@@ -167,7 +173,7 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 				Data: map[string]any{
 					"deploy_log_id": deployLogID,
 					"status":        "failed",
-					"error":         err.Error(),
+					"error":         rollbackErr.Error(),
 				},
 			})
 		}
