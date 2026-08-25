@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -223,16 +224,20 @@ func TestListAvailableVersions_HasSnapshotFlag(t *testing.T) {
 
 	// v1.0.0 with snapshot
 	v1Dir := filepath.Join(relDir, "v1.0.0")
-	os.MkdirAll(filepath.Join(v1Dir, snapshotDir), 0755)
+	os.MkdirAll(v1Dir, 0755)
+	if err := CaptureConfigSnapshot(&WatcherConfig{InstallDir: dir}, "v1.0.0", SnapshotSourceDeployment); err != nil {
+		t.Fatal(err)
+	}
 
 	// v1.1.0 without snapshot
 	v2Dir := filepath.Join(relDir, "v1.1.0")
 	os.MkdirAll(v2Dir, 0755)
 
-	// v1.2.0 with .watcher-snapshot as a file (not a dir)
+	// v1.2.0 with an invalid external snapshot path
 	v3Dir := filepath.Join(relDir, "v1.2.0")
 	os.MkdirAll(v3Dir, 0755)
-	os.WriteFile(filepath.Join(v3Dir, snapshotDir), []byte("not a dir"), 0600)
+	os.MkdirAll(ConfigSnapshotPath(dir, "v1.2.0"), 0700)
+	os.WriteFile(filepath.Join(ConfigSnapshotPath(dir, "v1.2.0"), configSnapshotManifestFile), []byte("not-json"), 0600)
 
 	result, err := ListAvailableVersions(dir)
 	if err != nil {
@@ -255,7 +260,7 @@ func TestListAvailableVersions_HasSnapshotFlag(t *testing.T) {
 		t.Error("v1.1.0 should have HasSnapshot=false")
 	}
 	if m["v1.2.0"] {
-		t.Error("v1.2.0 should have HasSnapshot=false (file, not dir)")
+		t.Error("v1.2.0 should have HasSnapshot=false for an invalid manifest")
 	}
 }
 
@@ -280,7 +285,7 @@ func TestCurrentVersionFromCurrentDir_ReadsReleaseSymlink(t *testing.T) {
 	}
 }
 
-func TestResolveRollbackVersionFallsBackToCurrentDirWhenDBVersionMissing(t *testing.T) {
+func TestResolveRollbackVersionDoesNotAdoptCurrentDirWhenDBVersionMissing(t *testing.T) {
 	dir := t.TempDir()
 	releaseDir := filepath.Join(dir, "releases", releaseStorageName("v1.0.0"))
 	if err := os.MkdirAll(releaseDir, 0755); err != nil {
@@ -294,12 +299,12 @@ func TestResolveRollbackVersionFallsBackToCurrentDirWhenDBVersionMissing(t *test
 
 	d := NewDeployer(&WatcherConfig{InstallDir: dir}, "nssm.exe", newTestLogger(), func(string) {})
 	got := d.resolveRollbackVersion("v1.1.0", "")
-	if got != "v1.0.0" {
-		t.Fatalf("resolveRollbackVersion = %q, want %q", got, "v1.0.0")
+	if got != "" {
+		t.Fatalf("resolveRollbackVersion = %q, want no rollback for an unowned filesystem version", got)
 	}
 }
 
-func TestResolveRollbackVersionFallsBackToAvailableReleaseList(t *testing.T) {
+func TestResolveRollbackVersionDoesNotAdoptReleaseListWhenDBVersionMissing(t *testing.T) {
 	dir := t.TempDir()
 	releasesDir := filepath.Join(dir, "releases")
 	if err := os.MkdirAll(releasesDir, 0755); err != nil {
@@ -332,8 +337,21 @@ func TestResolveRollbackVersionFallsBackToAvailableReleaseList(t *testing.T) {
 
 	d := NewDeployer(&WatcherConfig{InstallDir: dir}, "nssm.exe", newTestLogger(), func(string) {})
 	got := d.resolveRollbackVersion("v1.2.0", "")
-	if got != "v1.1.0" {
-		t.Fatalf("resolveRollbackVersion = %q, want %q", got, "v1.1.0")
+	if got != "" {
+		t.Fatalf("resolveRollbackVersion = %q, want no rollback for unowned release directories", got)
+	}
+}
+
+func TestResolveRollbackVersionUsesRecordedPreviousVersion(t *testing.T) {
+	dir := t.TempDir()
+	previous := "v1.1.0"
+	if err := os.MkdirAll(filepath.Join(dir, "releases", releaseStorageName(previous)), 0755); err != nil {
+		t.Fatalf("mkdir previous release: %v", err)
+	}
+
+	d := NewDeployer(&WatcherConfig{InstallDir: dir}, "nssm.exe", newTestLogger(), func(string) {})
+	if got := d.resolveRollbackVersion("v1.2.0", previous); got != previous {
+		t.Fatalf("resolveRollbackVersion = %q, want recorded previous version %q", got, previous)
 	}
 }
 
@@ -405,7 +423,7 @@ func TestEnsureServiceByType_IISCreatesRegistration(t *testing.T) {
 	}
 
 	d := NewDeployer(&WatcherConfig{}, "nssm", NewLogger("test"), nil)
-	err := d.ensureServiceByType(ServiceConfig{
+	err := d.ensureServiceByType(context.Background(), ServiceConfig{
 		ServiceType:        "iis",
 		WindowsServiceName: "frontend",
 		IISAppKind:         "aspnet_classic",
@@ -456,7 +474,7 @@ func TestEnsureServiceByType_IISStaticDefaultsAppPoolToNoManagedCode(t *testing.
 	}
 
 	d := NewDeployer(&WatcherConfig{}, "nssm", NewLogger("test"), nil)
-	err := d.ensureServiceByType(ServiceConfig{
+	err := d.ensureServiceByType(context.Background(), ServiceConfig{
 		ServiceType:       "iis",
 		IISAppKind:        "static",
 		IISAppPool:        "my-pool",
@@ -484,7 +502,7 @@ func TestEnsureServiceByType_IISRequiresPublicURLWhenCreatingSite(t *testing.T) 
 	}
 
 	d := NewDeployer(&WatcherConfig{}, "nssm", NewLogger("test"), nil)
-	err := d.ensureServiceByType(ServiceConfig{
+	err := d.ensureServiceByType(context.Background(), ServiceConfig{
 		ServiceType:        "iis",
 		IISAppKind:         "php",
 		WindowsServiceName: "frontend",
@@ -524,7 +542,7 @@ func TestEnsureServiceByType_IISUpdatesExistingSiteWithoutPublicURL(t *testing.T
 	}
 
 	d := NewDeployer(&WatcherConfig{}, "nssm", NewLogger("test"), nil)
-	err := d.ensureServiceByType(ServiceConfig{
+	err := d.ensureServiceByType(context.Background(), ServiceConfig{
 		ServiceType:        "iis",
 		IISAppKind:         "static",
 		WindowsServiceName: "frontend",
@@ -620,8 +638,8 @@ func TestWriteReleaseConfigFilesWritesOnlyReleaseDirTargets(t *testing.T) {
 
 func TestCaptureConfigSnapshot(t *testing.T) {
 	t.Run("single service with all config categories", func(t *testing.T) {
-		releaseDir := t.TempDir()
-		d := NewDeployer(&WatcherConfig{Services: []ServiceConfig{
+		installDir := t.TempDir()
+		d := NewDeployer(&WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "api-svc",
 				EnvFile:            ".env",
@@ -633,18 +651,19 @@ func TestCaptureConfigSnapshot(t *testing.T) {
 			},
 		}}, "nssm.exe", newTestLogger(), func(string) {})
 
-		if err := d.captureConfigSnapshot(releaseDir); err != nil {
+		if err := d.captureConfigSnapshot("v1", SnapshotSourceDeployment); err != nil {
 			t.Fatalf("captureConfigSnapshot returned error: %v", err)
 		}
 
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "env", "api-svc", ".env"), "PORT=3000\nDB=prod")
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "app", "api-svc", "config", "app.json"), `{"key":"val"}`)
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "release", "api-svc", "web.config"), "<configuration />")
+		snapshotRoot := ConfigSnapshotPath(installDir, "v1")
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "api-svc", "env", ".env"), "PORT=3000\nDB=prod")
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "api-svc", "app", "config", "app.json"), `{"key":"val"}`)
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "api-svc", "release", "web.config"), "<configuration />")
 	})
 
 	t.Run("multiple services with per-service namespacing", func(t *testing.T) {
-		releaseDir := t.TempDir()
-		d := NewDeployer(&WatcherConfig{Services: []ServiceConfig{
+		installDir := t.TempDir()
+		d := NewDeployer(&WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "svc-a",
 				EnvFile:            ".env",
@@ -663,20 +682,21 @@ func TestCaptureConfigSnapshot(t *testing.T) {
 			},
 		}}, "nssm.exe", newTestLogger(), func(string) {})
 
-		if err := d.captureConfigSnapshot(releaseDir); err != nil {
+		if err := d.captureConfigSnapshot("v1", SnapshotSourceDeployment); err != nil {
 			t.Fatalf("captureConfigSnapshot returned error: %v", err)
 		}
 
 		// Both services have their own namespaced files even with same relative path
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "env", "svc-a", ".env"), "SVC=a")
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "env", "svc-b", ".env"), "SVC=b")
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "app", "svc-a", "settings.json"), `{"svc":"a"}`)
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "app", "svc-b", "settings.json"), `{"svc":"b"}`)
+		snapshotRoot := ConfigSnapshotPath(installDir, "v1")
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "svc-a", "env", ".env"), "SVC=a")
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "svc-b", "env", ".env"), "SVC=b")
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "svc-a", "app", "settings.json"), `{"svc":"a"}`)
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "svc-b", "app", "settings.json"), `{"svc":"b"}`)
 	})
 
-	t.Run("service with no env content skips env snapshot", func(t *testing.T) {
-		releaseDir := t.TempDir()
-		d := NewDeployer(&WatcherConfig{Services: []ServiceConfig{
+	t.Run("service with empty env content snapshots an empty file", func(t *testing.T) {
+		installDir := t.TempDir()
+		d := NewDeployer(&WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "web-fe",
 				EnvFile:            ".env",
@@ -687,71 +707,65 @@ func TestCaptureConfigSnapshot(t *testing.T) {
 			},
 		}}, "nssm.exe", newTestLogger(), func(string) {})
 
-		if err := d.captureConfigSnapshot(releaseDir); err != nil {
+		if err := d.captureConfigSnapshot("v1", SnapshotSourceDeployment); err != nil {
 			t.Fatalf("captureConfigSnapshot returned error: %v", err)
 		}
 
-		// env dir should not exist for this service
-		envDir := filepath.Join(releaseDir, snapshotDir, "env", "web-fe")
-		if _, err := os.Stat(envDir); !os.IsNotExist(err) {
-			t.Fatalf("expected no env dir for service with empty EnvContent, stat err=%v", err)
-		}
-		// release config should still exist
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "release", "web-fe", "web.config"), "<cfg/>")
+		snapshotRoot := ConfigSnapshotPath(installDir, "v1")
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "web-fe", "env", ".env"), "")
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "web-fe", "release", "web.config"), "<cfg/>")
 	})
 
-	t.Run("service with no config files produces no snapshot dirs", func(t *testing.T) {
-		releaseDir := t.TempDir()
-		d := NewDeployer(&WatcherConfig{Services: []ServiceConfig{
+	t.Run("service with no config still produces an authoritative manifest", func(t *testing.T) {
+		installDir := t.TempDir()
+		d := NewDeployer(&WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "bare-svc",
 			},
 		}}, "nssm.exe", newTestLogger(), func(string) {})
 
-		if err := d.captureConfigSnapshot(releaseDir); err != nil {
+		if err := d.captureConfigSnapshot("v1", SnapshotSourceDeployment); err != nil {
 			t.Fatalf("captureConfigSnapshot returned error: %v", err)
 		}
 
-		snapRoot := filepath.Join(releaseDir, snapshotDir)
-		// snapshot root should not exist since nothing was written
-		if _, err := os.Stat(snapRoot); !os.IsNotExist(err) {
-			t.Fatalf("expected no snapshot dir for service with no config, stat err=%v", err)
+		if !HasConfigSnapshot(installDir, "v1") {
+			t.Fatal("expected authoritative snapshot manifest")
 		}
 	})
 
 	t.Run("redeploy clears old snapshot", func(t *testing.T) {
-		releaseDir := t.TempDir()
+		installDir := t.TempDir()
 
 		// First deploy with one config
-		d1 := NewDeployer(&WatcherConfig{Services: []ServiceConfig{
+		d1 := NewDeployer(&WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "api",
 				EnvFile:            ".env",
 				EnvContent:         "V=1",
 			},
 		}}, "nssm.exe", newTestLogger(), func(string) {})
-		if err := d1.captureConfigSnapshot(releaseDir); err != nil {
+		if err := d1.captureConfigSnapshot("v1", SnapshotSourceDeployment); err != nil {
 			t.Fatal(err)
 		}
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "env", "api", ".env"), "V=1")
+		assertFileContent(t, filepath.Join(ConfigSnapshotPath(installDir, "v1"), "services", "api", "env", ".env"), "V=1")
 
 		// Second deploy with different config — should overwrite
-		d2 := NewDeployer(&WatcherConfig{Services: []ServiceConfig{
+		d2 := NewDeployer(&WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "api",
 				EnvFile:            ".env",
 				EnvContent:         "V=2",
 			},
 		}}, "nssm.exe", newTestLogger(), func(string) {})
-		if err := d2.captureConfigSnapshot(releaseDir); err != nil {
+		if err := d2.captureConfigSnapshot("v1", SnapshotSourceActiveUpdate); err != nil {
 			t.Fatal(err)
 		}
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "env", "api", ".env"), "V=2")
+		assertFileContent(t, filepath.Join(ConfigSnapshotPath(installDir, "v1"), "services", "api", "env", ".env"), "V=2")
 	})
 
-	t.Run("config files with empty content are skipped", func(t *testing.T) {
-		releaseDir := t.TempDir()
-		d := NewDeployer(&WatcherConfig{Services: []ServiceConfig{
+	t.Run("config files with empty content are preserved", func(t *testing.T) {
+		installDir := t.TempDir()
+		d := NewDeployer(&WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "svc",
 				ConfigFiles: []ConfigFile{
@@ -761,14 +775,13 @@ func TestCaptureConfigSnapshot(t *testing.T) {
 			},
 		}}, "nssm.exe", newTestLogger(), func(string) {})
 
-		if err := d.captureConfigSnapshot(releaseDir); err != nil {
+		if err := d.captureConfigSnapshot("v1", SnapshotSourceDeployment); err != nil {
 			t.Fatal(err)
 		}
 
-		if _, err := os.Stat(filepath.Join(releaseDir, snapshotDir, "app", "svc", "empty.txt")); !os.IsNotExist(err) {
-			t.Fatal("empty content config file should not be snapshotted")
-		}
-		assertFileContent(t, filepath.Join(releaseDir, snapshotDir, "app", "svc", "ok.txt"), "data")
+		snapshotRoot := ConfigSnapshotPath(installDir, "v1")
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "svc", "app", "empty.txt"), "")
+		assertFileContent(t, filepath.Join(snapshotRoot, "services", "svc", "app", "ok.txt"), "data")
 	})
 }
 
@@ -783,8 +796,8 @@ func assertFileContent(t *testing.T, path, want string) {
 	}
 }
 
-func TestBackfillConfigSnapshots(t *testing.T) {
-	t.Run("backfills missing snapshots", func(t *testing.T) {
+func TestPrepareConfigSnapshots(t *testing.T) {
+	t.Run("captures only the current version", func(t *testing.T) {
 		installDir := t.TempDir()
 		releasesDir := filepath.Join(installDir, "releases")
 		os.MkdirAll(filepath.Join(releasesDir, "v1.0.0"), 0755)
@@ -802,21 +815,24 @@ func TestBackfillConfigSnapshots(t *testing.T) {
 			},
 		}
 
-		BackfillConfigSnapshots(wcfg, newTestLogger())
+		PrepareConfigSnapshots(wcfg, "v1.1.0", newTestLogger())
 
-		// Both versions should have snapshots
-		assertFileContent(t, filepath.Join(releasesDir, "v1.0.0", snapshotDir, "env", "api", ".env"), "PORT=8080")
-		assertFileContent(t, filepath.Join(releasesDir, "v1.1.0", snapshotDir, "env", "api", ".env"), "PORT=8080")
+		if HasConfigSnapshot(installDir, "v1.0.0") {
+			t.Fatal("historical version must not receive the current config")
+		}
+		if !HasConfigSnapshot(installDir, "v1.1.0") {
+			t.Fatal("current version should receive a migration snapshot")
+		}
+		assertFileContent(t, filepath.Join(ConfigSnapshotPath(installDir, "v1.1.0"), "services", "api", "env", ".env"), "PORT=8080")
 	})
 
-	t.Run("skips versions that already have snapshots", func(t *testing.T) {
+	t.Run("quarantines legacy release snapshots without trusting them", func(t *testing.T) {
 		installDir := t.TempDir()
 		releasesDir := filepath.Join(installDir, "releases")
 		os.MkdirAll(filepath.Join(releasesDir, "v1.0.0"), 0755)
 		os.MkdirAll(filepath.Join(releasesDir, "v1.1.0"), 0755)
 
-		// Pre-create a snapshot for v1.0.0 with different content
-		snapDir := filepath.Join(releasesDir, "v1.0.0", snapshotDir, "env", "api")
+		snapDir := filepath.Join(releasesDir, "v1.0.0", legacyConfigSnapshotDir, "env", "api")
 		os.MkdirAll(snapDir, 0755)
 		os.WriteFile(filepath.Join(snapDir, ".env"), []byte("ORIGINAL=true"), 0600)
 
@@ -832,12 +848,15 @@ func TestBackfillConfigSnapshots(t *testing.T) {
 			},
 		}
 
-		BackfillConfigSnapshots(wcfg, newTestLogger())
+		PrepareConfigSnapshots(wcfg, "v1.1.0", newTestLogger())
 
-		// v1.0.0 should keep its original snapshot
-		assertFileContent(t, filepath.Join(releasesDir, "v1.0.0", snapshotDir, "env", "api", ".env"), "ORIGINAL=true")
-		// v1.1.0 should get a new snapshot
-		assertFileContent(t, filepath.Join(releasesDir, "v1.1.0", snapshotDir, "env", "api", ".env"), "NEW=true")
+		if HasConfigSnapshot(installDir, "v1.0.0") {
+			t.Fatal("legacy historical snapshot must not become trusted")
+		}
+		if _, err := os.Stat(filepath.Join(releasesDir, "v1.0.0", legacyConfigSnapshotDir)); !os.IsNotExist(err) {
+			t.Fatalf("legacy snapshot remained inside release: %v", err)
+		}
+		assertFileContent(t, filepath.Join(installDir, watcherStateDir, legacyConfigSnapshotStoreDir, "v1.0.0", "env", "api", ".env"), "ORIGINAL=true")
 	})
 
 	t.Run("handles missing releases dir gracefully", func(t *testing.T) {
@@ -854,10 +873,10 @@ func TestBackfillConfigSnapshots(t *testing.T) {
 		}
 
 		// Should not panic or error — just silently skip
-		BackfillConfigSnapshots(wcfg, newTestLogger())
+		PrepareConfigSnapshots(wcfg, "", newTestLogger())
 	})
 
-	t.Run("idempotent backfill does not overwrite", func(t *testing.T) {
+	t.Run("startup migration does not overwrite a trusted snapshot", func(t *testing.T) {
 		installDir := t.TempDir()
 		releasesDir := filepath.Join(installDir, "releases")
 		os.MkdirAll(filepath.Join(releasesDir, "v1.0.0"), 0755)
@@ -874,49 +893,51 @@ func TestBackfillConfigSnapshots(t *testing.T) {
 			},
 		}
 
-		BackfillConfigSnapshots(wcfg, newTestLogger())
-		assertFileContent(t, filepath.Join(releasesDir, "v1.0.0", snapshotDir, "env", "svc", ".env"), "A=1")
+		PrepareConfigSnapshots(wcfg, "v1.0.0", newTestLogger())
+		assertFileContent(t, filepath.Join(ConfigSnapshotPath(installDir, "v1.0.0"), "services", "svc", "env", ".env"), "A=1")
 
-		// Change config, run backfill again — should NOT overwrite
+		// Startup migration is idempotent; active updates use CaptureConfigSnapshot directly.
 		wcfg.Services[0].EnvContent = "A=2"
-		BackfillConfigSnapshots(wcfg, newTestLogger())
-		assertFileContent(t, filepath.Join(releasesDir, "v1.0.0", snapshotDir, "env", "svc", ".env"), "A=1")
+		PrepareConfigSnapshots(wcfg, "v1.0.0", newTestLogger())
+		assertFileContent(t, filepath.Join(ConfigSnapshotPath(installDir, "v1.0.0"), "services", "svc", "env", ".env"), "A=1")
 	})
 }
 
 func TestHasConfigSnapshot(t *testing.T) {
-	t.Run("returns true when snapshot dir exists", func(t *testing.T) {
-		dir := t.TempDir()
-		os.MkdirAll(filepath.Join(dir, snapshotDir), 0755)
-		if !HasConfigSnapshot(dir) {
+	t.Run("returns true for a valid external snapshot", func(t *testing.T) {
+		installDir := t.TempDir()
+		if err := CaptureConfigSnapshot(&WatcherConfig{InstallDir: installDir}, "v1", SnapshotSourceDeployment); err != nil {
+			t.Fatal(err)
+		}
+		if !HasConfigSnapshot(installDir, "v1") {
 			t.Fatal("expected HasConfigSnapshot to return true")
 		}
 	})
 
 	t.Run("returns false when snapshot dir is missing", func(t *testing.T) {
-		dir := t.TempDir()
-		if HasConfigSnapshot(dir) {
+		installDir := t.TempDir()
+		if HasConfigSnapshot(installDir, "v1") {
 			t.Fatal("expected HasConfigSnapshot to return false")
 		}
 	})
 
-	t.Run("returns false when snapshot is a file not a dir", func(t *testing.T) {
-		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, snapshotDir), []byte("not a dir"), 0600)
-		if HasConfigSnapshot(dir) {
-			t.Fatal("expected HasConfigSnapshot to return false for file")
+	t.Run("returns false when manifest is invalid", func(t *testing.T) {
+		installDir := t.TempDir()
+		os.MkdirAll(ConfigSnapshotPath(installDir, "v1"), 0700)
+		os.WriteFile(filepath.Join(ConfigSnapshotPath(installDir, "v1"), configSnapshotManifestFile), []byte("invalid"), 0600)
+		if HasConfigSnapshot(installDir, "v1") {
+			t.Fatal("expected HasConfigSnapshot to return false for invalid manifest")
 		}
 	})
 }
 
 func TestRestoreConfigSnapshot(t *testing.T) {
 	t.Run("restores all three categories to correct paths", func(t *testing.T) {
-		releaseDir := t.TempDir()
 		installDir := t.TempDir()
 		currentDir := t.TempDir()
 
 		// Create a snapshot manually
-		wcfg := &WatcherConfig{Services: []ServiceConfig{
+		wcfg := &WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "api",
 				EnvFile:            ".env",
@@ -927,12 +948,12 @@ func TestRestoreConfigSnapshot(t *testing.T) {
 				},
 			},
 		}}
-		if err := CaptureConfigSnapshot(wcfg, releaseDir); err != nil {
+		if err := CaptureConfigSnapshot(wcfg, "v1", SnapshotSourceDeployment); err != nil {
 			t.Fatal(err)
 		}
 
 		// Restore
-		if err := RestoreConfigSnapshot(releaseDir, installDir, currentDir); err != nil {
+		if err := RestoreConfigSnapshot(wcfg, "v1", currentDir); err != nil {
 			t.Fatalf("RestoreConfigSnapshot returned error: %v", err)
 		}
 
@@ -942,11 +963,10 @@ func TestRestoreConfigSnapshot(t *testing.T) {
 	})
 
 	t.Run("multiple services restore without collision", func(t *testing.T) {
-		releaseDir := t.TempDir()
 		installDir := t.TempDir()
 		currentDir := t.TempDir()
 
-		wcfg := &WatcherConfig{Services: []ServiceConfig{
+		wcfg := &WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "svc-a",
 				EnvFile:            "a.env",
@@ -958,11 +978,11 @@ func TestRestoreConfigSnapshot(t *testing.T) {
 				EnvContent:         "SVC=b",
 			},
 		}}
-		if err := CaptureConfigSnapshot(wcfg, releaseDir); err != nil {
+		if err := CaptureConfigSnapshot(wcfg, "v1", SnapshotSourceDeployment); err != nil {
 			t.Fatal(err)
 		}
 
-		if err := RestoreConfigSnapshot(releaseDir, installDir, currentDir); err != nil {
+		if err := RestoreConfigSnapshot(wcfg, "v1", currentDir); err != nil {
 			t.Fatalf("RestoreConfigSnapshot returned error: %v", err)
 		}
 
@@ -970,32 +990,29 @@ func TestRestoreConfigSnapshot(t *testing.T) {
 		assertFileContent(t, filepath.Join(installDir, "b.env"), "SVC=b")
 	})
 
-	t.Run("no snapshot dir degrades gracefully", func(t *testing.T) {
-		releaseDir := t.TempDir()
+	t.Run("no snapshot returns a typed error", func(t *testing.T) {
 		installDir := t.TempDir()
 		currentDir := t.TempDir()
 
-		// No snapshot exists — should return nil (not error)
-		err := RestoreConfigSnapshot(releaseDir, installDir, currentDir)
-		if err != nil {
-			t.Fatalf("expected nil error for missing snapshot, got: %v", err)
+		err := RestoreConfigSnapshot(&WatcherConfig{InstallDir: installDir}, "v1", currentDir)
+		if !errors.Is(err, ErrConfigSnapshotNotFound) {
+			t.Fatalf("error = %v, want ErrConfigSnapshotNotFound", err)
 		}
 	})
 
 	t.Run("restores overwrite drifted config", func(t *testing.T) {
-		releaseDir := t.TempDir()
 		installDir := t.TempDir()
 		currentDir := t.TempDir()
 
 		// Capture a snapshot
-		wcfg := &WatcherConfig{Services: []ServiceConfig{
+		wcfg := &WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "api",
 				EnvFile:            ".env",
 				EnvContent:         "PORT=3000",
 			},
 		}}
-		if err := CaptureConfigSnapshot(wcfg, releaseDir); err != nil {
+		if err := CaptureConfigSnapshot(wcfg, "v1", SnapshotSourceDeployment); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1004,18 +1021,17 @@ func TestRestoreConfigSnapshot(t *testing.T) {
 		os.WriteFile(filepath.Join(installDir, ".env"), []byte("PORT=9999"), 0600)
 
 		// Restore should bring back the snapshot content
-		if err := RestoreConfigSnapshot(releaseDir, installDir, currentDir); err != nil {
+		if err := RestoreConfigSnapshot(wcfg, "v1", currentDir); err != nil {
 			t.Fatal(err)
 		}
 		assertFileContent(t, filepath.Join(installDir, ".env"), "PORT=3000")
 	})
 
 	t.Run("nested config file paths are preserved", func(t *testing.T) {
-		releaseDir := t.TempDir()
 		installDir := t.TempDir()
 		currentDir := t.TempDir()
 
-		wcfg := &WatcherConfig{Services: []ServiceConfig{
+		wcfg := &WatcherConfig{InstallDir: installDir, Services: []ServiceConfig{
 			{
 				WindowsServiceName: "api",
 				ConfigFiles: []ConfigFile{
@@ -1023,11 +1039,11 @@ func TestRestoreConfigSnapshot(t *testing.T) {
 				},
 			},
 		}}
-		if err := CaptureConfigSnapshot(wcfg, releaseDir); err != nil {
+		if err := CaptureConfigSnapshot(wcfg, "v1", SnapshotSourceDeployment); err != nil {
 			t.Fatal(err)
 		}
 
-		if err := RestoreConfigSnapshot(releaseDir, installDir, currentDir); err != nil {
+		if err := RestoreConfigSnapshot(wcfg, "v1", currentDir); err != nil {
 			t.Fatal(err)
 		}
 		assertFileContent(t, filepath.Join(installDir, "deep", "nested", "config.yaml"), "key: value")

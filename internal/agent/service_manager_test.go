@@ -86,6 +86,113 @@ func TestNSSMServiceManagerStartPendingToRunning(t *testing.T) {
 	}
 }
 
+func TestNSSMServiceManagerStartAcceptsNSSMPendingExitStatus(t *testing.T) {
+	statuses := []ServiceState{ServiceStateStopped, ServiceStateStartPending, ServiceStateRunning}
+	manager := newTestServiceManager(func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "status":
+			state := statuses[0]
+			statuses = statuses[1:]
+			return []byte(state), nil
+		case "start":
+			return []byte("api: Unexpected status SERVICE_START_PENDING in response to START control."), errors.New("exit status 1")
+		default:
+			t.Fatalf("unexpected command: %v", args)
+			return nil, nil
+		}
+	})
+
+	if err := manager.Start(context.Background(), "api"); err != nil {
+		t.Fatalf("Start returned error for accepted pending transition: %v", err)
+	}
+}
+
+func TestNSSMServiceManagerStopAcceptsNSSMPendingExitStatus(t *testing.T) {
+	statuses := []ServiceState{ServiceStateRunning, ServiceStateStopPending, ServiceStateStopped}
+	manager := newTestServiceManager(func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "status":
+			state := statuses[0]
+			statuses = statuses[1:]
+			return []byte(state), nil
+		case "stop":
+			return []byte("api: Unexpected status SERVICE_STOP_PENDING in response to STOP control."), errors.New("exit status 1")
+		default:
+			t.Fatalf("unexpected command: %v", args)
+			return nil, nil
+		}
+	})
+
+	if err := manager.Stop(context.Background(), "api"); err != nil {
+		t.Fatalf("Stop returned error for accepted pending transition: %v", err)
+	}
+}
+
+func TestNSSMServiceManagerVerifiesStatusAfterUnclearCommandFailure(t *testing.T) {
+	statuses := []ServiceState{ServiceStateStopped, ServiceStateStartPending, ServiceStateRunning}
+	manager := newTestServiceManager(func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "status":
+			state := statuses[0]
+			statuses = statuses[1:]
+			return []byte(state), nil
+		case "start":
+			return []byte("control request timed out"), errors.New("exit status 1")
+		default:
+			t.Fatalf("unexpected command: %v", args)
+			return nil, nil
+		}
+	})
+
+	if err := manager.Start(context.Background(), "api"); err != nil {
+		t.Fatalf("Start returned error although follow-up status confirmed the transition: %v", err)
+	}
+}
+
+func TestNSSMServiceManagerWaitsForExistingTransition(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial ServiceState
+		final   ServiceState
+		operate func(*NSSMServiceManager) error
+	}{
+		{
+			name:    "start already pending",
+			initial: ServiceStateStartPending,
+			final:   ServiceStateRunning,
+			operate: func(manager *NSSMServiceManager) error {
+				return manager.Start(context.Background(), "api")
+			},
+		},
+		{
+			name:    "stop already pending",
+			initial: ServiceStateStopPending,
+			final:   ServiceStateStopped,
+			operate: func(manager *NSSMServiceManager) error {
+				return manager.Stop(context.Background(), "api")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statuses := []ServiceState{tt.initial, tt.initial, tt.final}
+			manager := newTestServiceManager(func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if args[0] != "status" {
+					t.Fatalf("lifecycle command %q must not be repeated while transition is pending", args[0])
+				}
+				state := statuses[0]
+				statuses = statuses[1:]
+				return []byte(state), nil
+			})
+
+			if err := tt.operate(manager); err != nil {
+				t.Fatalf("operation returned error: %v", err)
+			}
+		})
+	}
+}
+
 func TestNSSMServiceManagerTimeoutIncludesServiceAndLastState(t *testing.T) {
 	manager := newTestServiceManager(func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		if args[0] == "start" {

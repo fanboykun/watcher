@@ -25,10 +25,12 @@
 		subscribeSelfUpdate
 	} from '$lib/self-update';
 	import type { SelfUpdateCheckResponse } from '$lib/api';
+	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let status = $state<SystemStatus | null>(null);
 	let watchers = $state<Watcher[]>([]);
 	let error = $state('');
+	let loading = $state(true);
 	let selfUpdateInfo = $state<SelfUpdateCheckResponse | null>(null);
 	let showSelfUpdateAlert = $state(false);
 
@@ -51,6 +53,8 @@
 				void lookupSelfUpdate({ silent: true });
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to connect to API';
+			} finally {
+				loading = false;
 			}
 		};
 
@@ -107,8 +111,10 @@
 		</div>
 	{/if}
 
-	<!-- Stats grid -->
-	{#if status}
+	{#if loading}
+		<RequestLoading label="Loading dashboard…" />
+	{:else if status}
+		<!-- Stats grid -->
 		<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 			<Card.Root class="border-border bg-card">
 				<Card.Header class="flex flex-row items-center justify-between pb-2">
@@ -154,10 +160,9 @@
 				</Card.Content>
 			</Card.Root>
 		</div>
-	{/if}
 
-	<!-- Watcher status cards -->
-	{#if watchers.length > 0}
+		<!-- Watcher status cards -->
+		{#if watchers.length > 0}
 		<div>
 			<h2 class="mb-4 text-lg font-semibold">Watchers</h2>
 			<div class="grid gap-4 sm:grid-cols-2">
@@ -203,7 +208,7 @@
 				{/each}
 			</div>
 		</div>
-	{:else if !error}
+		{:else if !error}
 		<Card.Root class="border-dashed border-border bg-card">
 			<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
 				<Eye class="mb-3 h-10 w-10 text-muted-foreground/40" />
@@ -213,5 +218,6 @@
 				</p>
 			</Card.Content>
 		</Card.Root>
+		{/if}
 	{/if}
 </div>

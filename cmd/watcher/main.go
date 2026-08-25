@@ -32,11 +32,22 @@ func main() {
 	}
 
 	// Switch to file logger now that we have log dir
-	log, err = agent.NewFileLogger("agent", cfg.LogDir)
+	log, err = agent.NewFileLogger("agent", cfg.LogDir, agent.LogConfig{
+		Level:      cfg.LogLevel,
+		MaxSizeMB:  cfg.LogMaxSizeMB,
+		MaxBackups: cfg.LogMaxBackups,
+		MaxAgeDays: cfg.LogMaxAgeDays,
+		Compress:   cfg.LogCompress,
+	})
 	if err != nil {
 		log = agent.NewLogger("agent")
 		log.Warn("could not open log file, using stdout only", "error", err)
 	}
+	defer func() {
+		if err := log.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "close log file:", err)
+		}
+	}()
 
 	log.Info("config loaded",
 		"environment", cfg.Environment,
@@ -67,7 +78,7 @@ func main() {
 	webhookService := webhook.NewService(db, cfg, webhookTrigger)
 
 	// Start API server in background
-	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, *envPath, cfg, events, checkTrigger, syncTrigger, webhookService, webhookTrigger)
+	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, *envPath, cfg, log.WithComponent("api"), events, checkTrigger, syncTrigger, webhookService, webhookTrigger)
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.APIPort),
 		Handler: router,

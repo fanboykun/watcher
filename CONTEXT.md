@@ -27,7 +27,7 @@ The `<install_dir>/current/` directory junction (Windows `mklink /J`) that alway
 _Avoid_: symlink, current dir, active version
 
 **Install dir**:
-The root directory for a watcher on disk, containing `releases/`, `current/`, `downloads/`, and `logs/`.
+The root directory for a watcher on disk, containing `releases/`, `current/`, `downloads/`, `logs/`, and private `.watcher/` state.
 _Avoid_: app dir, base dir, root dir
 
 ### Config
@@ -51,12 +51,12 @@ _Avoid_: versioned config, current config
 ### Snapshots
 
 **Config snapshot**:
-A mirrored copy of all managed config for a specific version, captured at deploy time and stored at `releases/<version>/.watcher-snapshot/`. Used by rollback to restore config to the state it was in when that version was deployed.
+A trusted mirrored copy of all managed config for a specific version, stored under `<install_dir>/.watcher/snapshots/<version>/` with a provenance manifest. Used by rollback to restore config to the state owned by that version.
 _Avoid_: config backup, config archive, config dump
 
-**Backfilled snapshot**:
-A config snapshot created at agent startup for a release dir that was deployed before snapshot capture was introduced, using current DB config as the best available approximation.
-_Avoid_: synthetic snapshot, legacy snapshot
+**Legacy snapshot**:
+An untrusted snapshot from the former in-release layout. Startup migration moves it to `.watcher/legacy-snapshots/` for operator recovery but never uses it automatically for rollback.
+_Avoid_: backfilled snapshot, trusted snapshot
 
 **Snapshot restoration**:
 The act of reading a config snapshot during rollback and writing each file to its actual target path on disk, before services are re-registered and started.

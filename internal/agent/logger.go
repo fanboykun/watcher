@@ -1,80 +1,101 @@
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+const LogFilename = "watcher.log"
+
+// LogConfig controls the structured log level and on-disk retention.
+// MaxSizeMB is the maximum size of the active log before it is rotated.
+type LogConfig struct {
+	Level      string
+	MaxSizeMB  int
+	MaxBackups int
+	MaxAgeDays int
+	Compress   bool
+}
+
+// Logger keeps the existing call-site API while delegating JSON encoding and
+// attribute handling to log/slog.
 type Logger struct {
-	component string
-	out       io.Writer
+	logger *slog.Logger
+	closer io.Closer
 }
 
-type logEntry struct {
-	Time      string         `json:"time"`
-	Level     string         `json:"level"`
-	Component string         `json:"component"`
-	Msg       string         `json:"msg"`
-	Fields    map[string]any `json:"fields,omitempty"`
-}
-
+// NewLogger creates a configured logger.
 func NewLogger(component string) *Logger {
-	return &Logger{component: component, out: os.Stdout}
+	return NewLoggerWithWriter(component, os.Stdout, "info")
 }
 
-func NewFileLogger(component, logDir string) (*Logger, error) {
+// NewLoggerWithWriter creates a JSON logger for a caller-provided destination.
+func NewLoggerWithWriter(component string, out io.Writer, level string) *Logger {
+	return newLogger(component, out, level, nil)
+}
+
+// NewFileLogger writes JSON logs to stdout and a rotating watcher.log file.
+func NewFileLogger(component, logDir string, cfg LogConfig) (*Logger, error) {
+	return newFileLogger(component, logDir, cfg, os.Stdout)
+}
+
+// newFileLogger creates a logger that writes JSON records to rotating storage and stdout.
+func newFileLogger(component, logDir string, cfg LogConfig, stdout io.Writer) (*Logger, error) {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return nil, fmt.Errorf("create log dir: %w", err)
 	}
-	path := filepath.Join(logDir, "watcher.log")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("open log file: %w", err)
+
+	rotator := &lumberjack.Logger{
+		Filename:   filepath.Join(logDir, LogFilename),
+		MaxSize:    cfg.MaxSizeMB,
+		MaxBackups: cfg.MaxBackups,
+		MaxAge:     cfg.MaxAgeDays,
+		Compress:   cfg.Compress,
+	}
+	return newLogger(component, io.MultiWriter(stdout, rotator), cfg.Level, rotator), nil
+}
+
+// newLogger creates the shared slog wrapper and records ownership of its output closer.
+func newLogger(component string, out io.Writer, level string, closer io.Closer) *Logger {
+	parsedLevel := slog.LevelInfo
+	if err := parsedLevel.UnmarshalText([]byte(strings.ToUpper(strings.TrimSpace(level)))); err != nil {
+		parsedLevel = slog.LevelInfo
 	}
 	return &Logger{
-		component: component,
-		out:       io.MultiWriter(os.Stdout, f),
-	}, nil
+		logger: slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: parsedLevel})).With("component", component),
+		closer: closer,
+	}
 }
 
-// WithComponent returns a child logger with a different component label.
-// Used so each RepoWatcher logs with its own name as context.
+// WithComponent returns a logger sharing the output and level with a
+// replacement component attribute, rather than nesting component values.
 func (l *Logger) WithComponent(component string) *Logger {
-	return &Logger{component: component, out: l.out}
+	return &Logger{logger: slog.New(l.logger.Handler()).With("component", component)}
 }
 
-func (l *Logger) write(level, msg string, args ...any) {
-	entry := logEntry{
-		Time:      time.Now().UTC().Format(time.RFC3339),
-		Level:     level,
-		Component: l.component,
-		Msg:       msg,
-	}
-	if len(args) > 0 {
-		entry.Fields = make(map[string]any)
-		for i := 0; i+1 < len(args); i += 2 {
-			key, ok := args[i].(string)
-			if !ok {
-				key = fmt.Sprintf("arg%d", i)
-			}
-			val := args[i+1]
-			// error interface has no exported fields so json.Marshal produces {}
-			// convert to string so the message is actually visible in logs
-			if err, ok := val.(error); ok {
-				val = err.Error()
-			}
-			entry.Fields[key] = val
-		}
-	}
-	b, _ := json.Marshal(entry)
-	fmt.Fprintln(l.out, string(b))
-}
+// Info writes an informational structured log entry.
+func (l *Logger) Info(msg string, args ...any) { l.logger.Info(msg, args...) }
 
-func (l *Logger) Info(msg string, args ...any)  { l.write("INFO", msg, args...) }
-func (l *Logger) Warn(msg string, args ...any)  { l.write("WARN", msg, args...) }
-func (l *Logger) Error(msg string, args ...any) { l.write("ERROR", msg, args...) }
-func (l *Logger) Debug(msg string, args ...any) { l.write("DEBUG", msg, args...) }
+// Warn writes a warning structured log entry.
+func (l *Logger) Warn(msg string, args ...any) { l.logger.Warn(msg, args...) }
+
+// Error writes an error-level structured log entry.
+func (l *Logger) Error(msg string, args ...any) { l.logger.Error(msg, args...) }
+
+// Debug writes a debug structured log entry.
+func (l *Logger) Debug(msg string, args ...any) { l.logger.Debug(msg, args...) }
+
+// Close releases the rotating log file. It is safe to call on stdout-only and
+// child loggers, which do not own a file destination.
+func (l *Logger) Close() error {
+	if l.closer == nil {
+		return nil
+	}
+	return l.closer.Close()
+}

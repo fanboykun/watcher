@@ -13,12 +13,12 @@ import (
 )
 
 // NewRouter creates a Gin engine with all API routes and embedded SPA.
-func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *gin.Engine {
+func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, log *agent.Logger, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	h := NewHandler(db, nssmPath, logDir, version, githubToken, envPath, appCfg, events, checkTrigger, syncTrigger, webhookService, webhookTrigger)
+	h := NewHandler(db, nssmPath, logDir, version, githubToken, envPath, appCfg, log, events, checkTrigger, syncTrigger, webhookService, webhookTrigger)
 
 	apiGroup := r.Group("/api")
 	{

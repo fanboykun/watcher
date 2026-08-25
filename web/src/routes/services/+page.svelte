@@ -6,29 +6,37 @@
 	import * as Button from '$lib/components/ui/button';
 	import { Server, Play, Square, RefreshCw, Heart, AlertCircle } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
+	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let services = $state<ServiceWithWatcher[]>([]);
 	let error = $state('');
+	let loading = $state(true);
 	let actionMsg = $state('');
+	let actionError = $state('');
 
 	onMount(load);
 
 	async function load() {
+		loading = true;
 		try {
 			services = await api.listServices();
+			error = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load services';
+		} finally {
+			loading = false;
 		}
 	}
 
 	async function serviceAction(fn: () => Promise<{ message: string }>) {
+		actionError = '';
 		try {
 			const res = await fn();
 			actionMsg = res.message;
 			setTimeout(() => (actionMsg = ''), 3000);
 		} catch (e) {
-			actionMsg = e instanceof Error ? e.message : 'Action failed';
-			setTimeout(() => (actionMsg = ''), 5000);
+			actionError = e instanceof Error ? e.message : 'Action failed';
+			setTimeout(() => (actionError = ''), 5000);
 		}
 	}
 </script>
@@ -52,7 +60,16 @@
 		</div>
 	{/if}
 
-	{#if services.length > 0}
+	{#if actionError}
+		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+			<AlertCircle class="mr-2 inline h-4 w-4" />
+			{actionError}
+		</div>
+	{/if}
+
+	{#if loading}
+		<RequestLoading label="Loading services…" />
+	{:else if services.length > 0}
 		<Card.Root class="border-border bg-card">
 			<Table.Root>
 				<Table.Header>

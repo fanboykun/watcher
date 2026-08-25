@@ -27,12 +27,14 @@ type WatcherEventBus struct {
 	subs map[uint]map[chan WatcherEvent]struct{}
 }
 
+// NewWatcherEventBus creates a configured watcher event bus.
 func NewWatcherEventBus() *WatcherEventBus {
 	return &WatcherEventBus{
 		subs: make(map[uint]map[chan WatcherEvent]struct{}),
 	}
 }
 
+// Publish publishes an event to all watcher subscribers.
 func (b *WatcherEventBus) Publish(watcherID uint, ev WatcherEvent) {
 	b.mu.RLock()
 	wSubs := b.subs[watcherID]
@@ -64,6 +66,7 @@ func (b *WatcherEventBus) Publish(watcherID uint, ev WatcherEvent) {
 	b.mu.RUnlock()
 }
 
+// Subscribe registers a watcher event subscriber and returns its cleanup function.
 func (b *WatcherEventBus) Subscribe(watcherID uint) (<-chan WatcherEvent, func()) {
 	ch := make(chan WatcherEvent, 24)
 	b.mu.Lock()

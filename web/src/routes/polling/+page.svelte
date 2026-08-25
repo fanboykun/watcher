@@ -12,6 +12,7 @@
 
 	let { data } = $props();
 	let watchers = $derived(data.watchers);
+	let loadError = $derived(data.loadError);
 	let searchQuery = $state('');
 	let globalError = $state('');
 	let globalSuccess = $state('');
@@ -99,6 +100,13 @@
 		</div>
 	{/if}
 
+	{#if loadError}
+		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+			<AlertCircle class="mr-2 inline h-4 w-4" />
+			{loadError}
+		</div>
+	{/if}
+
 	{#if globalSuccess}
 		<div class="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-sm text-green-400">
 			<CheckCircle class="mr-2 inline h-4 w-4" />
@@ -125,7 +133,7 @@
 					</Table.Row>
 				</Table.Header>
 				<Table.Body>
-					{#if filteredWatchers.length === 0}
+					{#if filteredWatchers.length === 0 && !loadError}
 						<Table.Row>
 							<Table.Cell colspan={7} class="h-24 text-center">
 								No watchers found.

@@ -22,20 +22,71 @@ function authHeader(): Record<string, string> {
 	return password ? { Authorization: `Bearer ${password}` } : {};
 }
 
+export class APIRequestError extends Error {
+	constructor(
+		message: string,
+		public readonly status: number,
+		public readonly responseBody?: unknown
+	) {
+		super(message);
+		this.name = 'APIRequestError';
+	}
+}
+
+function errorMessageFromResponse(status: number, statusText: string, body: unknown): string {
+	const detail =
+		body && typeof body === 'object'
+			? typeof (body as { error?: unknown }).error === 'string'
+				? (body as { error: string }).error
+				: typeof (body as { message?: unknown }).message === 'string'
+					? (body as { message: string }).message
+					: ''
+			: typeof body === 'string'
+				? body.trim()
+				: '';
+	const genericServerError =
+		!detail ||
+		/^\s*</.test(detail) ||
+		/^(internal server error|server error|http \d+)$/i.test(detail || statusText);
+
+	if (status >= 500 && genericServerError) {
+		return `The Watcher API could not complete this request (HTTP ${status}). Check the agent logs and try again.`;
+	}
+	if (detail) return detail;
+	if (status === 401) return 'Your dashboard session is not authorized. Sign in again and retry.';
+	if (status === 403) return 'You are not allowed to perform this operation.';
+	if (status === 404) return 'The requested resource no longer exists or could not be found.';
+	return statusText || `Request failed with HTTP ${status}.`;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-	const res = await fetch(`${API_BASE}${path}`, {
-		headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers },
-		...options
-	});
+	let res: Response;
+	try {
+		res = await fetch(`${API_BASE}${path}`, {
+			headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers },
+			...options
+		});
+	} catch (error) {
+		if (error instanceof Error && error.name === 'AbortError') throw error;
+		throw new APIRequestError(
+			'Could not reach the Watcher API. Check that the agent service is running and retry.',
+			0,
+			error
+		);
+	}
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({ error: res.statusText }));
-		if (body && typeof body === 'object' && 'error' in body) {
-			if ('deploy_log_id' in body) {
-				throw new Error(`${String(body.error)} (deploy_log_id: ${String((body as { deploy_log_id?: unknown }).deploy_log_id ?? '')})`);
-			}
-			throw new Error(String(body.error));
+		const raw = await res.text();
+		let body: unknown = raw;
+		try {
+			body = raw ? JSON.parse(raw) : undefined;
+		} catch {
+			// Plain-text and HTML error bodies fall back to an actionable status message.
 		}
-		throw new Error(res.statusText);
+		let message = errorMessageFromResponse(res.status, res.statusText, body);
+		if (body && typeof body === 'object' && 'deploy_log_id' in body) {
+			message += ` (deploy_log_id: ${String((body as { deploy_log_id?: unknown }).deploy_log_id ?? '')})`;
+		}
+		throw new APIRequestError(message, res.status, body);
 	}
 	return res.json();
 }
@@ -422,6 +473,13 @@ export interface PaginatedResponse<T> {
 	pageSize: number;
 }
 
+function normalizePaginatedResponse<T>(response: PaginatedResponse<T>): PaginatedResponse<T> {
+	return {
+		...response,
+		data: Array.isArray(response?.data) ? response.data : []
+	};
+}
+
 export interface SystemStatus {
 	status: string;
 	version: string;
@@ -582,7 +640,12 @@ export const api = {
 	deleteWatcherVersion: (id: number, version: string) => request<{ message: string }>(`/watchers/${id}/versions/${version}`, { method: 'DELETE' }),
 	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') => request<{ data: PollEvent[], total: number, page: number, pageSize: number }>(`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`),
 	watcherWebhookEvents: (id: number) => request<WebhookEvent[]>(`/watchers/${id}/webhook-events`),
-	watcherWebhookDeliveries: (id: number, page = 1, pageSize = 20) => request<PaginatedResponse<WebhookDelivery>>(`/watchers/${id}/webhook-deliveries?page=${page}&pageSize=${pageSize}`),
+	watcherWebhookDeliveries: async (id: number, page = 1, pageSize = 20) =>
+		normalizePaginatedResponse(
+			await request<PaginatedResponse<WebhookDelivery>>(
+				`/watchers/${id}/webhook-deliveries?page=${page}&pageSize=${pageSize}`
+			)
+		),
 	watcherWebhookDelivery: (id: number, deliveryId: number) => request<WebhookDeliveryDetails>(`/watchers/${id}/webhook-deliveries/${deliveryId}`),
 	sendWatcherWebhookTest: (id: number) => request<{ message: string }>(`/watchers/${id}/webhook/test`, { method: 'POST' }),
 	resumeWatcherWebhook: (id: number, replaySuppressed = false) => request<{ message: string; replay_suppressed: boolean }>(`/watchers/${id}/webhook/resume`, { method: 'POST', body: JSON.stringify({ replay_suppressed: replaySuppressed }) }),

@@ -110,6 +110,11 @@ ENVIRONMENT=production
 GITHUB_TOKEN=ghp_your_pat_here
 GITHUB_DEPLOY_ENABLED=true
 LOG_DIR=D:\apps\watcher\logs
+LOG_LEVEL=info
+LOG_MAX_SIZE_MB=100
+LOG_MAX_BACKUPS=10
+LOG_MAX_AGE_DAYS=30
+LOG_COMPRESS=true
 NSSM_PATH=C:\ProgramData\chocolatey\bin\nssm.exe
 DB_PATH=D:\apps\watcher\watcher.db
 API_PORT=8080
@@ -122,6 +127,11 @@ API_BASE_URL=http://localhost:8080
 | `GITHUB_TOKEN` | Global GitHub token fallback. Leave empty for public repos   |
 | `GITHUB_DEPLOY_ENABLED` | Enable/disable GitHub Deployment API reporting globally |
 | `LOG_DIR`      | Where agent writes its logs                                  |
+| `LOG_LEVEL`    | Minimum structured log level: `debug`, `info`, `warn`, or `error` |
+| `LOG_MAX_SIZE_MB` | Active `watcher.log` size before rotation (default: `100`) |
+| `LOG_MAX_BACKUPS` | Number of rotated logs to retain (default: `10`) |
+| `LOG_MAX_AGE_DAYS` | Days to retain rotated logs; `0` disables age cleanup |
+| `LOG_COMPRESS` | Compress rotated logs with gzip (default: `true`) |
 | `NSSM_PATH`    | Full path to nssm.exe                                        |
 | `DB_PATH`      | SQLite database file path                                    |
 | `API_PORT`     | Port for the API server and dashboard (default: `8080`)      |

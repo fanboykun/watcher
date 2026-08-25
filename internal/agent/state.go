@@ -28,10 +28,12 @@ type StateManager struct {
 	webhooks  *webhook.Service
 }
 
+// NewStateManager creates persistence and event helpers scoped to one watcher.
 func NewStateManager(db *gorm.DB, watcherID uint, log *Logger, events *WatcherEventBus, webhooks *webhook.Service) *StateManager {
 	return &StateManager{db: db, watcherID: watcherID, log: log, events: events, webhooks: webhooks}
 }
 
+// ReadVersion reads version.
 func (s *StateManager) ReadVersion() (string, string, error) {
 	var w database.Watcher
 	if err := s.db.Select("current_version", "max_ignored_version").First(&w, s.watcherID).Error; err != nil {
@@ -40,6 +42,7 @@ func (s *StateManager) ReadVersion() (string, string, error) {
 	return w.CurrentVersion, w.MaxIgnoredVersion, nil
 }
 
+// WriteVersion writes version.
 func (s *StateManager) WriteVersion(version string) error {
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
 		Updates(map[string]any{
@@ -52,12 +55,14 @@ func (s *StateManager) WriteVersion(version string) error {
 	return err
 }
 
+// SetChecked records that the watcher completed a metadata check.
 func (s *StateManager) SetChecked() error {
 	now := time.Now().UTC()
 	return s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
 		Update("last_checked", &now).Error
 }
 
+// SetDeploying opens or reuses a deployment attempt and marks the watcher deploying.
 func (s *StateManager) SetDeploying(version, fromVersion string) (uint, error) {
 	now := time.Now().UTC()
 	// Update watcher state
@@ -118,6 +123,7 @@ func (s *StateManager) SetGitHubDeploymentID(deployLogID uint, ghDeploymentID in
 		Update("github_deployment_id", ghDeploymentID).Error
 }
 
+// SetHealthy completes the active deploy attempt and records its version as healthy.
 func (s *StateManager) SetHealthy(version string) error {
 	now := time.Now().UTC()
 	// Update watcher state
@@ -158,10 +164,12 @@ func (s *StateManager) SetHealthy(version string) error {
 	return nil
 }
 
+// SetFailed records a deployment failure without a more specific phase.
 func (s *StateManager) SetFailed(errMsg string) error {
 	return s.SetFailedWithPhase(errMsg, "")
 }
 
+// SetFailedWithPhase fails the active deploy attempt and records its pipeline phase.
 func (s *StateManager) SetFailedWithPhase(errMsg, phase string) error {
 	now := time.Now().UTC()
 	// Update watcher state
@@ -205,6 +213,7 @@ func (s *StateManager) SetFailedWithPhase(errMsg, phase string) error {
 	return nil
 }
 
+// SetRolledBack records a successful rollback and advances the rollback high-watermark.
 func (s *StateManager) SetRolledBack(version string) error {
 	now := time.Now().UTC()
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
@@ -237,6 +246,7 @@ func (s *StateManager) SetRolledBack(version string) error {
 	return err
 }
 
+// AppendDeployLog appends deploy log.
 func (s *StateManager) AppendDeployLog(text string) {
 	err := s.db.Model(&database.DeployLog{}).
 		Where("watcher_id = ? AND completed_at IS NULL", s.watcherID).
@@ -246,6 +256,7 @@ func (s *StateManager) AppendDeployLog(text string) {
 	}
 }
 
+// RecordPollEvent appends a poll result and trims the watcher history to its limit.
 func (s *StateManager) RecordPollEvent(status, remoteVersion, errMsg string) {
 	evt := database.PollEvent{
 		WatcherID:     s.watcherID,
@@ -274,6 +285,7 @@ func (s *StateManager) RecordPollEvent(status, remoteVersion, errMsg string) {
 		)`, s.watcherID, s.watcherID)
 }
 
+// publish broadcasts a watcher event and forwards it to configured webhooks.
 func (s *StateManager) publish(eventType string, data map[string]any) {
 	if s.events == nil {
 		return
@@ -294,6 +306,7 @@ func (s *StateManager) ConsecutiveFailuresForVersion(version string) int {
 	return int(count)
 }
 
+// HasPendingManualDeploy reports whether an open manual attempt may bypass retry suspension.
 func (s *StateManager) HasPendingManualDeploy() bool {
 	var count int64
 	s.db.Model(&database.DeployLog{}).
@@ -302,6 +315,7 @@ func (s *StateManager) HasPendingManualDeploy() bool {
 	return count > 0
 }
 
+// StartRollbackAttempt starts rollback attempt.
 func (s *StateManager) StartRollbackAttempt(version, fromVersion, failedTargetVersion, reason, triggeredBy string, parentAttemptID, rootAttemptID *uint) (uint, error) {
 	now := time.Now().UTC()
 	attempt := database.DeployLog{
@@ -326,6 +340,7 @@ func (s *StateManager) StartRollbackAttempt(version, fromVersion, failedTargetVe
 	return attempt.ID, nil
 }
 
+// CompleteRollbackAttempt completes rollback attempt.
 func (s *StateManager) CompleteRollbackAttempt(attemptID uint, version string, maxIgnoredVersion string) error {
 	now := time.Now().UTC()
 	var attempt database.DeployLog
@@ -362,6 +377,7 @@ func (s *StateManager) CompleteRollbackAttempt(attemptID uint, version string, m
 	return nil
 }
 
+// FailRollbackAttempt marks rollback attempt as failed.
 func (s *StateManager) FailRollbackAttempt(attemptID uint, errMsg string) error {
 	now := time.Now().UTC()
 	var attempt database.DeployLog
@@ -395,6 +411,7 @@ func (s *StateManager) FailRollbackAttempt(attemptID uint, errMsg string) error 
 	return nil
 }
 
+// emitAttemptWebhook emits the webhook event corresponding to a completed deployment attempt.
 func (s *StateManager) emitAttemptWebhook(log *database.DeployLog) {
 	if s.webhooks == nil || log == nil {
 		return

@@ -51,6 +51,9 @@ Full installation guide: [INSTALL.md](INSTALL.md)
 
 ## Runtime Architecture
 
+The detailed agent ownership, NSSM state matrix, deployment sequencing, and
+compensation invariants are documented in [docs/agent.md](docs/agent.md).
+
 ```text
 cmd/watcher/main.go
   ├─ load .env config (Viper)
@@ -69,13 +72,14 @@ Each watcher loop:
 3. Enforce rollback high-watermark (`max_ignored_version`)
 4. Deploy if needed:
    - download artifact (retry with backoff)
-   - extract to `releases/<version>`
-   - stop services
-   - swap `current` junction (`mklink /J`, copy fallback)
+   - extract and validate in a temporary staging directory
+   - write managed release config and capture its private version snapshot under `.watcher/snapshots/`
+   - stop services only after preparation succeeds
+   - promote the staged release and swap `current` (`mklink /J`, copy fallback)
    - ensure service registration (NSSM for `nssm` type)
    - start services / recycle IIS app pools
    - health checks
-   - rollback on failure
+   - rollback or restore the promotion backup on failure
 5. Persist state and deploy logs in SQLite
 
 ---
@@ -236,6 +240,11 @@ Example is in `.env.example`.
 ENVIRONMENT=production
 GITHUB_TOKEN=
 LOG_DIR=D:\apps\watcher\logs
+LOG_LEVEL=info
+LOG_MAX_SIZE_MB=100
+LOG_MAX_BACKUPS=10
+LOG_MAX_AGE_DAYS=30
+LOG_COMPRESS=true
 NSSM_PATH=C:\ProgramData\chocolatey\bin\nssm.exe
 DB_PATH=D:\apps\watcher\watcher.db
 API_PORT=8080
@@ -245,6 +254,7 @@ WATCHER_REPO_URL=https://github.com/fanboykun/watcher
 
 Notes:
 - `GITHUB_TOKEN` is required for private repos.
+- Logs are JSON records written to `watcher.log`. They rotate at `LOG_MAX_SIZE_MB`; rotated logs are retained according to `LOG_MAX_BACKUPS` and `LOG_MAX_AGE_DAYS`, and can be gzip-compressed with `LOG_COMPRESS`.
 - `API_BASE_URL` enables GitHub Deployment API `log_url` linking.
 - `WATCHER_REPO_URL` is used by self-update check/update.
 - `GITHUB_DEPLOY_ENABLED=true|false` toggles GitHub Deployment API reporting globally.
@@ -349,6 +359,7 @@ make dev
 make build-web
 make build
 make test
+make test-e2e
 make test-verbose
 make test-github
 make run

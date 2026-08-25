@@ -7,6 +7,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { webhookDocsHref } from '$lib/webhooks';
 	import { AlertCircle, BookOpenText, ExternalLink, Plus, Webhook as WebhookIcon } from '@lucide/svelte';
+	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	type WebhookGroup = {
 		serviceName: string;
@@ -15,13 +16,17 @@
 
 	let watchers = $state<Watcher[]>([]);
 	let error = $state('');
+	let loading = $state(true);
 	let showAddDialog = $state(false);
 
 	onMount(async () => {
 		try {
 			watchers = await api.listWatchers();
+			error = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load watchers';
+		} finally {
+			loading = false;
 		}
 	});
 
@@ -86,7 +91,9 @@
 		</div>
 	{/if}
 
-	{#if webhookGroups.length === 0 && !error}
+	{#if loading}
+		<RequestLoading label="Loading webhook configuration…" />
+	{:else if webhookGroups.length === 0 && !error}
 		<Card.Root class="border-dashed border-border bg-card">
 			<Card.Content class="flex flex-col items-center justify-center py-16 text-center">
 				<WebhookIcon class="mb-3 h-10 w-10 text-muted-foreground/40" />

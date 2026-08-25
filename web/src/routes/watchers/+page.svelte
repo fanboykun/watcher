@@ -11,10 +11,13 @@
 	import { Eye, Plus, Trash2, Zap, AlertCircle } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { statusColor, timeAgo } from '$lib/utils';
+	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let watchers = $state<Watcher[]>([]);
 	let error = $state('');
+	let loading = $state(true);
 	let triggerMsg = $state('');
+	let triggerError = $state('');
 	let showDeleteDialog = $state(false);
 	let deleting = $state(false);
 	let deleteWatcherID = $state<number | null>(null);
@@ -23,11 +26,14 @@
 	onMount(load);
 
 	async function load() {
+		loading = true;
 		try {
 			watchers = await api.listWatchers();
 			error = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load watchers';
+		} finally {
+			loading = false;
 		}
 	}
 
@@ -52,12 +58,14 @@
 	}
 
 	async function triggerCheck(id: number) {
+		triggerError = '';
 		try {
 			const res = await api.triggerCheck(id);
 			triggerMsg = res.message;
 			setTimeout(() => (triggerMsg = ''), 3000);
 		} catch (e) {
-			triggerMsg = e instanceof Error ? e.message : 'Trigger failed';
+			triggerError = e instanceof Error ? e.message : 'Trigger failed';
+			setTimeout(() => (triggerError = ''), 5000);
 		}
 	}
 
@@ -91,7 +99,16 @@
 		</div>
 	{/if}
 
-	{#if watchers.length > 0}
+	{#if triggerError}
+		<div class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
+			<span>{triggerError}</span>
+		</div>
+	{/if}
+
+	{#if loading}
+		<RequestLoading label="Loading watchers…" />
+	{:else if watchers.length > 0}
 		<Card.Root class="border-border bg-card">
 			<Table.Root>
 				<Table.Header>
