@@ -19,7 +19,7 @@
 	import * as Button from '$lib/components/ui/button';
 	import Separator from '$lib/components/ui/separator/separator.svelte';
 	import { Input } from '$lib/components/ui/input';
-	import { asset, resolve } from '$app/paths';
+	import { asset, base, resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { api, auth, type SelfUpdateCheckResponse } from '$lib/api';
 	import {
@@ -133,9 +133,12 @@
 		dismissSelfUpdate(selfUpdateInfo.latest_version);
 	}
 
-	function isActive(href: string) {
-		if (href === '/') return page.url.pathname === '/';
-		return page.url.pathname.startsWith(href);
+	function isActive(href: (typeof navItems)[number]['href']) {
+		const target = resolve(href);
+		if (target === base || target === `${base}/`) {
+			return page.url.pathname === base || page.url.pathname === `${base}/`;
+		}
+		return page.url.pathname.startsWith(target);
 	}
 </script>
 

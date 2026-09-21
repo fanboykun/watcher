@@ -65,6 +65,14 @@ type AppConfig struct {
 	WebhookAutoPauseAfter        int    `mapstructure:"WEBHOOK_AUTO_PAUSE_AFTER_FAILURES"`
 	WebhookEventRetentionDays    int    `mapstructure:"WEBHOOK_EVENT_RETENTION_DAYS"`
 	WebhookDeliveryRetentionDays int    `mapstructure:"WEBHOOK_DELIVERY_RETENTION_DAYS"`
+
+	// WebAssetsPath is the base path where web assets and dashboard routes are served.
+	// Useful when running behind a reverse proxy subpath (e.g. "/watcher").
+	// Example: "/watcher"
+	WebAssetsPath string `mapstructure:"WEB_ASSETS_PATH"`
+
+	// WebBasePath is an alias for WebAssetsPath.
+	WebBasePath string `mapstructure:"WEB_BASE_PATH"`
 }
 
 // LoadConfig reads configuration from a .env file and environment variables.
@@ -93,6 +101,8 @@ func LoadConfig(envPath string) (*AppConfig, error) {
 	v.SetDefault("WEBHOOK_AUTO_PAUSE_AFTER_FAILURES", 5)
 	v.SetDefault("WEBHOOK_EVENT_RETENTION_DAYS", 90)
 	v.SetDefault("WEBHOOK_DELIVERY_RETENTION_DAYS", 30)
+	v.SetDefault("WEB_ASSETS_PATH", "")
+	v.SetDefault("WEB_BASE_PATH", "")
 
 	// Read .env file
 	if envPath != "" {
@@ -147,5 +157,27 @@ func (c *AppConfig) Validate() error {
 	if c.LogMaxAgeDays < 0 {
 		return fmt.Errorf("LOG_MAX_AGE_DAYS cannot be negative")
 	}
+	if basePath := c.NormalizedWebBasePath(); basePath != "" {
+		if strings.ContainsAny(basePath, " ?#\t\r\n") {
+			return fmt.Errorf("WEB_ASSETS_PATH must be a valid URL path prefix without query, fragment, or whitespace")
+		}
+	}
 	return nil
+}
+
+// NormalizedWebBasePath returns the normalized base path for the web dashboard and assets.
+// It trims whitespace, ensures a single leading slash, removes trailing slashes,
+// and returns an empty string if set to "" or "/".
+func (c *AppConfig) NormalizedWebBasePath() string {
+	raw := strings.TrimSpace(c.WebAssetsPath)
+	if raw == "" {
+		raw = strings.TrimSpace(c.WebBasePath)
+	}
+	if raw == "" || raw == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(raw, "/") {
+		raw = "/" + raw
+	}
+	return strings.TrimRight(raw, "/")
 }

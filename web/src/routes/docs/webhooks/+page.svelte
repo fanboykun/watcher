@@ -1,7 +1,7 @@
 <script lang="ts">
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
-	import { webhookDocsHref, webhookEventDocs, webhookSystemEventDocs } from '$lib/webhooks';
+	import { webhookDocsHref, webhookEventDocs, webhookOpenAPISpecHref, webhookSystemEventDocs } from '$lib/webhooks';
 	import { BookOpenText, ExternalLink } from '@lucide/svelte';
 
 	type FieldContract = {
@@ -110,7 +110,7 @@
 				</Button.Root>
 			</a>
 			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-			<a href="/webhooks.openapi.yaml" target="_blank" rel="noopener noreferrer">
+			<a href={webhookOpenAPISpecHref} target="_blank" rel="noopener noreferrer">
 				<Button.Root size="sm" variant="outline">OpenAPI Spec</Button.Root>
 			</a>
 		</div>

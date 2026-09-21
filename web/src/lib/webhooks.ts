@@ -28,8 +28,10 @@ export type WebhookEventDoc = {
 	examplePayload: string;
 };
 
+import { asset } from '$app/paths';
+
 export const webhookDocsHref = 'https://github.com/fanboykun/watcher/blob/main/docs/webhooks.md';
-export const webhookOpenAPISpecHref = '/webhooks.openapi.yaml';
+export const webhookOpenAPISpecHref = asset('/webhooks.openapi.yaml');
 
 export function webhookEventDocHref(anchor: string) {
 	return `${webhookDocsHref}#${anchor}`;

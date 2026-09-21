@@ -1,5 +1,6 @@
 // API client for the watcher agent backend
-const API_BASE = '/api';
+import { base } from '$app/paths';
+const API_BASE = `${base}/api`;
 const AUTH_PASSWORD_KEY = 'watcher.auth.password';
 
 export function getAuthPassword(): string {
@@ -537,6 +538,7 @@ export interface SelfConfigResponse {
 	webhook_auto_pause_after_failures: number;
 	webhook_event_retention_days: number;
 	webhook_delivery_retention_days: number;
+	web_assets_path?: string;
 	env_path: string;
 }
 
@@ -559,6 +561,7 @@ export interface UpdateSelfConfigRequest {
 	webhook_auto_pause_after_failures?: number;
 	webhook_event_retention_days?: number;
 	webhook_delivery_retention_days?: number;
+	web_assets_path?: string;
 }
 
 export function isIISService(serviceType: Service['service_type'] | ServiceType): boolean {

@@ -63,7 +63,7 @@
 				Configured watcher webhooks grouped by service. Full event and payload documentation lives in the repo docs.
 			</p>
 			<div class="mt-3 flex flex-wrap gap-2">
-				<a href="/docs/webhooks">
+				<a href={resolve('/docs/webhooks')}>
 					<Button.Root size="sm" variant="outline">
 						<BookOpenText class="mr-2 h-4 w-4" />
 						Integration Guide

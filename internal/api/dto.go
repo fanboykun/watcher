@@ -152,6 +152,7 @@ type SelfConfigResponse struct {
 	WebhookAutoPauseAfterFailures     int    `json:"webhook_auto_pause_after_failures"`
 	WebhookEventRetentionDays         int    `json:"webhook_event_retention_days"`
 	WebhookDeliveryRetentionDays      int    `json:"webhook_delivery_retention_days"`
+	WebAssetsPath                     string `json:"web_assets_path"`
 	EnvPath                           string `json:"env_path"`
 }
 
@@ -179,6 +180,7 @@ type UpdateSelfConfigRequest struct {
 	WebhookAutoPauseAfterFailures *int    `json:"webhook_auto_pause_after_failures"`
 	WebhookEventRetentionDays     *int    `json:"webhook_event_retention_days"`
 	WebhookDeliveryRetentionDays  *int    `json:"webhook_delivery_retention_days"`
+	WebAssetsPath                 *string `json:"web_assets_path"`
 }
 
 type ResumeWebhookRequest struct {
