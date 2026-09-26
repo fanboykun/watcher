@@ -236,6 +236,8 @@ export interface Watcher {
 	hc_interval_sec: number;
 	hc_timeout_sec: number;
 	paused: boolean;
+	intercept_next_release: boolean;
+	pending_version: string;
 	max_kept_versions: number;
 	current_version: string;
 	max_ignored_version: string;
@@ -346,6 +348,16 @@ export interface ServiceConfigFile {
 export interface ServiceWithWatcher extends Service {
 	watcher_name: string;
 	install_dir: string;
+}
+
+
+export interface ServiceConfigRevision {
+	id: number;
+	service_id: number;
+	target_version: string;
+	env_content: string;
+	created_at: string;
+	updated_at: string;
 }
 
 export interface DeployLog {
@@ -691,3 +703,33 @@ export const api = {
 	selfRestart: () => request<{ message: string; service_name: string }>('/self/restart', { method: 'POST' }),
 	selfUninstall: () => request<{ script: string }>('/self/uninstall', { method: 'POST' })
 };
+
+export async function interceptWatcher(id: number, intercept: boolean) {
+	return request(`/api/watchers/${id}/intercept`, {
+		method: 'POST',
+		body: JSON.stringify({ intercept_next_release: intercept })
+	});
+}
+
+export async function approveRelease(id: number) {
+	return request(`/api/watchers/${id}/approve`, {
+		method: 'POST'
+	});
+}
+
+export async function getServiceConfigRevisions(id: number) {
+	return request<{ data: ServiceConfigRevision[] }>(`/api/services/${id}/revisions`);
+}
+
+export async function updateServiceConfigRevision(id: number, target: string, envContent: string) {
+	return request(`/api/services/${id}/revisions/${target}`, {
+		method: 'PUT',
+		body: JSON.stringify({ env_content: envContent })
+	});
+}
+
+export async function deleteServiceConfigRevision(id: number, target: string) {
+	return request(`/api/services/${id}/revisions/${target}`, {
+		method: 'DELETE'
+	});
+}

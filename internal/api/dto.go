@@ -51,6 +51,7 @@ type UpdateWatcherRequest struct {
 	HcIntervalSec                   *int    `json:"hc_interval_sec"`
 	HcTimeoutSec                    *int    `json:"hc_timeout_sec"`
 	Paused                          *bool   `json:"paused"`
+	InterceptNextRelease            *bool   `json:"intercept_next_release"`
 	MaxKeptVersions                 *int    `json:"max_kept_versions"`
 	WebhookEnabled                  *bool   `json:"webhook_enabled"`
 	WebhookURL                      *string `json:"webhook_url"`

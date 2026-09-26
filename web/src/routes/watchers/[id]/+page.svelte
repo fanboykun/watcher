@@ -362,6 +362,29 @@
 
 
 
+	
+	async function toggleIntercept() {
+		try {
+			if (!watcher) return;
+			const nextVal = !watcher.intercept_next_release;
+			await api.interceptWatcher(id, nextVal);
+			triggerMsg = nextVal ? 'Will intercept next release.' : 'Intercept disabled.';
+			watcher = await api.getWatcher(id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to toggle intercept';
+		}
+	}
+
+	async function approveRelease() {
+		try {
+			await api.approveRelease(id);
+			triggerMsg = 'Release approved! Deploying...';
+			watcher = await api.getWatcher(id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to approve release';
+		}
+	}
+
 	function hasActiveRollbackPin(w: Watcher | null): boolean {
 		if (!w) return false;
 		const ignored = (w.max_ignored_version || '').trim();
@@ -408,6 +431,16 @@
 				</Button.Root>
 			{/if}
 
+			
+			{#if watcher.intercept_next_release}
+				<Button.Root variant="outline" size="sm" class="border-orange-500/30 text-orange-500" onclick={toggleIntercept}>
+					Intercept Next (On)
+				</Button.Root>
+			{:else}
+				<Button.Root variant="outline" size="sm" onclick={toggleIntercept}>
+					Intercept Next
+				</Button.Root>
+			{/if}
 			<Button.Root variant="outline" size="sm" onclick={triggerCheck} disabled={watcher.paused}>
 				<RefreshCw class="mr-2 h-4 w-4" /> Poll Now
 			</Button.Root>
@@ -439,6 +472,22 @@
 	{#if loading}
 		<RequestLoading label="Loading watcher details…" />
 	{:else if watcher}
+		
+		{#if watcher.status === 'pending_approval'}
+			<div class="mb-4 flex items-center justify-between rounded-lg border border-purple-500/30 bg-purple-500/10 p-4 text-sm text-purple-400">
+				<div class="flex items-center gap-2">
+					<Zap class="h-4 w-4" />
+					<span>
+						<strong>Release Candidate Intercepted!</strong>
+						Version <code>{watcher.pending_version}</code> is pending manual approval. Prepare its configuration in the Candidates tab before approving.
+					</span>
+				</div>
+				<Button.Root variant="default" size="sm" class="bg-purple-600 text-white hover:bg-purple-700" onclick={approveRelease}>
+					Approve & Deploy
+				</Button.Root>
+			</div>
+		{/if}
+
 		{#if hasActiveRollbackPin(watcher)}
 			<div class="mb-4 flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
 				<div class="flex items-center gap-2">

@@ -35,6 +35,7 @@
 	import DeploysTab from './components/deploys-tab.svelte';
 	import LogsTab from './components/logs-tab.svelte';
 	import EnvTab from './components/env-tab.svelte';
+	import CandidatesTab from './components/candidates-tab.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let service = $state<Service | null>(null);
@@ -318,6 +319,7 @@
 				<Tabs.Trigger value="health">Health History ({healthHistory.length})</Tabs.Trigger>
 				<Tabs.Trigger value="logs">Logs</Tabs.Trigger>
 				<Tabs.Trigger value="env">Environment (.env)</Tabs.Trigger>
+				<Tabs.Trigger value="candidates">Deployment Candidates</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploys ({deployTotal})</Tabs.Trigger>
 			</Tabs.List>
 
@@ -356,6 +358,10 @@
 					{watcher}
 					onLoadDeploys={loadDeploys}
 				/>
+			</Tabs.Content>
+		
+			<Tabs.Content value="candidates" class="mt-4">
+				<CandidatesTab serviceId={id} />
 			</Tabs.Content>
 		</Tabs.Root>
 	{/if}

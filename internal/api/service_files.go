@@ -79,3 +79,77 @@ func (h *Handler) writeServiceFile(installDir, relativePath, content string) err
 // ── Deploy Log Detail ─────────────────────────────────────────
 
 // GetDeployLog returns a single deploy log by ID (URL-able for GitHub Deployment API log_url).
+
+// ── Configuration Revisions (Deployment Candidates) ──────────
+
+func (h *Handler) ListServiceConfigRevisions(c *gin.Context) {
+	svc, err := h.findServiceByID(c)
+	if err != nil {
+		return
+	}
+	var revisions []database.ServiceConfigRevision
+	if err := h.db.Where("service_id = ?", svc.ID).Order("id desc").Find(&revisions).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": revisions})
+}
+
+func (h *Handler) UpdateServiceConfigRevision(c *gin.Context) {
+	svc, err := h.findServiceByID(c)
+	if err != nil {
+		return
+	}
+	targetVersion := c.Param("target")
+	if targetVersion == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Target version is required"})
+		return
+	}
+
+	var req struct {
+		EnvContent string `json:"env_content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	var revision database.ServiceConfigRevision
+	err = h.db.Where("service_id = ? AND target_version = ?", svc.ID, targetVersion).First(&revision).Error
+	if err != nil {
+		// Create new
+		revision = database.ServiceConfigRevision{
+			ServiceID:     svc.ID,
+			TargetVersion: targetVersion,
+			EnvContent:    req.EnvContent,
+		}
+		if err := h.db.Create(&revision).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+			return
+		}
+	} else {
+		// Update existing
+		if err := h.db.Model(&revision).Update("env_content", req.EnvContent).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "Configuration candidate saved successfully"})
+}
+
+func (h *Handler) DeleteServiceConfigRevision(c *gin.Context) {
+	svc, err := h.findServiceByID(c)
+	if err != nil {
+		return
+	}
+	targetVersion := c.Param("target")
+	if targetVersion == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Target version is required"})
+		return
+	}
+	if err := h.db.Where("service_id = ? AND target_version = ?", svc.ID, targetVersion).Delete(&database.ServiceConfigRevision{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "Configuration candidate deleted successfully"})
+}

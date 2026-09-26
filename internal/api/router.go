@@ -55,6 +55,9 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 		services.POST("/:id/stop", h.StopService)
 		services.POST("/:id/restart", h.RestartService)
 		services.PUT("/:id/env", h.SyncServiceEnv)
+		services.GET("/:id/revisions", h.ListServiceConfigRevisions)
+		services.PUT("/:id/revisions/:target", h.UpdateServiceConfigRevision)
+		services.DELETE("/:id/revisions/:target", h.DeleteServiceConfigRevision)
 		services.GET("/:id/health", h.GetServiceHealth)
 		services.GET("/:id/health/history", h.GetHealthHistory)
 		services.GET("/:id/logs", h.GetServiceLogs)
@@ -84,6 +87,8 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 		watchers.GET("/:id/polls", h.ListPollEvents)
 		watchers.POST("/:id/check", h.TriggerCheck)
 		watchers.POST("/:id/redeploy", h.RedeployWatcher)
+		watchers.POST("/:id/intercept", h.InterceptRelease)
+		watchers.POST("/:id/approve", h.ApproveRelease)
 
 		// Version management and rollback
 		watchers.GET("/:id/versions", h.ListAvailableVersions)

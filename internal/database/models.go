@@ -44,6 +44,9 @@ type Watcher struct {
 	LastDeployed      *time.Time `json:"last_deployed"`
 	LastError         string     `gorm:"not null;default:''" json:"last_error"`
 
+	InterceptNextRelease bool   `gorm:"not null;default:false" json:"intercept_next_release"`
+	PendingVersion       string `gorm:"not null;default:''" json:"pending_version"`
+
 	WebhookEnabled                  bool       `gorm:"not null;default:false" json:"webhook_enabled"`
 	WebhookURL                      string     `gorm:"not null;default:''" json:"webhook_url"`
 	WebhookSigningSecret            string     `gorm:"not null;default:''" json:"-"`
@@ -197,4 +200,14 @@ type WebhookDelivery struct {
 	ReplayedBy         string     `gorm:"not null;default:''" json:"replayed_by"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+// ServiceConfigRevision holds configuration prepared for a specific target version.
+type ServiceConfigRevision struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	ServiceID     uint      `gorm:"not null;index" json:"service_id"`
+	TargetVersion string    `gorm:"not null;index" json:"target_version"` // e.g., "v1.2.0" or "next"
+	EnvContent    string    `gorm:"type:text" json:"env_content"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }

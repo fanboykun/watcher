@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"github.com/fanboykun/watcher/internal/database"
 )
 
 // deploy downloads one target artifact, invokes the deployer, and reports its GitHub status.
@@ -90,6 +91,40 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 		r.log.Debug("removing zip", "path", zipPath)
 		os.Remove(zipPath)
 	}()
+
+	for i := range r.wcfg.Services {
+		svc := &r.wcfg.Services[i]
+		
+		// Find service ID from DB
+		var dbSvc database.Service
+		if err := r.db.Where("watcher_id = ? AND windows_service_name = ?", r.watcherID, svc.WindowsServiceName).First(&dbSvc).Error; err == nil {
+			
+			var revision database.ServiceConfigRevision
+			// Try exact match first, then fallback to "next"
+			err := r.db.Where("service_id = ? AND target_version = ?", dbSvc.ID, targetVersion).First(&revision).Error
+			if err != nil {
+				err = r.db.Where("service_id = ? AND target_version = ?", dbSvc.ID, "next").First(&revision).Error
+			}
+			
+			if err == nil {
+				r.state.AppendDeployLog(fmt.Sprintf("applying configuration candidate for version: %s", revision.TargetVersion))
+				svc.EnvContent = revision.EnvContent
+				
+				// Update active service config
+				r.db.Model(&dbSvc).Update("env_content", svc.EnvContent)
+				
+				// Delete the consumed revision (especially important for "next")
+				r.db.Delete(&revision)
+				
+				// Write the file to disk so deployer snapshot catches it
+				if svc.EnvFile != "" {
+					targetPath := filepath.Join(r.wcfg.InstallDir, svc.EnvFile)
+					os.MkdirAll(filepath.Dir(targetPath), 0755)
+					os.WriteFile(targetPath, []byte(svc.EnvContent), 0600)
+				}
+			}
+		}
+	}
 
 	if err := r.deployer.Deploy(ctx, targetVersion, zipPath, previousVersion); err != nil {
 		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
