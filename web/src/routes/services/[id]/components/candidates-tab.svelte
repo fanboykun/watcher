@@ -8,14 +8,14 @@
 	import { Trash2, Save, RefreshCw, Plus } from '@lucide/svelte';
 	import { onMount } from 'svelte';
 
-	let { serviceId }: { serviceId: number } = $props();
+	let { serviceId, currentEnv }: { serviceId: number, currentEnv: string } = $props();
 
 	let revisions = $state<ServiceConfigRevision[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 	
 	let newTarget = $state('next');
-	let newContent = $state('');
+	let newContent = $state(currentEnv);
 	let saving = $state(false);
 
 	async function loadRevisions() {
@@ -37,7 +37,7 @@
 			await loadRevisions();
 			if (target === newTarget) {
 				newTarget = 'next';
-				newContent = '';
+				newContent = currentEnv;
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to save config candidate';
@@ -72,8 +72,14 @@
 				<Input bind:value={newTarget} placeholder="e.g. next, v2.0.0" />
 			</div>
 			<div class="grid gap-2">
+				
+			<div class="flex items-center justify-between">
 				<p class="text-sm text-muted-foreground">Environment Variables</p>
-				<Textarea
+				<Button.Root variant="ghost" size="sm" class="h-6 text-xs" onclick={() => newContent = currentEnv}>
+					<RefreshCw class="mr-1 h-3 w-3" /> Reset to Active
+				</Button.Root>
+			</div>
+			<Textarea
 					bind:value={newContent}
 					class="min-h-[150px] font-mono text-sm text-blue-300"
 					placeholder="KEY=VALUE"

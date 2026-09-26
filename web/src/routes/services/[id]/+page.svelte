@@ -361,7 +361,7 @@
 			</Tabs.Content>
 		
 			<Tabs.Content value="candidates" class="mt-4">
-				<CandidatesTab serviceId={id} />
+				<CandidatesTab serviceId={id} currentEnv={detail.service.env_content || ""} />
 			</Tabs.Content>
 		</Tabs.Root>
 	{/if}
