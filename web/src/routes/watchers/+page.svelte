@@ -1,9 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import {
-		api,
-		type Watcher
-	} from '$lib/api';
+	import { api, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
@@ -68,8 +65,6 @@
 			setTimeout(() => (triggerError = ''), 5000);
 		}
 	}
-
-
 </script>
 
 <div class="space-y-6">
@@ -86,21 +81,27 @@
 	</div>
 
 	{#if error}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400 flex items-center">
+		<div
+			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
+		>
 			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
 			<span>{error}</span>
 		</div>
 	{/if}
 
 	{#if triggerMsg}
-		<div class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400 flex items-center">
+		<div
+			class="flex items-center rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400"
+		>
 			<Zap class="mr-2 h-4 w-4 shrink-0" />
 			<span>{triggerMsg}</span>
 		</div>
 	{/if}
 
 	{#if triggerError}
-		<div class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+		<div
+			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
+		>
 			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
 			<span>{triggerError}</span>
 		</div>
@@ -196,10 +197,20 @@
 			</Dialog.Description>
 		</Dialog.Header>
 		<Dialog.Footer>
-			<Button.Root variant="outline" type="button" onclick={() => (showDeleteDialog = false)} disabled={deleting}>
+			<Button.Root
+				variant="outline"
+				type="button"
+				onclick={() => (showDeleteDialog = false)}
+				disabled={deleting}
+			>
 				Cancel
 			</Button.Root>
-			<Button.Root type="button" class="bg-red-600 text-white hover:bg-red-700" onclick={confirmDeleteWatcher} disabled={deleting}>
+			<Button.Root
+				type="button"
+				class="bg-red-600 text-white hover:bg-red-700"
+				onclick={confirmDeleteWatcher}
+				disabled={deleting}
+			>
 				{deleting ? 'Deleting...' : 'Delete'}
 			</Button.Root>
 		</Dialog.Footer>

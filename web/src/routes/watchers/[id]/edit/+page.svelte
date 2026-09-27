@@ -2,11 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import {
-		api,
-		type Service,
-		type Watcher
-	} from '$lib/api';
+	import { api, type Service, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -115,15 +111,18 @@
 				metadata_url: editMetadataURL,
 				release_ref: editReleaseRef.trim() || 'latest',
 				deployment_environment: editDeploymentEnvironment,
-				github_token: editUseGlobalToken ? '' : editGitHubToken.trim() !== '' ? editGitHubToken : undefined,
+				github_token: editUseGlobalToken
+					? ''
+					: editGitHubToken.trim() !== ''
+						? editGitHubToken
+						: undefined,
 				webhook_enabled: editWebhookEnabled,
 				webhook_url: editWebhookURL,
-				webhook_signing_secret:
-					editUseGlobalWebhookToken
-						? ''
-						: editWebhookSigningSecret.trim() !== ''
-							? editWebhookSigningSecret
-							: undefined,
+				webhook_signing_secret: editUseGlobalWebhookToken
+					? ''
+					: editWebhookSigningSecret.trim() !== ''
+						? editWebhookSigningSecret
+						: undefined,
 				notify_version_found: webhookSelections.notify_version_found,
 				notify_deployment_succeeded: webhookSelections.notify_deployment_succeeded,
 				notify_deployment_failed: webhookSelections.notify_deployment_failed,
@@ -225,19 +224,24 @@
 			</Button.Root>
 		</a>
 		<Button.Root size="sm" onclick={saveEdit} disabled={saving}>
-			<Save class="mr-2 h-4 w-4" /> {saving ? 'Saving...' : 'Save Changes'}
+			<Save class="mr-2 h-4 w-4" />
+			{saving ? 'Saving...' : 'Save Changes'}
 		</Button.Root>
 	</div>
 
 	{#if error}
-		<div class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+		<div
+			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
+		>
 			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
 			<span>{error}</span>
 		</div>
 	{/if}
 
 	{#if success}
-		<div class="flex items-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-400">
+		<div
+			class="flex items-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-400"
+		>
 			<CheckCircle2 class="mr-2 h-4 w-4 shrink-0" />
 			<span>{success}</span>
 		</div>
@@ -276,9 +280,14 @@
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="space-y-2">
 							<Label for="editReleaseRef">Release Ref</Label>
-							<Input id="editReleaseRef" bind:value={editReleaseRef} placeholder="latest or v1.2.3" />
+							<Input
+								id="editReleaseRef"
+								bind:value={editReleaseRef}
+								placeholder="latest or v1.2.3"
+							/>
 							<p class="text-xs text-muted-foreground">
-								Use <code>latest</code> to follow new releases, or pin this watcher to a specific release tag.
+								Use <code>latest</code> to follow new releases, or pin this watcher to a specific release
+								tag.
 							</p>
 						</div>
 						<div class="space-y-2">
@@ -297,7 +306,13 @@
 						</div>
 						<div class="space-y-2">
 							<Label for="editMaxKeptVersions">Max Kept Versions</Label>
-							<Input id="editMaxKeptVersions" type="number" min="1" max="10" bind:value={editMaxKeptVersions} />
+							<Input
+								id="editMaxKeptVersions"
+								type="number"
+								min="1"
+								max="10"
+								bind:value={editMaxKeptVersions}
+							/>
 						</div>
 						<div class="space-y-2">
 							<Label for="editDeploymentEnvironment">Deployment Environment</Label>
@@ -326,7 +341,9 @@
 							<Label for="editUseGlobalToken">Use global `GITHUB_TOKEN`</Label>
 						</div>
 						<p class="mt-1 text-xs text-muted-foreground">
-							Current: {watcher.has_github_token ? watcher.github_token_masked || 'set' : 'using global token'}
+							Current: {watcher.has_github_token
+								? watcher.github_token_masked || 'set'
+								: 'using global token'}
 						</p>
 					</div>
 				</Card.Content>
@@ -363,13 +380,17 @@
 							onclick={sendWebhookTest}
 							disabled={sendingTest}
 						>
-							<Send class="mr-2 h-4 w-4" /> {sendingTest ? 'Sending...' : 'Send Test Webhook'}
+							<Send class="mr-2 h-4 w-4" />
+							{sendingTest ? 'Sending...' : 'Send Test Webhook'}
 						</Button.Root>
 					</div>
 				</Card.Header>
 				<Card.Content class="space-y-4">
-					<div class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-						Use this form only for watcher-specific webhook configuration. Delivery history, replay, and pause recovery live in the webhook hub and the watcher webhook tab.
+					<div
+						class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground"
+					>
+						Use this form only for watcher-specific webhook configuration. Delivery history, replay,
+						and pause recovery live in the webhook hub and the watcher webhook tab.
 					</div>
 					<div class="flex items-center gap-2">
 						<Checkbox id="editWebhookEnabled" bind:checked={editWebhookEnabled} />
@@ -455,7 +476,8 @@
 
 			<div class="flex justify-end">
 				<Button.Root type="submit" disabled={saving}>
-					<Save class="mr-2 h-4 w-4" /> {saving ? 'Saving...' : 'Save Changes'}
+					<Save class="mr-2 h-4 w-4" />
+					{saving ? 'Saving...' : 'Save Changes'}
 				</Button.Root>
 			</div>
 		</form>

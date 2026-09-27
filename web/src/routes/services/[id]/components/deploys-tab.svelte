@@ -27,9 +27,7 @@
 
 <div class="mb-3 flex items-center justify-between gap-2">
 	<div class="text-xs text-muted-foreground">
-		Showing {deploys.length === 0
-			? 0
-			: (deployPage - 1) * deployPageSize + 1} - {Math.min(
+		Showing {deploys.length === 0 ? 0 : (deployPage - 1) * deployPageSize + 1} - {Math.min(
 			deployPage * deployPageSize,
 			deployTotal
 		)} of {deployTotal}
@@ -108,7 +106,7 @@
 								{d.kind}: {d.status}
 							</span>
 						</Table.Cell>
-						<Table.Cell class="text-xs capitalize text-muted-foreground"
+						<Table.Cell class="text-xs text-muted-foreground capitalize"
 							>{d.triggered_by || 'agent'}</Table.Cell
 						>
 						<Table.Cell class="font-mono text-sm">{d.version}</Table.Cell>

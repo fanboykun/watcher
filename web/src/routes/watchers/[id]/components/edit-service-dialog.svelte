@@ -6,7 +6,14 @@
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Plus, Trash2 } from '@lucide/svelte';
-	import { isIISService, iisAppKindLabel, type Service, type ServiceConfigFile, type IISAppKind, type ServiceWritePayload } from '$lib/api';
+	import {
+		isIISService,
+		iisAppKindLabel,
+		type Service,
+		type ServiceConfigFile,
+		type IISAppKind,
+		type ServiceWritePayload
+	} from '$lib/api';
 
 	let {
 		open = $bindable(false),
@@ -79,7 +86,10 @@
 	});
 
 	function addEditSvcConfigFile() {
-		editSvcConfigFiles = [...editSvcConfigFiles, { file_path: '', target: 'app_dir' as const, content: '' }];
+		editSvcConfigFiles = [
+			...editSvcConfigFiles,
+			{ file_path: '', target: 'app_dir' as const, content: '' }
+		];
 	}
 
 	function removeEditSvcConfigFile(index: number) {
@@ -126,7 +136,8 @@
 		>
 			<Dialog.Header class="shrink-0 border-b border-border/70 px-6 pt-6 pb-4">
 				<Dialog.Title>Edit Service</Dialog.Title>
-				<Dialog.Description>Update how this watcher manages the selected service</Dialog.Description>
+				<Dialog.Description>Update how this watcher manages the selected service</Dialog.Description
+				>
 			</Dialog.Header>
 			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
 				{#if error}
@@ -163,15 +174,28 @@
 					{#if editSvcType === 'nssm'}
 						<div class="space-y-2">
 							<Label for="editSvcBinary">Binary Name</Label>
-							<Input id="editSvcBinary" placeholder="my-app.exe" bind:value={editSvcBinary} required />
+							<Input
+								id="editSvcBinary"
+								placeholder="my-app.exe"
+								bind:value={editSvcBinary}
+								required
+							/>
 						</div>
 						<div class="space-y-2">
 							<Label for="editSvcStartArguments">Start Arguments (optional)</Label>
-							<Input id="editSvcStartArguments" placeholder="serve --port 8080" bind:value={editSvcStartArguments} />
+							<Input
+								id="editSvcStartArguments"
+								placeholder="serve --port 8080"
+								bind:value={editSvcStartArguments}
+							/>
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="editSvcEnvFile">Env File (optional)</Label>
-							<Input id="editSvcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={editSvcEnvFile} />
+							<Input
+								id="editSvcEnvFile"
+								placeholder="C:\apps\my-app\.env.web.1"
+								bind:value={editSvcEnvFile}
+							/>
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="editSvcEnvContent">Env Content (optional)</Label>
@@ -182,7 +206,8 @@
 								placeholder="KEY=VALUE&#10;API_URL=https://example.com"
 							/>
 							<p class="text-xs text-muted-foreground">
-								If set, watcher writes this content into <code>{editSvcEnvFile || '.env'}</code> during service sync/deploy.
+								If set, watcher writes this content into <code>{editSvcEnvFile || '.env'}</code> during
+								service sync/deploy.
 							</p>
 						</div>
 					{:else}
@@ -190,7 +215,8 @@
 							<Label for="editSvcIISAppKind">IIS App Kind</Label>
 							<Select.Root type="single" bind:value={editSvcIISAppKind}>
 								<Select.Trigger id="editSvcIISAppKind">
-									{iisAppKinds.find((kind) => kind.value === editSvcIISAppKind)?.label || 'Select kind'}
+									{iisAppKinds.find((kind) => kind.value === editSvcIISAppKind)?.label ||
+										'Select kind'}
 								</Select.Trigger>
 								<Select.Content>
 									{#each iisAppKinds as kind (kind.value)}
@@ -204,15 +230,26 @@
 						</div>
 						<div class="space-y-2">
 							<Label for="editSvcIISAppPool">IIS App Pool Name</Label>
-							<Input id="editSvcIISAppPool" placeholder="my-frontend" bind:value={editSvcIISAppPool} />
+							<Input
+								id="editSvcIISAppPool"
+								placeholder="my-frontend"
+								bind:value={editSvcIISAppPool}
+							/>
 						</div>
 						<div class="space-y-2">
 							<Label for="editSvcIISSiteName">IIS Site Name</Label>
-							<Input id="editSvcIISSiteName" placeholder="my-frontend" bind:value={editSvcIISSiteName} />
+							<Input
+								id="editSvcIISSiteName"
+								placeholder="my-frontend"
+								bind:value={editSvcIISSiteName}
+							/>
 						</div>
-						<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
+						<div
+							class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2"
+						>
 							<span class="font-medium text-foreground/90">Bootstrap profile:</span>
-							{iisAppKindLabel(editSvcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
+							{iisAppKindLabel(editSvcIISAppKind)}. Watcher will set the IIS managed runtime
+							automatically for this app kind.
 						</div>
 					{/if}
 
@@ -243,9 +280,18 @@
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div>
 							<Label>Additional managed config files</Label>
-							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service. Use <code>Current dir</code> for IIS files like <code>web.config</code>.</p>
+							<p class="text-xs text-muted-foreground">
+								Store runtime-generated config alongside this service. Use <code>Current dir</code>
+								for IIS files like <code>web.config</code>.
+							</p>
 						</div>
-						<Button.Root variant="outline" size="sm" type="button" class="h-8 shrink-0" onclick={addEditSvcConfigFile}>
+						<Button.Root
+							variant="outline"
+							size="sm"
+							type="button"
+							class="h-8 shrink-0"
+							onclick={addEditSvcConfigFile}
+						>
 							<Plus class="mr-1.5 h-3 w-3" /> Add file
 						</Button.Root>
 					</div>
@@ -266,14 +312,21 @@
 										</Button.Root>
 									</div>
 									<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
-										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
+										<Input
+											bind:value={file.file_path}
+											placeholder="web.config or settings/appsettings.json"
+										/>
 										<Select.Root type="single" bind:value={file.target}>
 											<Select.Trigger>
 												{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
 											</Select.Trigger>
 											<Select.Content>
-												<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
-												<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
+												<Select.Item value="app_dir" label="Service/app dir"
+													>Service/app dir</Select.Item
+												>
+												<Select.Item value="release_dir" label="Current dir"
+													>Current dir</Select.Item
+												>
 											</Select.Content>
 										</Select.Root>
 									</div>
@@ -287,13 +340,16 @@
 						</div>
 					{:else}
 						<p class="text-xs text-muted-foreground">
-							Use this for runtime files like <code>config.json</code>, <code>appsettings.json</code>, or other generated config.
+							Use this for runtime files like <code>config.json</code>,
+							<code>appsettings.json</code>, or other generated config.
 						</p>
 					{/if}
 				</div>
 			</div>
 			<Dialog.Footer class="shrink-0 border-t border-border/70 px-6 pt-4 pb-4">
-				<Button.Root variant="outline" type="button" onclick={() => (open = false)}>Cancel</Button.Root>
+				<Button.Root variant="outline" type="button" onclick={() => (open = false)}
+					>Cancel</Button.Root
+				>
 				<Button.Root type="submit" disabled={submitting}>
 					{submitting ? 'Saving...' : 'Save Service'}
 				</Button.Root>

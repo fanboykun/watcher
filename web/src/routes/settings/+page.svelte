@@ -409,13 +409,10 @@
 						<label class="text-sm text-muted-foreground" for="cfg-web-assets-path"
 							>Web Assets / Base Path</label
 						>
-						<Input
-							id="cfg-web-assets-path"
-							bind:value={cfgWebAssetsPath}
-							placeholder="/watcher"
-						/>
+						<Input id="cfg-web-assets-path" bind:value={cfgWebAssetsPath} placeholder="/watcher" />
 						<p class="text-xs text-muted-foreground">
-							Subpath prefix when hosting behind a reverse proxy (e.g. <code>/watcher</code> for <code>https://domain.co.id/watcher</code>). Leave empty if serving from root.
+							Subpath prefix when hosting behind a reverse proxy (e.g. <code>/watcher</code> for
+							<code>https://domain.co.id/watcher</code>). Leave empty if serving from root.
 						</p>
 					</div>
 					<div class="space-y-2 md:col-span-2">
@@ -446,7 +443,8 @@
 
 				<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
 					Changes are written to <code>{agentConfig.env_path}</code>. Watcher loops reload
-					automatically, but changing API port, DB path, or Web assets path requires service restart.
+					automatically, but changing API port, DB path, or Web assets path requires service
+					restart.
 				</div>
 
 				<div class="flex gap-2">
@@ -527,7 +525,8 @@
 							</label>
 						</div>
 						<p class="text-xs text-muted-foreground">
-							Use a Standard Webhooks HMAC signing secret. Raw base64 secret material or the conventional <code>whsec_...</code> form both work.
+							Use a Standard Webhooks HMAC signing secret. Raw base64 secret material or the
+							conventional <code>whsec_...</code> form both work.
 						</p>
 					</div>
 					<div class="space-y-2">

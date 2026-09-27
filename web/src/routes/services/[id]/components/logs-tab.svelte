@@ -75,8 +75,9 @@
 	<Card.Content class="p-0">
 		{#if logLines.length > 0}
 			<div class="max-h-[500px] overflow-auto">
-				<pre class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">{#each logLines as line, i (i)}{line}
-{/each}</pre>
+				<pre
+					class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">{#each logLines as line, i (i)}{line}
+					{/each}</pre>
 			</div>
 		{:else if !logError}
 			<div class="flex flex-col items-center justify-center py-12 text-center">

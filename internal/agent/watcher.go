@@ -95,7 +95,7 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 	if r.wcfg.InterceptNextRelease {
 		var currentStatus, pendingVersion string
 		r.db.Model(&database.Watcher{}).Select("status", "pending_version").Where("id = ?", r.watcherID).Row().Scan(&currentStatus, &pendingVersion)
-		
+
 		if currentStatus != "approved" {
 			if pendingVersion != targetVersion || currentStatus != "pending_approval" {
 				r.log.Info("intercepting new release candidate", "version", targetVersion)

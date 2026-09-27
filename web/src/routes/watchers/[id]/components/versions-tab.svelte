@@ -3,6 +3,8 @@
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
 	import { CheckCircle2, RotateCcw, Trash2, Server, Archive } from '@lucide/svelte';
+	import { page } from '$app/stores';
+	import { resolve } from '$app/paths';
 	import { filesize } from 'filesize';
 	import { formatDate } from '$lib/utils';
 
@@ -40,17 +42,24 @@
 						<Table.Cell>
 							<div class="flex items-center gap-1.5">
 								{#if v.is_current}
-									<span class="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400">
+									<span
+										class="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400"
+									>
 										<CheckCircle2 class="h-3 w-3" />
 										Current
 									</span>
 								{:else}
-									<span class="inline-flex items-center gap-1 rounded bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+									<span
+										class="inline-flex items-center gap-1 rounded bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground"
+									>
 										Inactive
 									</span>
 								{/if}
 								{#if v.has_snapshot}
-									<span class="inline-flex items-center gap-1 rounded bg-blue-500/15 px-2 py-0.5 text-xs font-medium text-blue-400" title="Config snapshot available">
+									<span
+										class="inline-flex items-center gap-1 rounded bg-blue-500/15 px-2 py-0.5 text-xs font-medium text-blue-400"
+										title="Config snapshot available"
+									>
 										<Archive class="h-3 w-3" />
 										Snapshot
 									</span>
@@ -59,6 +68,19 @@
 						</Table.Cell>
 						<Table.Cell class="text-right">
 							<div class="flex items-center justify-end gap-2">
+								{#if v.has_snapshot}
+									<a href={resolve(`/watchers/${$page.params.id}/versions/${v.version}`)}>
+										<Button.Root
+											variant="outline"
+											size="sm"
+											class="h-8"
+											title="View Config Snapshot"
+										>
+											<Archive class="mr-1.5 h-3 w-3" />
+											Config
+										</Button.Root>
+									</a>
+								{/if}
 								{#if !v.is_current}
 									<Button.Root
 										variant="outline"

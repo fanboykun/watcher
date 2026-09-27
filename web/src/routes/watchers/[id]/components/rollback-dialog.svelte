@@ -1,25 +1,25 @@
 <script lang="ts">
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
-    import { Label } from '$lib/components/ui/label';
+	import { Label } from '$lib/components/ui/label';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 
-    interface Props {
-        open: boolean
-        rollbackReportGitHub: boolean
-        rollbackTargetVersion: string
-        onRollback: (version: string, reportGithub?: boolean) => Promise<void>
-    }
+	interface Props {
+		open: boolean;
+		rollbackReportGitHub: boolean;
+		rollbackTargetVersion: string;
+		onRollback: (version: string, reportGithub?: boolean) => Promise<void>;
+	}
 
-    let {
-        open = $bindable(), 
-        rollbackReportGitHub = $bindable(), 
-        onRollback, 
-        rollbackTargetVersion
-    }: Props = $props()
+	let {
+		open = $bindable(),
+		rollbackReportGitHub = $bindable(),
+		onRollback,
+		rollbackTargetVersion
+	}: Props = $props();
 </script>
 
-<Dialog.Root bind:open={open}>
+<Dialog.Root bind:open>
 	<Dialog.Content class="sm:max-w-120">
 		<Dialog.Header>
 			<Dialog.Title>Confirm Rollback</Dialog.Title>
@@ -44,7 +44,7 @@
 			</Button.Root>
 			<Button.Root
 				type="button"
-				class="bg-amber-600 hover:bg-amber-700 text-white"
+				class="bg-amber-600 text-white hover:bg-amber-700"
 				onclick={() => onRollback(rollbackTargetVersion, rollbackReportGitHub)}
 			>
 				Proceed Rollback

@@ -58,6 +58,7 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 		services.GET("/:id/revisions", h.ListServiceConfigRevisions)
 		services.PUT("/:id/revisions/:target", h.UpdateServiceConfigRevision)
 		services.DELETE("/:id/revisions/:target", h.DeleteServiceConfigRevision)
+		services.GET("/:id/snapshots/:version/env", h.GetServiceSnapshotEnv)
 		services.GET("/:id/health", h.GetServiceHealth)
 		services.GET("/:id/health/history", h.GetHealthHistory)
 		services.GET("/:id/logs", h.GetServiceLogs)

@@ -1,7 +1,12 @@
 <script lang="ts">
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
-	import { webhookDocsHref, webhookEventDocs, webhookOpenAPISpecHref, webhookSystemEventDocs } from '$lib/webhooks';
+	import {
+		webhookDocsHref,
+		webhookEventDocs,
+		webhookOpenAPISpecHref,
+		webhookSystemEventDocs
+	} from '$lib/webhooks';
 	import { BookOpenText, ExternalLink } from '@lucide/svelte';
 
 	type FieldContract = {
@@ -14,7 +19,8 @@
 		{
 			field: 'type',
 			type: 'string',
-			meaning: 'Standard Webhooks event type. Matches webhook payload semantics and the legacy event_type field.'
+			meaning:
+				'Standard Webhooks event type. Matches webhook payload semantics and the legacy event_type field.'
 		},
 		{
 			field: 'timestamp',
@@ -24,7 +30,8 @@
 		{
 			field: 'data',
 			type: 'object',
-			meaning: 'Standard Webhooks event data envelope. Includes watcher, summary, event_id, and event-specific nested objects.'
+			meaning:
+				'Standard Webhooks event data envelope. Includes watcher, summary, event_id, and event-specific nested objects.'
 		},
 		{
 			field: 'schema_version',
@@ -82,7 +89,8 @@
 		{
 			field: 'version.block_reason',
 			type: 'string',
-			meaning: 'Operator-facing explanation for why deployment will not proceed when will_deploy is false.'
+			meaning:
+				'Operator-facing explanation for why deployment will not proceed when will_deploy is false.'
 		}
 	];
 </script>
@@ -99,7 +107,8 @@
 		</div>
 		<h1 class="mt-2 text-2xl font-bold tracking-tight">Webhook Integration</h1>
 		<p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-			This page explains how to integrate your webhook receiver with Watcher from setup through testing. The repo markdown remains the canonical reference.
+			This page explains how to integrate your webhook receiver with Watcher from setup through
+			testing. The repo markdown remains the canonical reference.
 		</p>
 		<div class="mt-3 flex flex-wrap gap-2">
 			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
@@ -124,12 +133,31 @@
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm text-muted-foreground">
-			<p><span class="font-medium text-foreground">HTTP endpoint:</span> expose a <code>POST</code> endpoint reachable by the Watcher host.</p>
-			<p><span class="font-medium text-foreground">JSON body:</span> accept <code>application/json</code> request bodies and parse nested typed objects.</p>
-			<p><span class="font-medium text-foreground">Success response:</span> return any <code>2xx</code> response after accepting the event.</p>
-			<p><span class="font-medium text-foreground">Idempotency:</span> deduplicate using <code>event_id</code> because delivery is at-least-once.</p>
-			<p><span class="font-medium text-foreground">Auth handling:</span> verify the Standard Webhooks HMAC signature using the shared signing secret you configured in Watcher.</p>
-			<p><span class="font-medium text-foreground">Operational visibility:</span> log or store <code>type</code>, <code>event_id</code>, <code>webhook-id</code>, and <code>X-Watcher-Delivery-ID</code> so you can trace retries and incidents.</p>
+			<p>
+				<span class="font-medium text-foreground">HTTP endpoint:</span> expose a <code>POST</code> endpoint
+				reachable by the Watcher host.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">JSON body:</span> accept
+				<code>application/json</code> request bodies and parse nested typed objects.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Success response:</span> return any
+				<code>2xx</code> response after accepting the event.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Idempotency:</span> deduplicate using
+				<code>event_id</code> because delivery is at-least-once.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Auth handling:</span> verify the Standard Webhooks HMAC
+				signature using the shared signing secret you configured in Watcher.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Operational visibility:</span> log or store
+				<code>type</code>, <code>event_id</code>, <code>webhook-id</code>, and
+				<code>X-Watcher-Delivery-ID</code> so you can trace retries and incidents.
+			</p>
 		</Card.Content>
 	</Card.Root>
 
@@ -145,20 +173,39 @@
 				<p class="font-medium text-foreground">Standard headers</p>
 				<ul class="mt-2 space-y-1">
 					<li><code>Content-Type: application/json</code></li>
-					<li><code>webhook-id</code>: stable event identifier used for idempotency across retries</li>
-					<li><code>webhook-timestamp</code>: Unix timestamp in seconds for the delivery attempt</li>
-					<li><code>webhook-signature</code>: Standard Webhooks HMAC-SHA256 signature for the exact request body</li>
-					<li><code>X-Watcher-Event</code>: event type name such as <code>watcher.deployment_failed</code></li>
-					<li><code>X-Watcher-Delivery-ID</code>: delivery attempt identifier for this HTTP request</li>
+					<li>
+						<code>webhook-id</code>: stable event identifier used for idempotency across retries
+					</li>
+					<li>
+						<code>webhook-timestamp</code>: Unix timestamp in seconds for the delivery attempt
+					</li>
+					<li>
+						<code>webhook-signature</code>: Standard Webhooks HMAC-SHA256 signature for the exact
+						request body
+					</li>
+					<li>
+						<code>X-Watcher-Event</code>: event type name such as
+						<code>watcher.deployment_failed</code>
+					</li>
+					<li>
+						<code>X-Watcher-Delivery-ID</code>: delivery attempt identifier for this HTTP request
+					</li>
 				</ul>
 			</div>
 			<div class="rounded-md border border-border/70 bg-muted/20 p-4">
 				<p class="font-medium text-foreground">Signature behavior</p>
 				<ul class="mt-2 space-y-1">
-					<li>Watcher signs the literal request payload bytes using Standard Webhooks HMAC-SHA256.</li>
-					<li>The signing secret can come from the global default or a watcher-specific override.</li>
+					<li>
+						Watcher signs the literal request payload bytes using Standard Webhooks HMAC-SHA256.
+					</li>
+					<li>
+						The signing secret can come from the global default or a watcher-specific override.
+					</li>
 					<li>Use the same signing secret on your receiver when verifying the request.</li>
-					<li>The signature covers <code>webhook-id</code>, <code>webhook-timestamp</code>, and the raw request body.</li>
+					<li>
+						The signature covers <code>webhook-id</code>, <code>webhook-timestamp</code>, and the
+						raw request body.
+					</li>
 				</ul>
 			</div>
 		</Card.Content>
@@ -172,10 +219,24 @@
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm text-muted-foreground">
-			<p><span class="font-medium text-foreground">Format:</span> use high-entropy base64 secret material. The conventional <code>whsec_</code> prefix is allowed but not required.</p>
-			<p><span class="font-medium text-foreground">Generate it:</span> create a new unpredictable secret, store it in your receiver first, then copy the exact same value into Watcher.</p>
-			<p><span class="font-medium text-foreground">Watcher side:</span> Watcher decodes the secret, signs the raw request body, and sends <code>webhook-id</code>, <code>webhook-timestamp</code>, and <code>webhook-signature</code>.</p>
-			<p><span class="font-medium text-foreground">Receiver side:</span> verify the raw body with the exact same secret before trusting the payload. If the secret or body differs, verification fails with <code>invalid signature</code>.</p>
+			<p>
+				<span class="font-medium text-foreground">Format:</span> use high-entropy base64 secret
+				material. The conventional <code>whsec_</code> prefix is allowed but not required.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Generate it:</span> create a new unpredictable secret,
+				store it in your receiver first, then copy the exact same value into Watcher.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Watcher side:</span> Watcher decodes the secret,
+				signs the raw request body, and sends <code>webhook-id</code>,
+				<code>webhook-timestamp</code>, and <code>webhook-signature</code>.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Receiver side:</span> verify the raw body with the
+				exact same secret before trusting the payload. If the secret or body differs, verification
+				fails with <code>invalid signature</code>.
+			</p>
 		</Card.Content>
 	</Card.Root>
 
@@ -183,7 +244,8 @@
 		<Card.Header>
 			<Card.Title>Field Meaning And Types</Card.Title>
 			<Card.Description>
-				Field-name lists are only a summary. Use these contracts when you need to know the actual type and intended meaning.
+				Field-name lists are only a summary. Use these contracts when you need to know the actual
+				type and intended meaning.
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-6">
@@ -214,7 +276,8 @@
 			<div class="space-y-3">
 				<p class="font-medium text-foreground">`watcher.version_found` contract</p>
 				<p class="text-sm text-muted-foreground">
-					This is a discovery event. It means Watcher saw a newer remote version than the current one. It does not, by itself, guarantee that deployment started.
+					This is a discovery event. It means Watcher saw a newer remote version than the current
+					one. It does not, by itself, guarantee that deployment started.
 				</p>
 				<div class="overflow-x-auto rounded-md border border-border/70">
 					<table class="w-full text-sm">
@@ -236,8 +299,14 @@
 						</tbody>
 					</table>
 				</div>
-				<div class="rounded-md border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-					<p><span class="font-medium text-foreground">Interpretation:</span> `will_deploy=true` means Watcher can continue toward deployment after discovery. `will_deploy=false` means the discovery is real, but rollout is blocked and `block_reason` explains why.</p>
+				<div
+					class="rounded-md border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground"
+				>
+					<p>
+						<span class="font-medium text-foreground">Interpretation:</span> `will_deploy=true` means
+						Watcher can continue toward deployment after discovery. `will_deploy=false` means the discovery
+						is real, but rollout is blocked and `block_reason` explains why.
+					</p>
 				</div>
 			</div>
 		</Card.Content>
@@ -254,43 +323,54 @@
 			<div>
 				<p class="font-medium text-foreground">1. Build your receiver endpoint</p>
 				<p class="mt-1">
-					Create an HTTP <code>POST</code> endpoint that accepts JSON, verifies the Standard Webhooks signature, and returns a <code>2xx</code> response when the payload is accepted.
+					Create an HTTP <code>POST</code> endpoint that accepts JSON, verifies the Standard
+					Webhooks signature, and returns a <code>2xx</code> response when the payload is accepted.
 				</p>
 			</div>
 			<div>
 				<p class="font-medium text-foreground">2. Make the receiver idempotent</p>
 				<p class="mt-1">
-					Watcher delivers webhooks with at-least-once semantics. Deduplicate by <code>event_id</code> and treat <code>delivery_id</code> as the attempt identifier.
+					Watcher delivers webhooks with at-least-once semantics. Deduplicate by <code
+						>event_id</code
+					>
+					and treat <code>delivery_id</code> as the attempt identifier.
 				</p>
 			</div>
 			<div>
 				<p class="font-medium text-foreground">3. Configure the watcher</p>
 				<p class="mt-1">
-					Open the watcher’s webhook settings, enable delivery, set the URL or inherit the global default, decide whether to use a watcher-specific signing secret, and choose which business events should be emitted.
+					Open the watcher’s webhook settings, enable delivery, set the URL or inherit the global
+					default, decide whether to use a watcher-specific signing secret, and choose which
+					business events should be emitted.
 				</p>
 			</div>
 			<div>
 				<p class="font-medium text-foreground">4. Know the headers and payload contract</p>
 				<p class="mt-1">
-					Watcher sends <code>Content-Type: application/json</code>, the Standard Webhooks signature headers, and Watcher’s extra observability headers. Payload schemas are documented below, in the repo docs, and in the OpenAPI file.
+					Watcher sends <code>Content-Type: application/json</code>, the Standard Webhooks signature
+					headers, and Watcher’s extra observability headers. Payload schemas are documented below,
+					in the repo docs, and in the OpenAPI file.
 				</p>
 			</div>
 			<div>
 				<p class="font-medium text-foreground">5. Test before real events happen</p>
 				<p class="mt-1">
-					Use <code>Send Test Webhook</code> from the watcher edit page or the watcher webhook history tab. It uses the same outbox and retry pipeline as real events.
+					Use <code>Send Test Webhook</code> from the watcher edit page or the watcher webhook history
+					tab. It uses the same outbox and retry pipeline as real events.
 				</p>
 			</div>
 			<div>
 				<p class="font-medium text-foreground">6. Watch delivery history</p>
 				<p class="mt-1">
-					Check the watcher webhook tab or the webhook hub to see whether deliveries are succeeding, retrying, or paused.
+					Check the watcher webhook tab or the webhook hub to see whether deliveries are succeeding,
+					retrying, or paused.
 				</p>
 			</div>
 			<div>
 				<p class="font-medium text-foreground">7. Handle pauses and replay intentionally</p>
 				<p class="mt-1">
-					If the endpoint keeps failing, Watcher can pause delivery. Resume only continues future events. Resume with replay moves suppressed events back to pending in normal FIFO order.
+					If the endpoint keeps failing, Watcher can pause delivery. Resume only continues future
+					events. Resume with replay moves suppressed events back to pending in normal FIFO order.
 				</p>
 			</div>
 		</Card.Content>
@@ -304,26 +384,54 @@
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm text-muted-foreground">
-			<p><span class="font-medium text-foreground">Generate once, store twice:</span> create the secret in your receiver secret store first, then copy the same value into Watcher.</p>
-			<p><span class="font-medium text-foreground">Scope secrets narrowly:</span> prefer one secret per environment or endpoint instead of one shared secret everywhere.</p>
-			<p><span class="font-medium text-foreground">Keep secrets out of logs:</span> Watcher only exposes masked secret presence. Your receiver should do the same.</p>
-			<p><span class="font-medium text-foreground">Rotate carefully:</span> add the new secret to the receiver, update Watcher, send <code>watcher.webhook_test</code>, verify success, then remove the old secret.</p>
-			<p><span class="font-medium text-foreground">Current limitation:</span> Watcher currently signs with one active HMAC secret at a time and does not yet emit multiple signatures for zero-downtime rotation.</p>
+			<p>
+				<span class="font-medium text-foreground">Generate once, store twice:</span> create the secret
+				in your receiver secret store first, then copy the same value into Watcher.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Scope secrets narrowly:</span> prefer one secret per
+				environment or endpoint instead of one shared secret everywhere.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Keep secrets out of logs:</span> Watcher only exposes
+				masked secret presence. Your receiver should do the same.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Rotate carefully:</span> add the new secret to the
+				receiver, update Watcher, send <code>watcher.webhook_test</code>, verify success, then
+				remove the old secret.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Current limitation:</span> Watcher currently signs with
+				one active HMAC secret at a time and does not yet emit multiple signatures for zero-downtime rotation.
+			</p>
 		</Card.Content>
 	</Card.Root>
 
 	<Card.Root class="border-border bg-card">
 		<Card.Header>
 			<Card.Title>Migration Notes</Card.Title>
-			<Card.Description>
-				What existing Watcher webhook consumers need to change.
-			</Card.Description>
+			<Card.Description>What existing Watcher webhook consumers need to change.</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm text-muted-foreground">
-			<p><span class="font-medium text-foreground">Replace bearer auth assumptions:</span> Watcher no longer expects receivers to verify <code>Authorization: Bearer ...</code> for outbound webhooks.</p>
-			<p><span class="font-medium text-foreground">Add standard verification:</span> verify <code>webhook-id</code>, <code>webhook-timestamp</code>, and <code>webhook-signature</code> with the shared signing secret.</p>
-			<p><span class="font-medium text-foreground">Prefer standard fields for new code:</span> use <code>type</code>, <code>timestamp</code>, and <code>data</code> first.</p>
-			<p><span class="font-medium text-foreground">Compatibility remains:</span> Watcher still includes the legacy convenience fields like <code>event_id</code>, <code>event_type</code>, and <code>occurred_at</code> during the transition.</p>
+			<p>
+				<span class="font-medium text-foreground">Replace bearer auth assumptions:</span> Watcher no
+				longer expects receivers to verify <code>Authorization: Bearer ...</code> for outbound webhooks.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Add standard verification:</span> verify
+				<code>webhook-id</code>, <code>webhook-timestamp</code>, and <code>webhook-signature</code> with
+				the shared signing secret.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Prefer standard fields for new code:</span> use
+				<code>type</code>, <code>timestamp</code>, and <code>data</code> first.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Compatibility remains:</span> Watcher still
+				includes the legacy convenience fields like <code>event_id</code>, <code>event_type</code>,
+				and <code>occurred_at</code> during the transition.
+			</p>
 		</Card.Content>
 	</Card.Root>
 
@@ -338,8 +446,14 @@
 			<p>1. Verify signatures against the raw request body, not re-serialized JSON.</p>
 			<p>2. Deduplicate on <code>event_id</code>, not <code>X-Watcher-Delivery-ID</code>.</p>
 			<p>3. Return <code>2xx</code> only after your receiver has durably accepted the event.</p>
-			<p>4. Log <code>event_id</code>, <code>type</code>, and <code>X-Watcher-Delivery-ID</code> for incident tracing.</p>
-			<p>5. Rehearse pause, resume, and replay handling before relying on the integration operationally.</p>
+			<p>
+				4. Log <code>event_id</code>, <code>type</code>, and <code>X-Watcher-Delivery-ID</code> for incident
+				tracing.
+			</p>
+			<p>
+				5. Rehearse pause, resume, and replay handling before relying on the integration
+				operationally.
+			</p>
 			<p>6. Rehearse secret rotation in a non-production environment.</p>
 		</Card.Content>
 	</Card.Root>
@@ -375,7 +489,9 @@
 							<p class="mt-1 font-mono text-xs text-muted-foreground">{event.eventType}</p>
 							<p class="mt-2 text-sm text-muted-foreground">{event.when}</p>
 							<div class="mt-3">
-								<p class="text-xs font-medium uppercase tracking-wide text-foreground/80">Field contract</p>
+								<p class="text-xs font-medium tracking-wide text-foreground/80 uppercase">
+									Field contract
+								</p>
 								<div class="mt-2 overflow-x-auto rounded-md border border-border/70">
 									<table class="w-full text-sm">
 										<thead class="bg-muted/30 text-left text-muted-foreground">
@@ -397,7 +513,9 @@
 									</table>
 								</div>
 								{#if event.interpretation}
-									<div class="mt-3 rounded-md border border-border/70 bg-background/60 p-3 text-sm text-muted-foreground">
+									<div
+										class="mt-3 rounded-md border border-border/70 bg-background/60 p-3 text-sm text-muted-foreground"
+									>
 										<p class="font-medium text-foreground">Interpretation</p>
 										<ul class="mt-2 space-y-1">
 											{#each event.interpretation as item (item)}
@@ -420,7 +538,9 @@
 							<p class="mt-1 font-mono text-xs text-muted-foreground">{event.eventType}</p>
 							<p class="mt-2 text-sm text-muted-foreground">{event.when}</p>
 							<div class="mt-3">
-								<p class="text-xs font-medium uppercase tracking-wide text-foreground/80">Field contract</p>
+								<p class="text-xs font-medium tracking-wide text-foreground/80 uppercase">
+									Field contract
+								</p>
 								<div class="mt-2 overflow-x-auto rounded-md border border-border/70">
 									<table class="w-full text-sm">
 										<thead class="bg-muted/30 text-left text-muted-foreground">
@@ -442,7 +562,9 @@
 									</table>
 								</div>
 								{#if event.interpretation}
-									<div class="mt-3 rounded-md border border-border/70 bg-background/60 p-3 text-sm text-muted-foreground">
+									<div
+										class="mt-3 rounded-md border border-border/70 bg-background/60 p-3 text-sm text-muted-foreground"
+									>
 										<p class="font-medium text-foreground">Interpretation</p>
 										<ul class="mt-2 space-y-1">
 											{#each event.interpretation as item (item)}
@@ -462,15 +584,25 @@
 	<Card.Root class="border-border bg-card">
 		<Card.Header>
 			<Card.Title>When things go wrong</Card.Title>
-			<Card.Description>
-				Typical integration failure modes.
-			</Card.Description>
+			<Card.Description>Typical integration failure modes.</Card.Description>
 		</Card.Header>
 		<Card.Content class="space-y-3 text-sm text-muted-foreground">
-			<p><span class="font-medium text-foreground">401 or 403:</span> signing secret mismatch, stale timestamp rejection, or wrong endpoint authorization expectations.</p>
-			<p><span class="font-medium text-foreground">400:</span> your receiver rejected the payload shape. Check the repo docs and the OpenAPI schema.</p>
-			<p><span class="font-medium text-foreground">429 or 5xx:</span> Watcher retries automatically using the configured retry schedule.</p>
-			<p><span class="font-medium text-foreground">Paused delivery:</span> the watcher hit its consecutive failure threshold. Resume from the watcher webhook controls after fixing the endpoint.</p>
+			<p>
+				<span class="font-medium text-foreground">401 or 403:</span> signing secret mismatch, stale timestamp
+				rejection, or wrong endpoint authorization expectations.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">400:</span> your receiver rejected the payload shape.
+				Check the repo docs and the OpenAPI schema.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">429 or 5xx:</span> Watcher retries automatically using
+				the configured retry schedule.
+			</p>
+			<p>
+				<span class="font-medium text-foreground">Paused delivery:</span> the watcher hit its consecutive
+				failure threshold. Resume from the watcher webhook controls after fixing the endpoint.
+			</p>
 		</Card.Content>
 	</Card.Root>
 
