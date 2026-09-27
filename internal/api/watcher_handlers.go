@@ -276,6 +276,9 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	if req.Paused != nil {
 		updates["paused"] = *req.Paused
 	}
+	if req.InterceptNextRelease != nil {
+		updates["intercept_next_release"] = *req.InterceptNextRelease
+	}
 	if req.MaxKeptVersions != nil {
 		updates["max_kept_versions"] = *req.MaxKeptVersions
 	}
@@ -354,4 +357,52 @@ func (h *Handler) DeleteWatcher(c *gin.Context) {
 	}
 	h.triggerSync()
 	c.JSON(http.StatusOK, MessageResponse{Message: "watcher deleted"})
+}
+
+func (h *Handler) InterceptRelease(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+	var req struct {
+		Intercept bool `json:"intercept_next_release"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	if err := h.db.Model(watcher).Update("intercept_next_release", req.Intercept).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	h.triggerSync()
+	c.JSON(http.StatusOK, MessageResponse{Message: "Intercept setting updated"})
+}
+
+func (h *Handler) ApproveRelease(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+	if watcher.Status != "pending_approval" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "No release pending approval"})
+		return
+	}
+
+	// Change status to let agent proceed and trigger check
+	if err := h.db.Model(watcher).Updates(map[string]interface{}{
+		"status":                 "approved",
+		"intercept_next_release": false,
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	h.triggerSync()
+
+	select {
+	case h.checkTrigger <- watcher.ID:
+	default:
+	}
+
+	c.JSON(http.StatusOK, MessageResponse{Message: "Release approved and deployment triggered"})
 }

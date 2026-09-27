@@ -21,7 +21,16 @@
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { webhookDocsHref, type WebhookSelectionState } from '$lib/webhooks';
-	import { AlertCircle, ArrowLeft, ArrowRight, BookOpenText, Check, ExternalLink, Plus, Trash2 } from '@lucide/svelte';
+	import {
+		AlertCircle,
+		ArrowLeft,
+		ArrowRight,
+		BookOpenText,
+		Check,
+		ExternalLink,
+		Plus,
+		Trash2
+	} from '@lucide/svelte';
 
 	type WizardStep = 1 | 2 | 3 | 4;
 	type ServiceDraft = Partial<Service>;
@@ -34,9 +43,21 @@
 	];
 
 	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
-		{ value: 'static', label: 'Static Site', hint: 'HTML/CSS/JS or frontend build output served by IIS.' },
-		{ value: 'php', label: 'PHP', hint: 'PHP app hosted by IIS with FastCGI/PHP already installed.' },
-		{ value: 'aspnet_classic', label: 'ASP.NET Classic', hint: 'Classic ASP.NET app using the .NET CLR app pool.' }
+		{
+			value: 'static',
+			label: 'Static Site',
+			hint: 'HTML/CSS/JS or frontend build output served by IIS.'
+		},
+		{
+			value: 'php',
+			label: 'PHP',
+			hint: 'PHP app hosted by IIS with FastCGI/PHP already installed.'
+		},
+		{
+			value: 'aspnet_classic',
+			label: 'ASP.NET Classic',
+			hint: 'Classic ASP.NET app using the .NET CLR app pool.'
+		}
 	];
 
 	let currentStep = $state<WizardStep>(1);
@@ -177,7 +198,7 @@
 			metadataURL =
 				inspectResult.source === 'manifest' && inspectResult.metadata_url
 					? inspectResult.metadata_url
-					: (inspectResult.repo_url || inputURL);
+					: inspectResult.repo_url || inputURL;
 
 			const services = inspectServices();
 			if (services.length === 1) {
@@ -242,7 +263,10 @@
 	function addConfigFileDraft(serviceIndex: number) {
 		const next = [...serviceDrafts];
 		const svc = next[serviceIndex];
-		const configFiles = [...(svc.config_files || []), { file_path: '', target: 'app_dir' as ConfigFileTarget, content: '' }];
+		const configFiles = [
+			...(svc.config_files || []),
+			{ file_path: '', target: 'app_dir' as ConfigFileTarget, content: '' }
+		];
 		next[serviceIndex] = { ...svc, config_files: configFiles };
 		serviceDrafts = next;
 	}
@@ -428,7 +452,8 @@
 		<div>
 			<h1 class="text-2xl font-bold tracking-tight">Add Watcher</h1>
 			<p class="text-sm text-muted-foreground">
-				Inspect the source, configure watcher behavior, define one or more services, then enable webhook delivery if needed.
+				Inspect the source, configure watcher behavior, define one or more services, then enable
+				webhook delivery if needed.
 			</p>
 		</div>
 	</div>
@@ -452,7 +477,9 @@
 	</div>
 
 	{#if error}
-		<div class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+		<div
+			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
+		>
 			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
 			<span>{error}</span>
 		</div>
@@ -487,8 +514,11 @@
 						</div>
 					</div>
 
-					<div class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-						Watcher inspects `version.json` first for the chosen ref and falls back to legacy repo asset discovery when needed.
+					<div
+						class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground"
+					>
+						Watcher inspects `version.json` first for the chosen ref and falls back to legacy repo
+						asset discovery when needed.
 					</div>
 
 					{#if inspectResult}
@@ -540,7 +570,9 @@
 											<span class="font-medium">{target.name}</span>
 											<span class="text-xs text-muted-foreground">{target.version}</span>
 										</div>
-										<p class="mt-1 truncate font-mono text-xs text-muted-foreground">{target.artifact}</p>
+										<p class="mt-1 truncate font-mono text-xs text-muted-foreground">
+											{target.artifact}
+										</p>
 									</button>
 								{/each}
 							</div>
@@ -570,7 +602,11 @@
 						</div>
 						<div class="space-y-2">
 							<Label for="deploymentEnvironment">Deployment Environment</Label>
-							<Input id="deploymentEnvironment" bind:value={deploymentEnvironment} placeholder="production" />
+							<Input
+								id="deploymentEnvironment"
+								bind:value={deploymentEnvironment}
+								placeholder="production"
+							/>
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="watcherGitHubToken">Watcher GitHub Token Override</Label>
@@ -592,7 +628,11 @@
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="healthCheckURL">Global Health Check URL</Label>
-							<Input id="healthCheckURL" bind:value={healthCheckURL} placeholder="http://localhost:3000/health" />
+							<Input
+								id="healthCheckURL"
+								bind:value={healthCheckURL}
+								placeholder="http://localhost:3000/health"
+							/>
 						</div>
 					</div>
 				</div>
@@ -602,7 +642,8 @@
 						<div>
 							<p class="font-medium">Managed services</p>
 							<p class="text-sm text-muted-foreground">
-								Define one or more services that this watcher should manage under the same release source.
+								Define one or more services that this watcher should manage under the same release
+								source.
 							</p>
 						</div>
 						<Button.Root variant="outline" size="sm" type="button" onclick={addServiceDraft}>
@@ -611,7 +652,9 @@
 					</div>
 
 					{#if serviceDrafts.length === 0}
-						<div class="rounded-lg border border-dashed border-border/70 bg-muted/20 p-8 text-center text-sm text-muted-foreground">
+						<div
+							class="rounded-lg border border-dashed border-border/70 bg-muted/20 p-8 text-center text-sm text-muted-foreground"
+						>
 							Add at least one service definition before creating the watcher.
 						</div>
 					{:else}
@@ -620,7 +663,7 @@
 								<Button.Root
 									variant="ghost"
 									size="icon"
-									class="absolute right-3 top-3 h-8 w-8 text-red-400"
+									class="absolute top-3 right-3 h-8 w-8 text-red-400"
 									type="button"
 									onclick={() => removeServiceDraft(i)}
 									disabled={serviceDrafts.length === 1}
@@ -640,16 +683,24 @@
 										<Label>Hosting Mode</Label>
 										<Select.Root type="single" bind:value={svc.service_type}>
 											<Select.Trigger>
-												{isIISService(svc.service_type || 'nssm') ? 'IIS Site' : 'NSSM Native Windows'}
+												{isIISService(svc.service_type || 'nssm')
+													? 'IIS Site'
+													: 'NSSM Native Windows'}
 											</Select.Trigger>
 											<Select.Content>
-												<Select.Item value="nssm" label="NSSM Native Windows">NSSM Native Windows</Select.Item>
+												<Select.Item value="nssm" label="NSSM Native Windows"
+													>NSSM Native Windows</Select.Item
+												>
 												<Select.Item value="iis" label="IIS Site">IIS Site</Select.Item>
 											</Select.Content>
 										</Select.Root>
 									</div>
 									<div class="space-y-2">
-										<Label>{isIISService(svc.service_type || 'nssm') ? 'Service Identifier' : 'Windows Service Name'}</Label>
+										<Label
+											>{isIISService(svc.service_type || 'nssm')
+												? 'Service Identifier'
+												: 'Windows Service Name'}</Label
+										>
 										<Input bind:value={svc.windows_service_name} placeholder="myapp-web" />
 									</div>
 
@@ -668,7 +719,10 @@
 										</div>
 										<div class="space-y-2">
 											<Label>Service Health Check URL</Label>
-											<Input bind:value={svc.health_check_url} placeholder="http://localhost:3000/health" />
+											<Input
+												bind:value={svc.health_check_url}
+												placeholder="http://localhost:3000/health"
+											/>
 										</div>
 										<div class="space-y-2 md:col-span-2">
 											<Label>Env Content</Label>
@@ -683,16 +737,20 @@
 											<Label>IIS App Kind</Label>
 											<Select.Root type="single" bind:value={svc.iis_app_kind}>
 												<Select.Trigger>
-													{iisAppKinds.find((kind) => kind.value === (svc.iis_app_kind || 'static'))?.label || 'Select kind'}
+													{iisAppKinds.find((kind) => kind.value === (svc.iis_app_kind || 'static'))
+														?.label || 'Select kind'}
 												</Select.Trigger>
 												<Select.Content>
 													{#each iisAppKinds as kind (kind.value)}
-														<Select.Item value={kind.value} label={kind.label}>{kind.label}</Select.Item>
+														<Select.Item value={kind.value} label={kind.label}
+															>{kind.label}</Select.Item
+														>
 													{/each}
 												</Select.Content>
 											</Select.Root>
 											<p class="text-xs text-muted-foreground">
-												{iisAppKinds.find((kind) => kind.value === (svc.iis_app_kind || 'static'))?.hint}
+												{iisAppKinds.find((kind) => kind.value === (svc.iis_app_kind || 'static'))
+													?.hint}
 											</p>
 										</div>
 										<div class="space-y-2">
@@ -709,23 +767,38 @@
 										</div>
 										<div class="space-y-2">
 											<Label>Service Health Check URL</Label>
-											<Input bind:value={svc.health_check_url} placeholder="https://app.example.com/health" />
+											<Input
+												bind:value={svc.health_check_url}
+												placeholder="https://app.example.com/health"
+											/>
 										</div>
-										<div class="rounded-lg border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
-											<span class="font-medium text-foreground/90">{serviceTypeLabel(svc.service_type || 'nssm')}:</span>
-											{' '}{iisAppKindLabel(String(svc.iis_app_kind || 'static'))}. Watcher will set the IIS app pool runtime automatically for this profile.
+										<div
+											class="rounded-lg border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2"
+										>
+											<span class="font-medium text-foreground/90"
+												>{serviceTypeLabel(svc.service_type || 'nssm')}:</span
+											>
+											{iisAppKindLabel(String(svc.iis_app_kind || 'static'))}. Watcher will set the
+											IIS app pool runtime automatically for this profile.
 										</div>
 									{/if}
 
 									<div class="space-y-2 md:col-span-2">
 										<div class="flex items-center justify-between gap-3">
 											<Label>Additional managed config files</Label>
-											<Button.Root variant="outline" size="sm" type="button" onclick={() => addConfigFileDraft(i)}>
+											<Button.Root
+												variant="outline"
+												size="sm"
+												type="button"
+												onclick={() => addConfigFileDraft(i)}
+											>
 												<Plus class="mr-2 h-3 w-3" /> Add file
 											</Button.Root>
 										</div>
 										{#if (svc.config_files || []).length > 0}
-											<div class="space-y-3 rounded-lg border border-border/70 bg-background/50 p-3">
+											<div
+												class="space-y-3 rounded-lg border border-border/70 bg-background/50 p-3"
+											>
 												{#each svc.config_files || [] as file, fileIndex (fileIndex)}
 													<div class="space-y-2 rounded-lg border border-border/60 bg-card/60 p-3">
 														<div class="flex items-center justify-between gap-3">
@@ -741,14 +814,23 @@
 															</Button.Root>
 														</div>
 														<div class="grid gap-2 md:grid-cols-[1fr_180px]">
-															<Input bind:value={file.file_path} placeholder="web.config or config/appsettings.json" />
+															<Input
+																bind:value={file.file_path}
+																placeholder="web.config or config/appsettings.json"
+															/>
 															<Select.Root type="single" bind:value={file.target}>
 																<Select.Trigger>
-																	{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
+																	{file.target === 'release_dir'
+																		? 'Current dir'
+																		: 'Service/app dir'}
 																</Select.Trigger>
 																<Select.Content>
-																	<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
-																	<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
+																	<Select.Item value="app_dir" label="Service/app dir"
+																		>Service/app dir</Select.Item
+																	>
+																	<Select.Item value="release_dir" label="Current dir"
+																		>Current dir</Select.Item
+																	>
 																</Select.Content>
 															</Select.Root>
 														</div>
@@ -762,7 +844,8 @@
 											</div>
 										{:else}
 											<p class="text-xs text-muted-foreground">
-												Use <code>Current dir</code> for IIS files like <code>web.config</code> that must sit beside deployed assets.
+												Use <code>Current dir</code> for IIS files like <code>web.config</code> that must
+												sit beside deployed assets.
 											</p>
 										{/if}
 									</div>
@@ -773,8 +856,11 @@
 				</div>
 			{:else}
 				<div class="space-y-4">
-					<div class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-						Webhook delivery is optional. This step only controls watcher-specific endpoint, signing-secret override, and event subscriptions.
+					<div
+						class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground"
+					>
+						Webhook delivery is optional. This step only controls watcher-specific endpoint,
+						signing-secret override, and event subscriptions.
 					</div>
 
 					<div class="rounded-lg border border-border/70 p-4">
@@ -785,8 +871,14 @@
 						<div class="mt-4 grid gap-4 md:grid-cols-2">
 							<div class="space-y-2">
 								<Label for="webhookURL">Webhook URL</Label>
-								<Input id="webhookURL" bind:value={webhookURL} placeholder="https://example.com/hooks/watcher" />
-								<p class="text-xs text-muted-foreground">Leave empty to inherit the global default URL.</p>
+								<Input
+									id="webhookURL"
+									bind:value={webhookURL}
+									placeholder="https://example.com/hooks/watcher"
+								/>
+								<p class="text-xs text-muted-foreground">
+									Leave empty to inherit the global default URL.
+								</p>
 							</div>
 							<div class="space-y-2">
 								<Label for="webhookSigningSecret">Webhook Signing Secret Override</Label>
@@ -798,10 +890,18 @@
 									placeholder="base64 secret or whsec_..."
 								/>
 								<div class="mt-2 flex items-center gap-2">
-									<Checkbox id="useCustomWebhookSigningSecret" bind:checked={useCustomWebhookSigningSecret} />
-									<Label for="useCustomWebhookSigningSecret">Use watcher-specific webhook signing secret</Label>
+									<Checkbox
+										id="useCustomWebhookSigningSecret"
+										bind:checked={useCustomWebhookSigningSecret}
+									/>
+									<Label for="useCustomWebhookSigningSecret"
+										>Use watcher-specific webhook signing secret</Label
+									>
 								</div>
-								<p class="text-xs text-muted-foreground">Use the same signing secret as your receiver. Raw base64 secret material or the conventional <code>whsec_...</code> form both work.</p>
+								<p class="text-xs text-muted-foreground">
+									Use the same signing secret as your receiver. Raw base64 secret material or the
+									conventional <code>whsec_...</code> form both work.
+								</p>
 							</div>
 						</div>
 					</div>

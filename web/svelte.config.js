@@ -6,8 +6,11 @@ const config = {
 		adapter: adapter({
 			pages: 'build',
 			assets: 'build',
-			fallback: 'index.html'  // SPA fallback for client-side routing
-		})
+			fallback: 'index.html' // SPA fallback for client-side routing
+		}),
+		paths: {
+			base: process.env.BASE_PATH || ''
+		}
 	},
 	vitePlugin: {
 		dynamicCompileOptions: ({ filename }) =>

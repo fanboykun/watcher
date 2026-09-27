@@ -51,6 +51,7 @@ type UpdateWatcherRequest struct {
 	HcIntervalSec                   *int    `json:"hc_interval_sec"`
 	HcTimeoutSec                    *int    `json:"hc_timeout_sec"`
 	Paused                          *bool   `json:"paused"`
+	InterceptNextRelease            *bool   `json:"intercept_next_release"`
 	MaxKeptVersions                 *int    `json:"max_kept_versions"`
 	WebhookEnabled                  *bool   `json:"webhook_enabled"`
 	WebhookURL                      *string `json:"webhook_url"`
@@ -152,6 +153,7 @@ type SelfConfigResponse struct {
 	WebhookAutoPauseAfterFailures     int    `json:"webhook_auto_pause_after_failures"`
 	WebhookEventRetentionDays         int    `json:"webhook_event_retention_days"`
 	WebhookDeliveryRetentionDays      int    `json:"webhook_delivery_retention_days"`
+	WebAssetsPath                     string `json:"web_assets_path"`
 	EnvPath                           string `json:"env_path"`
 }
 
@@ -179,6 +181,7 @@ type UpdateSelfConfigRequest struct {
 	WebhookAutoPauseAfterFailures *int    `json:"webhook_auto_pause_after_failures"`
 	WebhookEventRetentionDays     *int    `json:"webhook_event_retention_days"`
 	WebhookDeliveryRetentionDays  *int    `json:"webhook_delivery_retention_days"`
+	WebAssetsPath                 *string `json:"web_assets_path"`
 }
 
 type ResumeWebhookRequest struct {

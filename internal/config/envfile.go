@@ -70,6 +70,7 @@ func UpdateEnvFile(path string, updates map[string]string) error {
 		"DB_PATH",
 		"API_PORT",
 		"API_BASE_URL",
+		"WEB_ASSETS_PATH",
 		"WATCHER_REPO_URL",
 		"WATCHER_SERVICE_NAME",
 	}

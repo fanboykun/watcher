@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SvelteMap } from 'svelte/reactivity';
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { api, type Watcher } from '$lib/api';
@@ -6,7 +7,13 @@
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { webhookDocsHref } from '$lib/webhooks';
-	import { AlertCircle, BookOpenText, ExternalLink, Plus, Webhook as WebhookIcon } from '@lucide/svelte';
+	import {
+		AlertCircle,
+		BookOpenText,
+		ExternalLink,
+		Plus,
+		Webhook as WebhookIcon
+	} from '@lucide/svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	type WebhookGroup = {
@@ -31,7 +38,7 @@
 	});
 
 	const webhookGroups = $derived.by<WebhookGroup[]>(() => {
-		const groups = new Map<string, Watcher[]>();
+		const groups = new SvelteMap<string, Watcher[]>();
 		for (const watcher of watchers) {
 			const key = watcher.service_name || watcher.name;
 			const current = groups.get(key) || [];
@@ -60,10 +67,11 @@
 			</div>
 			<h1 class="mt-2 text-2xl font-bold tracking-tight">Webhooks</h1>
 			<p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-				Configured watcher webhooks grouped by service. Full event and payload documentation lives in the repo docs.
+				Configured watcher webhooks grouped by service. Full event and payload documentation lives
+				in the repo docs.
 			</p>
 			<div class="mt-3 flex flex-wrap gap-2">
-				<a href="/docs/webhooks">
+				<a href={resolve('/docs/webhooks')}>
 					<Button.Root size="sm" variant="outline">
 						<BookOpenText class="mr-2 h-4 w-4" />
 						Integration Guide
@@ -79,13 +87,15 @@
 			</div>
 		</div>
 		<Button.Root onclick={() => (showAddDialog = true)}>
-				<Plus class="mr-2 h-4 w-4" />
-				Add Webhook
+			<Plus class="mr-2 h-4 w-4" />
+			Add Webhook
 		</Button.Root>
 	</div>
 
 	{#if error}
-		<div class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+		<div
+			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
+		>
 			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
 			<span>{error}</span>
 		</div>
@@ -98,7 +108,9 @@
 			<Card.Content class="flex flex-col items-center justify-center py-16 text-center">
 				<WebhookIcon class="mb-3 h-10 w-10 text-muted-foreground/40" />
 				<h3 class="text-sm font-medium text-muted-foreground">No watchers yet</h3>
-				<p class="mt-1 text-xs text-muted-foreground/60">Create a watcher, then enable its webhook settings.</p>
+				<p class="mt-1 text-xs text-muted-foreground/60">
+					Create a watcher, then enable its webhook settings.
+				</p>
 			</Card.Content>
 		</Card.Root>
 	{:else}
@@ -107,7 +119,10 @@
 				<Card.Root class="border-border bg-card">
 					<Card.Header>
 						<Card.Title>{group.serviceName}</Card.Title>
-						<Card.Description>{group.watchers.length} watcher{group.watchers.length === 1 ? '' : 's'} in this service group</Card.Description>
+						<Card.Description
+							>{group.watchers.length} watcher{group.watchers.length === 1 ? '' : 's'} in this service
+							group</Card.Description
+						>
 					</Card.Header>
 					<Card.Content class="space-y-3">
 						{#each group.watchers as watcher (watcher.id)}
@@ -140,7 +155,9 @@
 									</div>
 									<div>
 										<dt class="text-muted-foreground">URL</dt>
-										<dd class="mt-1 truncate font-mono text-xs">{watcher.webhook_url || 'Global default / unset'}</dd>
+										<dd class="mt-1 truncate font-mono text-xs">
+											{watcher.webhook_url || 'Global default / unset'}
+										</dd>
 									</div>
 									<div>
 										<dt class="text-muted-foreground">Paused</dt>
@@ -152,7 +169,9 @@
 									</div>
 								</dl>
 								{#if watcher.webhook_pause_reason}
-									<div class="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-500">
+									<div
+										class="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-500"
+									>
 										{watcher.webhook_pause_reason}
 									</div>
 								{/if}
@@ -170,12 +189,15 @@
 		<Dialog.Header>
 			<Dialog.Title>Add Webhook</Dialog.Title>
 			<Dialog.Description>
-				Webhooks belong to watchers. Choose an existing watcher to configure, or create a new watcher if you do not have one yet.
+				Webhooks belong to watchers. Choose an existing watcher to configure, or create a new
+				watcher if you do not have one yet.
 			</Dialog.Description>
 		</Dialog.Header>
 
 		<div class="space-y-4">
-			<div class="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 p-4">
+			<div
+				class="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 p-4"
+			>
 				<div>
 					<p class="font-medium">Create a new watcher</p>
 					<p class="text-sm text-muted-foreground">
@@ -190,7 +212,9 @@
 			<div class="space-y-3">
 				<p class="text-sm font-medium">Configure an existing watcher</p>
 				{#if watchers.length === 0}
-					<div class="rounded-lg border border-dashed border-border/70 bg-muted/20 p-6 text-sm text-muted-foreground">
+					<div
+						class="rounded-lg border border-dashed border-border/70 bg-muted/20 p-6 text-sm text-muted-foreground"
+					>
 						No watchers available yet.
 					</div>
 				{:else}
@@ -200,7 +224,9 @@
 								<p class="font-medium">{group.serviceName}</p>
 								<div class="mt-3 space-y-2">
 									{#each group.watchers as watcher (watcher.id)}
-										<div class="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-muted/20 p-3">
+										<div
+											class="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-muted/20 p-3"
+										>
 											<div>
 												<p class="font-medium">{watcher.name}</p>
 												<p class="text-xs text-muted-foreground">

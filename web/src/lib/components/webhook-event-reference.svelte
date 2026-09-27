@@ -1,4 +1,6 @@
+<!-- eslint-disable svelte/no-navigation-without-resolve -->
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import Badge from '$lib/components/ui/badge/badge.svelte';
 	import { BookOpenText, Braces, ExternalLink } from '@lucide/svelte';
@@ -35,12 +37,14 @@
 	</Card.Header>
 	<Card.Content class="space-y-5">
 		<div class="flex flex-wrap gap-2">
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 			<a href={webhookDocsHref}>
 				<Button.Root variant="outline" size="sm">
 					<BookOpenText class="mr-2 h-4 w-4" />
 					Webhook Guide
 				</Button.Root>
 			</a>
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 			<a href={webhookOpenAPISpecHref} target="_blank" rel="noopener noreferrer">
 				<Button.Root variant="outline" size="sm">
@@ -70,9 +74,10 @@
 								<Badge variant="secondary" class="font-mono text-[11px]">
 									{event.eventType}
 								</Badge>
+								<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 								<a
-									href={webhookEventDocHref(event.anchor)}
-									class="text-muted-foreground hover:text-primary transition-colors"
+									href={webhookEventDocHref(event.anchor as any)}
+									class="text-muted-foreground transition-colors hover:text-primary"
 									title="Open Event Documentation"
 								>
 									<ExternalLink class="h-3 w-3" />
@@ -89,7 +94,7 @@
 					</div>
 					<div class="mt-4 grid gap-4 lg:grid-cols-2">
 						<div>
-							<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+							<h6 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
 								Behavior
 							</h6>
 							<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
@@ -99,7 +104,7 @@
 							</ul>
 						</div>
 						<div>
-							<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+							<h6 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
 								Field Contract
 							</h6>
 							<div class="mt-2 overflow-x-auto rounded-md border border-border/70">
@@ -124,7 +129,7 @@
 							</div>
 							{#if event.interpretation}
 								<div class="mt-3 rounded-md border border-border/70 bg-muted/20 p-3">
-									<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									<h6 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
 										Interpretation
 									</h6>
 									<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
@@ -135,7 +140,11 @@
 								</div>
 							{/if}
 							<div class="mt-3 flex flex-wrap gap-2">
-								<a href={webhookEventDocHref(event.anchor)} class="text-xs text-primary hover:underline">
+								<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+								<a
+									href={webhookEventDocHref(event.anchor as any)}
+									class="text-xs text-primary hover:underline"
+								>
 									Read event docs
 								</a>
 								<Dialog.Root>
@@ -149,7 +158,10 @@
 												{event.eventType} using schema <code>{event.schemaName}</code>.
 											</Dialog.Description>
 										</Dialog.Header>
-										<pre class="max-h-[60vh] overflow-auto rounded-md border border-border/70 bg-muted/30 p-4 text-xs leading-6 text-foreground"><code>{event.examplePayload}</code></pre>
+										<pre
+											class="max-h-[60vh] overflow-auto rounded-md border border-border/70 bg-muted/30 p-4 text-xs leading-6 text-foreground"><code
+												>{event.examplePayload}</code
+											></pre>
 									</Dialog.Content>
 								</Dialog.Root>
 							</div>
@@ -162,7 +174,8 @@
 		<div class="space-y-3">
 			<h4 class="text-sm font-medium">System Events</h4>
 			<p class="text-sm text-muted-foreground">
-				These are produced by Watcher itself and are not controlled by the business-event checkboxes.
+				These are produced by Watcher itself and are not controlled by the business-event
+				checkboxes.
 			</p>
 			{#each webhookSystemEventDocs as event (event.eventType)}
 				<div class="rounded-md border border-border/70 bg-card/60 p-4">
@@ -172,9 +185,10 @@
 							<Badge variant="secondary" class="font-mono text-[11px]">
 								{event.eventType}
 							</Badge>
+							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 							<a
-								href={webhookEventDocHref(event.anchor)}
-								class="text-muted-foreground hover:text-primary transition-colors"
+								href={webhookEventDocHref(event.anchor as any)}
+								class="text-muted-foreground transition-colors hover:text-primary"
 								title="Open Event Documentation"
 							>
 								<ExternalLink class="h-3 w-3" />
@@ -184,7 +198,7 @@
 					</div>
 					<div class="mt-4 grid gap-4 lg:grid-cols-2">
 						<div>
-							<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+							<h6 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
 								Behavior
 							</h6>
 							<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
@@ -194,7 +208,7 @@
 							</ul>
 						</div>
 						<div>
-							<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+							<h6 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
 								Field Contract
 							</h6>
 							<div class="mt-2 overflow-x-auto rounded-md border border-border/70">
@@ -219,7 +233,7 @@
 							</div>
 							{#if event.interpretation}
 								<div class="mt-3 rounded-md border border-border/70 bg-muted/20 p-3">
-									<h6 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									<h6 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
 										Interpretation
 									</h6>
 									<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
@@ -230,7 +244,11 @@
 								</div>
 							{/if}
 							<div class="mt-3 flex flex-wrap gap-2">
-								<a href={webhookEventDocHref(event.anchor)} class="text-xs text-primary hover:underline">
+								<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+								<a
+									href={webhookEventDocHref(event.anchor as any)}
+									class="text-xs text-primary hover:underline"
+								>
 									Read event docs
 								</a>
 								<Dialog.Root>
@@ -244,7 +262,10 @@
 												{event.eventType} using schema <code>{event.schemaName}</code>.
 											</Dialog.Description>
 										</Dialog.Header>
-										<pre class="max-h-[60vh] overflow-auto rounded-md border border-border/70 bg-muted/30 p-4 text-xs leading-6 text-foreground"><code>{event.examplePayload}</code></pre>
+										<pre
+											class="max-h-[60vh] overflow-auto rounded-md border border-border/70 bg-muted/30 p-4 text-xs leading-6 text-foreground"><code
+												>{event.examplePayload}</code
+											></pre>
 									</Dialog.Content>
 								</Dialog.Root>
 							</div>

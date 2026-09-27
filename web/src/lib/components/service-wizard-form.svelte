@@ -1,5 +1,12 @@
 <script lang="ts">
-	import { iisAppKindLabel, type IISAppKind, type Service, type ServiceConfigFile, type ServiceWritePayload, type ServiceType } from '$lib/api';
+	import {
+		iisAppKindLabel,
+		type IISAppKind,
+		type Service,
+		type ServiceConfigFile,
+		type ServiceWritePayload,
+		type ServiceType
+	} from '$lib/api';
 	import * as Button from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
 	import { Input } from '$lib/components/ui/input';
@@ -32,9 +39,17 @@
 	} = $props();
 
 	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
-		{ value: 'static', label: 'Static Site', hint: 'Frontend build or static files served directly by IIS.' },
+		{
+			value: 'static',
+			label: 'Static Site',
+			hint: 'Frontend build or static files served directly by IIS.'
+		},
 		{ value: 'php', label: 'PHP', hint: 'PHP app on IIS with FastCGI and PHP already installed.' },
-		{ value: 'aspnet_classic', label: 'ASP.NET Classic', hint: 'Classic ASP.NET app using the .NET CLR app pool.' }
+		{
+			value: 'aspnet_classic',
+			label: 'ASP.NET Classic',
+			hint: 'Classic ASP.NET app using the .NET CLR app pool.'
+		}
 	];
 
 	const steps = [
@@ -58,7 +73,8 @@
 	let configFiles = $state<ServiceConfigFile[]>([]);
 
 	$effect(() => {
-		serviceType = initial.service_type === 'iis' || initial.service_type === 'static' ? 'iis' : 'nssm';
+		serviceType =
+			initial.service_type === 'iis' || initial.service_type === 'static' ? 'iis' : 'nssm';
 		serviceName = initial.windows_service_name || '';
 		binaryName = initial.binary_name || '';
 		startArguments = initial.start_arguments || '';
@@ -164,12 +180,22 @@
 						</Select.Root>
 					</div>
 					<div class="space-y-2">
-						<Label for="serviceName">{serviceType === 'iis' ? 'Service Identifier' : 'Windows Service Name'}</Label>
-						<Input id="serviceName" bind:value={serviceName} placeholder={serviceType === 'iis' ? 'marketing-site' : 'my-app-web'} />
+						<Label for="serviceName"
+							>{serviceType === 'iis' ? 'Service Identifier' : 'Windows Service Name'}</Label
+						>
+						<Input
+							id="serviceName"
+							bind:value={serviceName}
+							placeholder={serviceType === 'iis' ? 'marketing-site' : 'my-app-web'}
+						/>
 					</div>
 					<div class="space-y-2">
 						<Label for="healthCheckURL">Health Check URL</Label>
-						<Input id="healthCheckURL" bind:value={healthCheckURL} placeholder="http://localhost:3000/health" />
+						<Input
+							id="healthCheckURL"
+							bind:value={healthCheckURL}
+							placeholder="http://localhost:3000/health"
+						/>
 					</div>
 					<div class="space-y-2">
 						<Label for="publicURL">Public URL</Label>
@@ -185,7 +211,11 @@
 						</div>
 						<div class="space-y-2">
 							<Label for="startArguments">Start Arguments</Label>
-							<Input id="startArguments" bind:value={startArguments} placeholder="serve --port 8080" />
+							<Input
+								id="startArguments"
+								bind:value={startArguments}
+								placeholder="serve --port 8080"
+							/>
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="envFile">Env File</Label>
@@ -193,7 +223,12 @@
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="envContent">Env Content</Label>
-							<Textarea id="envContent" class="min-h-[220px] font-mono text-xs" bind:value={envContent} placeholder="KEY=VALUE&#10;API_URL=https://example.com" />
+							<Textarea
+								id="envContent"
+								class="min-h-[220px] font-mono text-xs"
+								bind:value={envContent}
+								placeholder="KEY=VALUE&#10;API_URL=https://example.com"
+							/>
 						</div>
 					</div>
 				{:else}
@@ -210,7 +245,9 @@
 									{/each}
 								</Select.Content>
 							</Select.Root>
-							<p class="text-xs text-muted-foreground">{iisAppKinds.find((kind) => kind.value === iisAppKind)?.hint}</p>
+							<p class="text-xs text-muted-foreground">
+								{iisAppKinds.find((kind) => kind.value === iisAppKind)?.hint}
+							</p>
 						</div>
 						<div class="space-y-2">
 							<Label for="iisAppPool">IIS App Pool</Label>
@@ -220,9 +257,12 @@
 							<Label for="iisSiteName">IIS Site Name</Label>
 							<Input id="iisSiteName" bind:value={iisSiteName} placeholder="my-app" />
 						</div>
-						<div class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground md:col-span-2">
+						<div
+							class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground md:col-span-2"
+						>
 							<span class="font-medium text-foreground">Bootstrap profile:</span>
-							{' '}{iisAppKindLabel(iisAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
+							{iisAppKindLabel(iisAppKind)}. Watcher will set the IIS managed runtime automatically
+							for this app kind.
 						</div>
 					</div>
 				{/if}
@@ -242,7 +282,9 @@
 					</div>
 
 					{#if configFiles.length === 0}
-						<div class="rounded-lg border border-dashed border-border/70 bg-muted/20 p-6 text-sm text-muted-foreground">
+						<div
+							class="rounded-lg border border-dashed border-border/70 bg-muted/20 p-6 text-sm text-muted-foreground"
+						>
 							No managed files configured.
 						</div>
 					{:else}
@@ -251,14 +293,24 @@
 								<div class="rounded-lg border border-border/70 bg-muted/20 p-4">
 									<div class="mb-3 flex items-center justify-between gap-3">
 										<p class="font-medium">Managed File #{index + 1}</p>
-										<Button.Root type="button" size="icon" variant="ghost" class="h-8 w-8 text-red-400" onclick={() => removeConfigFile(index)}>
+										<Button.Root
+											type="button"
+											size="icon"
+											variant="ghost"
+											class="h-8 w-8 text-red-400"
+											onclick={() => removeConfigFile(index)}
+										>
 											<Trash2 class="h-4 w-4" />
 										</Button.Root>
 									</div>
 									<div class="grid gap-4 md:grid-cols-2">
 										<div class="space-y-2">
 											<Label for={`config-path-${index}`}>Path</Label>
-											<Input id={`config-path-${index}`} bind:value={file.file_path} placeholder="web.config" />
+											<Input
+												id={`config-path-${index}`}
+												bind:value={file.file_path}
+												placeholder="web.config"
+											/>
 										</div>
 										<div class="space-y-2">
 											<Label for={`config-target-${index}`}>Target</Label>
@@ -268,13 +320,19 @@
 												</Select.Trigger>
 												<Select.Content>
 													<Select.Item value="app_dir" label="App dir">App dir</Select.Item>
-													<Select.Item value="release_dir" label="Release dir">Release dir</Select.Item>
+													<Select.Item value="release_dir" label="Release dir"
+														>Release dir</Select.Item
+													>
 												</Select.Content>
 											</Select.Root>
 										</div>
 										<div class="space-y-2 md:col-span-2">
 											<Label for={`config-content-${index}`}>Content</Label>
-											<Textarea id={`config-content-${index}`} class="min-h-[180px] font-mono text-xs" bind:value={file.content} />
+											<Textarea
+												id={`config-content-${index}`}
+												class="min-h-[180px] font-mono text-xs"
+												bind:value={file.content}
+											/>
 										</div>
 									</div>
 								</div>
@@ -287,7 +345,12 @@
 	</Card.Root>
 
 	<div class="flex items-center justify-between gap-3">
-		<Button.Root type="button" variant="outline" onclick={previousStep} disabled={currentStep === 1}>
+		<Button.Root
+			type="button"
+			variant="outline"
+			onclick={previousStep}
+			disabled={currentStep === 1}
+		>
 			<ArrowLeft class="mr-2 h-4 w-4" />
 			Back
 		</Button.Root>

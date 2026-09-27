@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, isIISService, serviceTypeLabel, iisAppKindLabel, type ServiceWithWatcher } from '$lib/api';
+	import {
+		api,
+		isIISService,
+		serviceTypeLabel,
+		iisAppKindLabel,
+		type ServiceWithWatcher
+	} from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';

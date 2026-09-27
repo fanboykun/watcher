@@ -1,3 +1,4 @@
+<!-- eslint-disable svelte/no-navigation-without-resolve -->
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -35,6 +36,7 @@
 	import DeploysTab from './components/deploys-tab.svelte';
 	import LogsTab from './components/logs-tab.svelte';
 	import EnvTab from './components/env-tab.svelte';
+	import CandidatesTab from './components/candidates-tab.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let service = $state<Service | null>(null);
@@ -96,8 +98,13 @@
 		const detail = await api.getService(id);
 		service = detail.service;
 		watcher = detail.watcher;
-		envContent = detail.service.env_content || '';
-		configFiles = [...(detail.service.config_files || []).map((file) => ({ ...file, target: file.target || 'app_dir' }))];
+		envContent = service?.env_content || '';
+		configFiles = [
+			...(detail.service.config_files || []).map((file) => ({
+				...file,
+				target: file.target || 'app_dir'
+			}))
+		];
 	}
 
 	async function runAction(fn: () => Promise<{ message: string }>) {
@@ -121,7 +128,12 @@
 				config_files: configFiles.filter((file) => file.file_path.trim() !== '')
 			});
 			envContent = service.env_content || '';
-			configFiles = [...(service.config_files || []).map((file) => ({ ...file, target: file.target || 'app_dir' }))];
+			configFiles = [
+				...(service.config_files || []).map((file) => ({
+					...file,
+					target: file.target || 'app_dir'
+				}))
+			];
 			actionMsg = 'Service files saved';
 			setTimeout(() => (actionMsg = ''), 4000);
 		} catch (e) {
@@ -137,7 +149,7 @@
 		try {
 			await api.deleteService(watcher.id, service.id);
 			showDeleteDialog = false;
-			await goto(resolve(`/watchers/${watcher.id}/edit#services`));
+			await goto(resolve(`/watchers/${watcher.id}/edit#services` as any));
 		} catch (e) {
 			actionMsg = e instanceof Error ? e.message : 'Failed to delete service';
 			setTimeout(() => (actionMsg = ''), 5000);
@@ -161,7 +173,8 @@
 <div class="space-y-6">
 	<!-- Header -->
 	<div class="flex items-center gap-4">
-		<a href={resolve('/services')}>
+		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+		<a href={'/services'}>
 			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
 				<ArrowLeft class="h-4 w-4" />
 			</Button.Root>
@@ -172,18 +185,25 @@
 			</h1>
 			{#if watcher}
 				<p class="text-sm text-muted-foreground">
-					Watcher: <a href={resolve(`/watchers/${watcher.id}`)} class="hover:underline">{watcher.name}</a>
+					Watcher: <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+					<a href={`/watchers/${watcher.id}`} class="hover:underline">{watcher.name}</a>
 				</p>
 			{/if}
 		</div>
 		{#if service}
 			<div class="flex items-center gap-2">
-				<a href={resolve(`/services/${id}/edit`)}>
+				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+				<a href={`/services/${id}/edit`}>
 					<Button.Root variant="outline" size="sm">
 						<Pencil class="mr-1.5 h-4 w-4" /> Edit
 					</Button.Root>
 				</a>
-				<Button.Root variant="outline" size="sm" class="text-red-400" onclick={() => (showDeleteDialog = true)}>
+				<Button.Root
+					variant="outline"
+					size="sm"
+					class="text-red-400"
+					onclick={() => (showDeleteDialog = true)}
+				>
 					<Trash2 class="mr-1.5 h-4 w-4" /> Delete
 				</Button.Root>
 				{#if !isIISService(service.service_type)}
@@ -243,16 +263,34 @@
 					<p class="mt-1 text-sm">{serviceTypeLabel(service.service_type)}</p>
 				</div>
 				<div>
-					<p class="text-xs text-muted-foreground">{isIISService(service.service_type) ? 'IIS App Kind' : 'Binary'}</p>
-					<p class="mt-1 font-mono text-sm">{isIISService(service.service_type) ? iisAppKindLabel(service.iis_app_kind || 'static') : (service.binary_name || '—')}</p>
+					<p class="text-xs text-muted-foreground">
+						{isIISService(service.service_type) ? 'IIS App Kind' : 'Binary'}
+					</p>
+					<p class="mt-1 font-mono text-sm">
+						{isIISService(service.service_type)
+							? iisAppKindLabel(service.iis_app_kind || 'static')
+							: service.binary_name || '—'}
+					</p>
 				</div>
 				<div>
-					<p class="text-xs text-muted-foreground">{isIISService(service.service_type) ? 'IIS App Pool' : 'Env File'}</p>
-					<p class="mt-1 font-mono text-sm">{isIISService(service.service_type) ? (service.iis_app_pool || '—') : (service.env_file || '—')}</p>
+					<p class="text-xs text-muted-foreground">
+						{isIISService(service.service_type) ? 'IIS App Pool' : 'Env File'}
+					</p>
+					<p class="mt-1 font-mono text-sm">
+						{isIISService(service.service_type)
+							? service.iis_app_pool || '—'
+							: service.env_file || '—'}
+					</p>
 				</div>
 				<div>
-					<p class="text-xs text-muted-foreground">{isIISService(service.service_type) ? 'IIS Site Name' : 'Health URL'}</p>
-					<p class="mt-1 font-mono text-sm">{isIISService(service.service_type) ? (service.iis_site_name || '—') : (service.health_check_url || '—')}</p>
+					<p class="text-xs text-muted-foreground">
+						{isIISService(service.service_type) ? 'IIS Site Name' : 'Health URL'}
+					</p>
+					<p class="mt-1 font-mono text-sm">
+						{isIISService(service.service_type)
+							? service.iis_site_name || '—'
+							: service.health_check_url || '—'}
+					</p>
 				</div>
 				<div>
 					<p class="text-xs text-muted-foreground">Health URL</p>
@@ -269,6 +307,7 @@
 							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 							<a
 								href={service.public_url}
+								data-sveltekit-noscroll
 								target="_blank"
 								rel="noopener noreferrer"
 								class="inline-flex items-center gap-1.5 text-blue-400 hover:underline"
@@ -292,17 +331,20 @@
 				</div>
 				<p class="mb-4 text-sm text-foreground/80">
 					Watcher can now create the IIS app pool and site automatically on first deploy when
-					<code>iis_app_pool</code>, <code>iis_site_name</code>, and <code>public_url</code> are set. The
-					root application is kept pointed at <code>{watcher?.install_dir}\current</code> on each deploy.
+					<code>iis_app_pool</code>, <code>iis_site_name</code>, and <code>public_url</code> are
+					set. The root application is kept pointed at <code>{watcher?.install_dir}.urrent</code> on each
+					deploy.
 				</p>
 				<p class="text-sm text-foreground/80">
-					This service is configured as <code>{iisAppKindLabel(service.iis_app_kind || 'static')}</code>.
-					Watcher will choose the IIS managed runtime automatically for that app kind, and if the site already
-					exists it will reuse it and refresh the root path and app pool assignment.
+					This service is configured as <code
+						>{iisAppKindLabel(service.iis_app_kind || 'static')}</code
+					>. Watcher will choose the IIS managed runtime automatically for that app kind, and if the
+					site already exists it will reuse it and refresh the root path and app pool assignment.
 				</p>
 				<p class="text-sm text-foreground/80">
-					Watcher does not install PHP, .NET hosting bundles, or IIS handler mappings. Those server-level
-					prerequisites still need to exist before the deployed site can serve traffic successfully.
+					Watcher does not install PHP, .NET hosting bundles, or IIS handler mappings. Those
+					server-level prerequisites still need to exist before the deployed site can serve traffic
+					successfully.
 				</p>
 			</div>
 		{/if}
@@ -311,13 +353,19 @@
 		<Tabs.Root
 			bind:value={activeTab}
 			onValueChange={(v) => {
-				if (v) goto(`?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true });
+				if (v)
+					goto(resolve(`?tab=${v}` as any), {
+						replaceState: true,
+						keepFocus: true,
+						noScroll: true
+					});
 			}}
 		>
 			<Tabs.List>
 				<Tabs.Trigger value="health">Health History ({healthHistory.length})</Tabs.Trigger>
 				<Tabs.Trigger value="logs">Logs</Tabs.Trigger>
 				<Tabs.Trigger value="env">Environment (.env)</Tabs.Trigger>
+				<Tabs.Trigger value="candidates">Deployment Candidates</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploys ({deployTotal})</Tabs.Trigger>
 			</Tabs.List>
 
@@ -357,6 +405,10 @@
 					onLoadDeploys={loadDeploys}
 				/>
 			</Tabs.Content>
+
+			<Tabs.Content value="candidates" class="mt-4">
+				<CandidatesTab serviceId={id} currentEnv={service?.env_content || ''} />
+			</Tabs.Content>
 		</Tabs.Root>
 	{/if}
 </div>
@@ -366,14 +418,25 @@
 		<Dialog.Header>
 			<Dialog.Title>Delete Service</Dialog.Title>
 			<Dialog.Description>
-				Delete <span class="font-medium">{service?.windows_service_name || 'this service'}</span>? This removes it from Watcher.
+				Delete <span class="font-medium">{service?.windows_service_name || 'this service'}</span>?
+				This removes it from Watcher.
 			</Dialog.Description>
 		</Dialog.Header>
 		<Dialog.Footer>
-			<Button.Root variant="outline" type="button" onclick={() => (showDeleteDialog = false)} disabled={deleting}>
+			<Button.Root
+				variant="outline"
+				type="button"
+				onclick={() => (showDeleteDialog = false)}
+				disabled={deleting}
+			>
 				Cancel
 			</Button.Root>
-			<Button.Root type="button" class="bg-red-600 text-white hover:bg-red-700" onclick={deleteService} disabled={deleting}>
+			<Button.Root
+				type="button"
+				class="bg-red-600 text-white hover:bg-red-700"
+				onclick={deleteService}
+				disabled={deleting}
+			>
 				{deleting ? 'Deleting...' : 'Delete Service'}
 			</Button.Root>
 		</Dialog.Footer>

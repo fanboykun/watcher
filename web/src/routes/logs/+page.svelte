@@ -57,7 +57,8 @@
 
 	{#if error}
 		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			<AlertCircle class="mr-2 inline h-4 w-4" /> {error}
+			<AlertCircle class="mr-2 inline h-4 w-4" />
+			{error}
 		</div>
 	{/if}
 

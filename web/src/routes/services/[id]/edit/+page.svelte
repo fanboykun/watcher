@@ -54,7 +54,9 @@
 		<div>
 			<h1 class="text-2xl font-bold tracking-tight">Edit Service</h1>
 			<p class="text-sm text-muted-foreground">
-				{service ? `Update how Watcher manages ${service.windows_service_name}.` : 'Update this service configuration.'}
+				{service
+					? `Update how Watcher manages ${service.windows_service_name}.`
+					: 'Update this service configuration.'}
 			</p>
 		</div>
 	</div>
@@ -66,7 +68,7 @@
 			submitLabel="Save Service Changes"
 			initial={service}
 			submitting={saving}
-			error={error}
+			{error}
 			onSubmit={updateService}
 		/>
 	{/if}

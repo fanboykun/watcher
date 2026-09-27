@@ -18,6 +18,8 @@ type WatcherConfig struct {
 	DownloadRetries       int
 	InstallDir            string
 	Paused                bool
+	InterceptNextRelease  bool
+	PendingVersion        string
 	MaxKeptVersions       int
 	HealthCheck           HealthCheckConfig
 	Services              []ServiceConfig
@@ -70,6 +72,8 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 		DownloadRetries:       w.DownloadRetries,
 		InstallDir:            w.InstallDir,
 		Paused:                w.Paused,
+		InterceptNextRelease:  w.InterceptNextRelease,
+		PendingVersion:        w.PendingVersion,
 		MaxKeptVersions:       max(w.MaxKeptVersions, 1),
 		HealthCheck: HealthCheckConfig{
 			Enabled:     w.HcEnabled,

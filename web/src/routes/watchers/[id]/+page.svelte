@@ -36,6 +36,7 @@
 	import WebhooksTab from './components/webhooks-tab.svelte';
 	import RollbackDialog from './components/rollback-dialog.svelte';
 	import ConfirmationDialog from './components/confirmation-dialog.svelte';
+
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let watcher = $state<Watcher | null>(null);
@@ -107,7 +108,12 @@
 					loadDeploys()
 				];
 				if (includeVersions) {
-					tasks.push(api.watcherVersions(id).then((v) => (versions = v)).catch(() => []));
+					tasks.push(
+						api
+							.watcherVersions(id)
+							.then((v) => (versions = v))
+							.catch(() => [])
+					);
 				}
 				if (includePolls || activeTab === 'polling') {
 					tasks.push(loadPolls());
@@ -360,7 +366,27 @@
 		}
 	}
 
+	async function toggleIntercept() {
+		try {
+			if (!watcher) return;
+			const nextVal = !watcher.intercept_next_release;
+			await api.interceptWatcher(id, nextVal);
+			triggerMsg = nextVal ? 'Will intercept next release.' : 'Intercept disabled.';
+			watcher = await api.getWatcher(id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to toggle intercept';
+		}
+	}
 
+	async function approveRelease() {
+		try {
+			await api.approveRelease(id);
+			triggerMsg = 'Release approved! Deploying...';
+			watcher = await api.getWatcher(id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to approve release';
+		}
+	}
 
 	function hasActiveRollbackPin(w: Watcher | null): boolean {
 		if (!w) return false;
@@ -408,6 +434,20 @@
 				</Button.Root>
 			{/if}
 
+			{#if watcher.intercept_next_release}
+				<Button.Root
+					variant="outline"
+					size="sm"
+					class="border-orange-500/30 text-orange-500"
+					onclick={toggleIntercept}
+				>
+					Intercept Next (On)
+				</Button.Root>
+			{:else}
+				<Button.Root variant="outline" size="sm" onclick={toggleIntercept}>
+					Intercept Next
+				</Button.Root>
+			{/if}
 			<Button.Root variant="outline" size="sm" onclick={triggerCheck} disabled={watcher.paused}>
 				<RefreshCw class="mr-2 h-4 w-4" /> Poll Now
 			</Button.Root>
@@ -423,14 +463,18 @@
 	</div>
 
 	{#if error}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400 flex items-center">
+		<div
+			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
+		>
 			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
 			<span>{error}</span>
 		</div>
 	{/if}
 
 	{#if triggerMsg}
-		<div class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400 flex items-center">
+		<div
+			class="flex items-center rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400"
+		>
 			<Zap class="mr-2 h-4 w-4 shrink-0" />
 			<span>{triggerMsg}</span>
 		</div>
@@ -439,17 +483,48 @@
 	{#if loading}
 		<RequestLoading label="Loading watcher details…" />
 	{:else if watcher}
+		{#if watcher.status === 'pending_approval'}
+			<div
+				class="mb-4 flex items-center justify-between rounded-lg border border-purple-500/30 bg-purple-500/10 p-4 text-sm text-purple-400"
+			>
+				<div class="flex items-center gap-2">
+					<Zap class="h-4 w-4" />
+					<span>
+						<strong>Release Candidate Intercepted!</strong>
+						Version <code>{watcher.pending_version}</code> is pending manual approval. Prepare its configuration
+						in the Candidates tab before approving.
+					</span>
+				</div>
+				<Button.Root
+					variant="default"
+					size="sm"
+					class="bg-purple-600 text-white hover:bg-purple-700"
+					onclick={approveRelease}
+				>
+					Approve & Deploy
+				</Button.Root>
+			</div>
+		{/if}
+
 		{#if hasActiveRollbackPin(watcher)}
-			<div class="mb-4 flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500">
+			<div
+				class="mb-4 flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500"
+			>
 				<div class="flex items-center gap-2">
 					<AlertCircle class="h-4 w-4" />
 					<span>
 						<strong>Manual rollback pin is active.</strong>
-						Current is <code>{watcher.current_version || 'unknown'}</code>; auto-update ignores versions
+						Current is <code>{watcher.current_version || 'unknown'}</code>; auto-update ignores
+						versions
 						<code>&lt;= {watcher.max_ignored_version}</code>.
 					</span>
 				</div>
-				<Button.Root variant="outline" size="sm" class="border-amber-500/30 hover:bg-amber-500/20" onclick={resumeAutoDeploy}>
+				<Button.Root
+					variant="outline"
+					size="sm"
+					class="border-amber-500/30 hover:bg-amber-500/20"
+					onclick={resumeAutoDeploy}
+				>
 					Resume Updates
 				</Button.Root>
 			</div>
@@ -508,11 +583,7 @@
 			</Tabs.Content>
 
 			<Tabs.Content value="versions" class="mt-4">
-				<VersionsTab
-					{versions}
-					onRollback={openRollbackDialog}
-					onDeleteVersion={deleteVersion}
-				/>
+				<VersionsTab {versions} onRollback={openRollbackDialog} onDeleteVersion={deleteVersion} />
 			</Tabs.Content>
 
 			<Tabs.Content value="polling" class="mt-4">
@@ -540,7 +611,7 @@
 					deliveries={webhookDeliveries}
 					bind:deliveryPage
 					bind:deliveryPageSize
-					deliveryTotal={deliveryTotal}
+					{deliveryTotal}
 					onPageChange={async (p) => {
 						deliveryPage = p;
 						await loadWebhookDeliveries();
@@ -560,16 +631,15 @@
 </div>
 
 <!-- Rollback Dialog -->
-<RollbackDialog 
-	onRollback={rollback} 
+<RollbackDialog
+	onRollback={rollback}
 	bind:open={showRollbackDialog}
-	{rollbackTargetVersion} 
+	{rollbackTargetVersion}
 	bind:rollbackReportGitHub
 />
 
-
 <!-- Confirm Action Dialog -->
- <ConfirmationDialog
+<ConfirmationDialog
 	bind:open={showConfirmDialog}
 	bind:confirmTitle
 	bind:confirmDescription
@@ -577,4 +647,4 @@
 	{confirmActionClass}
 	{confirmActionLabel}
 	onConfirm={runConfirmAction}
- />
+/>

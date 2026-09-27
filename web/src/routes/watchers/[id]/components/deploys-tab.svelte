@@ -65,7 +65,7 @@
 				}
 			}}
 		>
-			<Select.Trigger class="h-8 w-28 text-xs bg-card">
+			<Select.Trigger class="h-8 w-28 bg-card text-xs">
 				{deployPageSize} / page
 			</Select.Trigger>
 			<Select.Content>
@@ -122,7 +122,7 @@
 								{d.status}
 							</span>
 						</Table.Cell>
-						<Table.Cell class="text-xs capitalize text-muted-foreground">
+						<Table.Cell class="text-xs text-muted-foreground capitalize">
 							{d.triggered_by || 'agent'}
 						</Table.Cell>
 						<Table.Cell class="font-mono text-sm">{d.version}</Table.Cell>

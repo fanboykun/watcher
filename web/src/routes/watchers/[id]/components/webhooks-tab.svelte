@@ -180,7 +180,8 @@
 		try {
 			selectedDeliveryDetails = await api.watcherWebhookDelivery(watcher.id, delivery.id);
 		} catch (error) {
-			selectedDeliveryError = error instanceof Error ? error.message : 'Unable to load delivery details';
+			selectedDeliveryError =
+				error instanceof Error ? error.message : 'Unable to load delivery details';
 		} finally {
 			selectedDeliveryLoading = false;
 		}
@@ -349,7 +350,7 @@
 								Resolved URL source
 							</p>
 							<p class="mt-2 text-sm font-medium">{routeSource(watcher.webhook_url)}</p>
-							<p class="mt-1 break-all whitespace-normal font-mono text-xs text-muted-foreground">
+							<p class="mt-1 font-mono text-xs break-all whitespace-normal text-muted-foreground">
 								{watcher.webhook_url || 'Uses global default URL from system settings'}
 							</p>
 						</div>
@@ -361,7 +362,7 @@
 								Secret source
 							</div>
 							<p class="mt-2 text-sm font-medium">{authSource(watcher)}</p>
-							<p class="mt-1 break-all whitespace-normal text-xs text-muted-foreground">
+							<p class="mt-1 text-xs break-all whitespace-normal text-muted-foreground">
 								{watcher.has_webhook_signing_secret
 									? watcher.webhook_signing_secret_masked || 'Watcher signing secret configured'
 									: 'Signing secret comes from the global webhook defaults'}
@@ -376,20 +377,20 @@
 							</p>
 							{#if deliverySummary.lastFailed}
 								<p class="mt-2 text-sm font-medium text-red-300">Latest failure needs attention</p>
-								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
+								<p class="mt-1 text-xs break-words whitespace-normal text-muted-foreground">
 									{preview(
 										deliverySummary.lastFailed.error || deliverySummary.lastFailed.response_body
 									)}
 								</p>
 							{:else if deliverySummary.lastSuccessful}
 								<p class="mt-2 text-sm font-medium text-emerald-300">Recent delivery succeeded</p>
-								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
+								<p class="mt-1 text-xs break-words whitespace-normal text-muted-foreground">
 									HTTP {deliverySummary.lastSuccessful.response_status_code || 'n/a'} on
 									{deliverySummary.lastSuccessful.event_type}
 								</p>
 							{:else}
 								<p class="mt-2 text-sm font-medium">No delivery history yet</p>
-								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
+								<p class="mt-1 text-xs break-words whitespace-normal text-muted-foreground">
 									Send a test webhook after endpoint and signing secret configuration are ready.
 								</p>
 							{/if}
@@ -400,12 +401,12 @@
 							</p>
 							{#if watcher.webhook_paused_at}
 								<p class="mt-2 text-sm font-medium text-amber-300">Resume carefully</p>
-								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
+								<p class="mt-1 text-xs break-words whitespace-normal text-muted-foreground">
 									Use replay only if the downstream receiver can safely process delayed events.
 								</p>
 							{:else}
 								<p class="mt-2 text-sm font-medium text-blue-300">Safe validation path</p>
-								<p class="mt-1 break-words whitespace-normal text-xs text-muted-foreground">
+								<p class="mt-1 text-xs break-words whitespace-normal text-muted-foreground">
 									Send a synthetic test event to verify URL, auth, and receiver behavior end to end.
 								</p>
 							{/if}
@@ -423,7 +424,7 @@
 							<div class="flex items-center justify-between gap-3">
 								<div>
 									<p class="font-medium">1. Validate the receiver</p>
-									<p class="mt-1 break-words whitespace-normal text-sm text-muted-foreground">
+									<p class="mt-1 text-sm break-words whitespace-normal text-muted-foreground">
 										Queues a synthetic <code>watcher.webhook_test</code> event through the same outbox
 										and retry pipeline as real traffic.
 									</p>
@@ -439,7 +440,7 @@
 							<div class="flex items-center justify-between gap-3">
 								<div>
 									<p class="font-medium">2. Resume future deliveries only</p>
-									<p class="mt-1 break-words whitespace-normal text-sm text-muted-foreground">
+									<p class="mt-1 text-sm break-words whitespace-normal text-muted-foreground">
 										Clears the paused state and lets only new events continue. Use this when older
 										suppressed events should stay frozen for manual review.
 									</p>
@@ -461,7 +462,7 @@
 										Use only when backlog replay is safe
 									</div>
 									<p class="mt-2 font-medium">3. Resume and replay suppressed events</p>
-									<p class="mt-1 break-words whitespace-normal text-sm text-muted-foreground">
+									<p class="mt-1 text-sm break-words whitespace-normal text-muted-foreground">
 										Re-queues suppressed deliveries back to pending and replays them in normal FIFO
 										order. Choose this only if your receiver is idempotent or can handle delayed
 										duplicates safely.
@@ -562,7 +563,7 @@
 							<Table.Cell class="min-w-60">
 								<div class="space-y-1">
 									<p class="font-mono text-xs text-blue-200">{delivery.event_type || '—'}</p>
-									<p class="break-words whitespace-normal text-sm">
+									<p class="text-sm break-words whitespace-normal">
 										{delivery.summary || 'No summary recorded'}
 									</p>
 									<p class="text-xs text-muted-foreground">Delivery ID {delivery.delivery_id}</p>
@@ -583,8 +584,10 @@
 							</Table.Cell>
 							<Table.Cell class="min-w-52">
 								<div class="space-y-1">
-									<p class="break-all whitespace-normal font-mono text-xs">{delivery.resolved_url || '—'}</p>
-									<p class="break-all whitespace-normal text-xs text-muted-foreground">
+									<p class="font-mono text-xs break-all whitespace-normal">
+										{delivery.resolved_url || '—'}
+									</p>
+									<p class="text-xs break-all whitespace-normal text-muted-foreground">
 										Auth {delivery.auth_type || '—'} via {delivery.secret_source || '—'}
 									</p>
 								</div>
@@ -606,7 +609,9 @@
 							<Table.Cell class="max-w-80">
 								<div class="space-y-1 text-xs">
 									{#if delivery.error}
-										<p class="break-words whitespace-normal text-red-300">{preview(delivery.error, 160)}</p>
+										<p class="break-words whitespace-normal text-red-300">
+											{preview(delivery.error, 160)}
+										</p>
 									{:else if delivery.response_body}
 										<p class="break-words whitespace-normal text-muted-foreground">
 											{preview(delivery.response_body, 160)}
@@ -651,7 +656,9 @@
 
 			<div class="max-h-[72vh] space-y-4 overflow-y-auto pr-1">
 				{#if selectedDeliveryLoading}
-					<div class="rounded-xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
+					<div
+						class="rounded-xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground"
+					>
 						Loading delivery details...
 					</div>
 				{:else if selectedDeliveryError}
@@ -664,26 +671,61 @@
 							<div class="rounded-xl border border-border/60 bg-background/40 p-4">
 								<p class="text-xs tracking-[0.14em] text-muted-foreground uppercase">Delivery</p>
 								<div class="mt-3 grid gap-2 text-sm">
-									<p><span class="text-muted-foreground">Event:</span> {selectedDeliveryDetails.delivery.event_type}</p>
-									<p><span class="text-muted-foreground">Delivery ID:</span> {selectedDeliveryDetails.delivery.delivery_id}</p>
-									<p><span class="text-muted-foreground">Status:</span> {selectedDeliveryDetails.delivery.status}</p>
-									<p><span class="text-muted-foreground">Attempt:</span> #{selectedDeliveryDetails.delivery.attempt_number}</p>
-									<p><span class="text-muted-foreground">HTTP:</span> {headerValue(selectedDeliveryDetails.delivery.response_status_code)}</p>
-									<p><span class="text-muted-foreground">Created:</span> {formatDate(selectedDeliveryDetails.delivery.created_at)}</p>
-									<p><span class="text-muted-foreground">Last attempt:</span> {headerValue(selectedDeliveryDetails.delivery.last_attempt_at)}</p>
-									<p><span class="text-muted-foreground">Completed:</span> {headerValue(selectedDeliveryDetails.delivery.completed_at)}</p>
+									<p>
+										<span class="text-muted-foreground">Event:</span>
+										{selectedDeliveryDetails.delivery.event_type}
+									</p>
+									<p>
+										<span class="text-muted-foreground">Delivery ID:</span>
+										{selectedDeliveryDetails.delivery.delivery_id}
+									</p>
+									<p>
+										<span class="text-muted-foreground">Status:</span>
+										{selectedDeliveryDetails.delivery.status}
+									</p>
+									<p>
+										<span class="text-muted-foreground">Attempt:</span> #{selectedDeliveryDetails
+											.delivery.attempt_number}
+									</p>
+									<p>
+										<span class="text-muted-foreground">HTTP:</span>
+										{headerValue(selectedDeliveryDetails.delivery.response_status_code)}
+									</p>
+									<p>
+										<span class="text-muted-foreground">Created:</span>
+										{formatDate(selectedDeliveryDetails.delivery.created_at)}
+									</p>
+									<p>
+										<span class="text-muted-foreground">Last attempt:</span>
+										{headerValue(selectedDeliveryDetails.delivery.last_attempt_at)}
+									</p>
+									<p>
+										<span class="text-muted-foreground">Completed:</span>
+										{headerValue(selectedDeliveryDetails.delivery.completed_at)}
+									</p>
 								</div>
 							</div>
 
 							<div class="rounded-xl border border-border/60 bg-background/40 p-4">
 								<p class="text-xs tracking-[0.14em] text-muted-foreground uppercase">Request</p>
 								<div class="mt-3 space-y-3 text-sm">
-									<p class="break-all font-mono text-xs text-muted-foreground">{selectedDeliveryDetails.request.url}</p>
-									<p><span class="text-muted-foreground">Auth:</span> {selectedDeliveryDetails.request.auth_type}</p>
-									<p><span class="text-muted-foreground">Secret source:</span> {selectedDeliveryDetails.request.secret_source}</p>
+									<p class="font-mono text-xs break-all text-muted-foreground">
+										{selectedDeliveryDetails.request.url}
+									</p>
+									<p>
+										<span class="text-muted-foreground">Auth:</span>
+										{selectedDeliveryDetails.request.auth_type}
+									</p>
+									<p>
+										<span class="text-muted-foreground">Secret source:</span>
+										{selectedDeliveryDetails.request.secret_source}
+									</p>
 									<div class="space-y-1">
 										<p class="text-xs tracking-[0.14em] text-muted-foreground uppercase">Headers</p>
-										<pre class="overflow-x-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{prettyJson(selectedDeliveryDetails.request.headers)}</pre>
+										<pre
+											class="overflow-x-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{prettyJson(
+												selectedDeliveryDetails.request.headers
+											)}</pre>
 									</div>
 								</div>
 							</div>
@@ -691,23 +733,40 @@
 
 						<div class="space-y-4">
 							<div class="rounded-xl border border-border/60 bg-background/40 p-4">
-								<p class="text-xs tracking-[0.14em] text-muted-foreground uppercase">Event payload</p>
+								<p class="text-xs tracking-[0.14em] text-muted-foreground uppercase">
+									Event payload
+								</p>
 								<p class="mt-2 text-sm text-muted-foreground">
 									This is the exact business event body we signed and sent to the receiver.
 								</p>
-								<pre class="mt-3 max-h-80 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{prettyJson(selectedDeliveryDetails.event.payload)}</pre>
+								<pre
+									class="mt-3 max-h-80 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{prettyJson(
+										selectedDeliveryDetails.event.payload
+									)}</pre>
 							</div>
 
 							<div class="rounded-xl border border-border/60 bg-background/40 p-4">
-								<p class="text-xs tracking-[0.14em] text-muted-foreground uppercase">Receiver response</p>
+								<p class="text-xs tracking-[0.14em] text-muted-foreground uppercase">
+									Receiver response
+								</p>
 								<div class="mt-3 space-y-2 text-sm">
-									<p><span class="text-muted-foreground">Response code:</span> {headerValue(selectedDeliveryDetails.delivery.response_status_code)}</p>
-									<p><span class="text-muted-foreground">Outcome:</span> {selectedDeliveryDetails.delivery.error ? 'Failed' : 'Accepted or pending'}</p>
+									<p>
+										<span class="text-muted-foreground">Response code:</span>
+										{headerValue(selectedDeliveryDetails.delivery.response_status_code)}
+									</p>
+									<p>
+										<span class="text-muted-foreground">Outcome:</span>
+										{selectedDeliveryDetails.delivery.error ? 'Failed' : 'Accepted or pending'}
+									</p>
 								</div>
 								{#if selectedDeliveryDetails.delivery.error}
-									<pre class="mt-3 max-h-52 overflow-auto rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs leading-5 text-red-100">{selectedDeliveryDetails.delivery.error}</pre>
+									<pre
+										class="mt-3 max-h-52 overflow-auto rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs leading-5 text-red-100">{selectedDeliveryDetails
+											.delivery.error}</pre>
 								{:else if selectedDeliveryDetails.delivery.response_body}
-									<pre class="mt-3 max-h-52 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{selectedDeliveryDetails.delivery.response_body}</pre>
+									<pre
+										class="mt-3 max-h-52 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">{selectedDeliveryDetails
+											.delivery.response_body}</pre>
 								{:else}
 									<p class="mt-3 text-sm text-muted-foreground">No response body recorded.</p>
 								{/if}
@@ -716,21 +775,25 @@
 							<div class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
 								<p class="text-xs tracking-[0.14em] text-amber-300 uppercase">Redelivery</p>
 								<p class="mt-2 text-sm text-muted-foreground">
-									A per-delivery redeliver action is not wired up yet. For now, use the watcher-level
-									replay controls or resend the test event after fixing the receiver.
+									A per-delivery redeliver action is not wired up yet. For now, use the
+									watcher-level replay controls or resend the test event after fixing the receiver.
 								</p>
 							</div>
 						</div>
 					</div>
 				{:else}
-					<div class="rounded-xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
+					<div
+						class="rounded-xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground"
+					>
 						Select a delivery to inspect its payload and response history.
 					</div>
 				{/if}
 			</div>
 
 			<Dialog.Footer>
-				<Button.Root type="button" variant="outline" onclick={closeDeliveryDetails}>Close</Button.Root>
+				<Button.Root type="button" variant="outline" onclick={closeDeliveryDetails}
+					>Close</Button.Root
+				>
 			</Dialog.Footer>
 		</Dialog.Content>
 	</Dialog.Root>

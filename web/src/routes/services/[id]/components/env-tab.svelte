@@ -38,8 +38,8 @@
 			<div class="space-y-1">
 				<Card.Title class="text-lg">Service Files</Card.Title>
 				<Card.Description
-					>Manage <code>{service.env_file || '.env'}</code> and any additional runtime config files
-					for this service.</Card.Description
+					>Manage <code>{service.env_file || '.env'}</code> and any additional runtime config files for
+					this service.</Card.Description
 				>
 			</div>
 			<div class="flex items-center gap-2">
@@ -71,9 +71,9 @@
 			class="min-h-[280px] font-mono text-sm text-blue-300"
 			placeholder="KEY=VALUE"
 		/>
-		<p class="mt-2 text-xs italic text-muted-foreground">
-			Note: Environment variables are written to <code>{service.env_file}</code> in the service's
-			installation directory.
+		<p class="mt-2 text-xs text-muted-foreground italic">
+			Note: Environment variables are written to <code>{service.env_file}</code> in the service's installation
+			directory.
 		</p>
 		<div class="space-y-3 border-t border-border pt-4">
 			<div class="flex items-center justify-between">
@@ -84,7 +84,7 @@
 						deployed static assets.
 					</p>
 				</div>
-				<Button.Root variant="outline" size="sm" onclick={addConfigFile}> Add file </Button.Root>
+				<Button.Root variant="outline" size="sm" onclick={addConfigFile}>Add file</Button.Root>
 			</div>
 			{#if configFiles.length > 0}
 				<div class="space-y-3">
@@ -112,7 +112,9 @@
 											{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
 										</Select.Trigger>
 										<Select.Content>
-											<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
+											<Select.Item value="app_dir" label="Service/app dir"
+												>Service/app dir</Select.Item
+											>
 											<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
 										</Select.Content>
 									</Select.Root>

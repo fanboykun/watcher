@@ -163,61 +163,61 @@
 
 		<!-- Watcher status cards -->
 		{#if watchers.length > 0}
-		<div>
-			<h2 class="mb-4 text-lg font-semibold">Watchers</h2>
-			<div class="grid gap-4 sm:grid-cols-2">
-				{#each watchers as w (w.id)}
-					<a
-						href={resolve(`/watchers/${w.id}`)}
-						class="block transition-transform hover:scale-[1.01]"
-					>
-						<Card.Root class="border-border bg-card hover:border-muted-foreground/30">
-							<Card.Header class="pb-3">
-								<div class="flex items-center justify-between">
-									<Card.Title class="text-base font-medium">{w.name}</Card.Title>
-									<span
-										class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize {statusColor(
-											w.status
-										)}"
-									>
-										{w.status}
-									</span>
-								</div>
-								<p class="font-mono text-xs text-muted-foreground">{w.service_name}</p>
-							</Card.Header>
-							<Card.Content>
-								<div class="flex items-center justify-between text-sm">
-									<div class="flex items-center gap-1.5 text-muted-foreground">
-										<Rocket class="h-3.5 w-3.5" />
-										<span class="font-mono">{w.current_version || '—'}</span>
+			<div>
+				<h2 class="mb-4 text-lg font-semibold">Watchers</h2>
+				<div class="grid gap-4 sm:grid-cols-2">
+					{#each watchers as w (w.id)}
+						<a
+							href={resolve(`/watchers/${w.id}`)}
+							class="block transition-transform hover:scale-[1.01]"
+						>
+							<Card.Root class="border-border bg-card hover:border-muted-foreground/30">
+								<Card.Header class="pb-3">
+									<div class="flex items-center justify-between">
+										<Card.Title class="text-base font-medium">{w.name}</Card.Title>
+										<span
+											class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize {statusColor(
+												w.status
+											)}"
+										>
+											{w.status}
+										</span>
 									</div>
-									<div class="flex items-center gap-1.5 text-muted-foreground">
-										<Clock class="h-3.5 w-3.5" />
-										<span>{w.last_checked ? timeAgo(w.last_checked) : 'never'}</span>
+									<p class="font-mono text-xs text-muted-foreground">{w.service_name}</p>
+								</Card.Header>
+								<Card.Content>
+									<div class="flex items-center justify-between text-sm">
+										<div class="flex items-center gap-1.5 text-muted-foreground">
+											<Rocket class="h-3.5 w-3.5" />
+											<span class="font-mono">{w.current_version || '—'}</span>
+										</div>
+										<div class="flex items-center gap-1.5 text-muted-foreground">
+											<Clock class="h-3.5 w-3.5" />
+											<span>{w.last_checked ? timeAgo(w.last_checked) : 'never'}</span>
+										</div>
 									</div>
-								</div>
-								{#if w.last_error}
-									<p class="mt-2 truncate text-xs text-red-400">{w.last_error}</p>
-								{/if}
-								<div class="mt-2 text-xs text-muted-foreground">
-									{w.services.length} service{w.services.length !== 1 ? 's' : ''} • every {w.check_interval_sec}s
-								</div>
-							</Card.Content>
-						</Card.Root>
-					</a>
-				{/each}
+									{#if w.last_error}
+										<p class="mt-2 truncate text-xs text-red-400">{w.last_error}</p>
+									{/if}
+									<div class="mt-2 text-xs text-muted-foreground">
+										{w.services.length} service{w.services.length !== 1 ? 's' : ''} • every {w.check_interval_sec}s
+									</div>
+								</Card.Content>
+							</Card.Root>
+						</a>
+					{/each}
+				</div>
 			</div>
-		</div>
 		{:else if !error}
-		<Card.Root class="border-dashed border-border bg-card">
-			<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
-				<Eye class="mb-3 h-10 w-10 text-muted-foreground/40" />
-				<h3 class="text-sm font-medium text-muted-foreground">No watchers configured</h3>
-				<p class="mt-1 text-xs text-muted-foreground/60">
-					Add a watcher via the API or the Watchers page
-				</p>
-			</Card.Content>
-		</Card.Root>
+			<Card.Root class="border-dashed border-border bg-card">
+				<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
+					<Eye class="mb-3 h-10 w-10 text-muted-foreground/40" />
+					<h3 class="text-sm font-medium text-muted-foreground">No watchers configured</h3>
+					<p class="mt-1 text-xs text-muted-foreground/60">
+						Add a watcher via the API or the Watchers page
+					</p>
+				</Card.Content>
+			</Card.Root>
 		{/if}
 	{/if}
 </div>
