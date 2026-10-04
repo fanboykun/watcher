@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -99,6 +101,11 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		return
 	}
 
+	autoDeploy := true
+	if req.AutoDeploy != nil {
+		autoDeploy = *req.AutoDeploy
+	}
+
 	watcher := database.Watcher{
 		Name:                            req.Name,
 		ServiceName:                     req.ServiceName,
@@ -115,6 +122,7 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		HcIntervalSec:                   withDefault(req.HcIntervalSec, 3),
 		HcTimeoutSec:                    withDefault(req.HcTimeoutSec, 5),
 		Paused:                          req.Paused,
+		AutoDeploy:                      autoDeploy,
 		MaxKeptVersions:                 withDefault(req.MaxKeptVersions, 3),
 		WebhookEnabled:                  req.WebhookEnabled,
 		WebhookURL:                      strings.TrimSpace(req.WebhookURL),
@@ -276,6 +284,9 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	if req.Paused != nil {
 		updates["paused"] = *req.Paused
 	}
+	if req.AutoDeploy != nil {
+		updates["auto_deploy"] = *req.AutoDeploy
+	}
 	if req.InterceptNextRelease != nil {
 		updates["intercept_next_release"] = *req.InterceptNextRelease
 	}
@@ -406,3 +417,205 @@ func (h *Handler) ApproveRelease(c *gin.Context) {
 
 	c.JSON(http.StatusOK, MessageResponse{Message: "Release approved and deployment triggered"})
 }
+
+// DiscardRelease discards a pending release candidate and unblocks polling.
+func (h *Handler) DiscardRelease(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+	if watcher.Status != "pending_approval" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "No release pending approval"})
+		return
+	}
+
+	discardedVersion := watcher.PendingVersion
+	status := "healthy"
+	if watcher.CurrentVersion == "" {
+		status = "unknown"
+	}
+
+	updates := map[string]interface{}{
+		"status":                 status,
+		"pending_version":        "",
+		"intercept_next_release": false,
+	}
+	if discardedVersion != "" {
+		updates["max_ignored_version"] = discardedVersion
+	}
+
+	if err := h.db.Model(watcher).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	// Delete candidate revisions specifically staged for this discarded version
+	if discardedVersion != "" {
+		h.db.Where("service_id IN (SELECT id FROM services WHERE watcher_id = ?) AND target_version = ?", watcher.ID, discardedVersion).
+			Delete(&database.ServiceConfigRevision{})
+	}
+
+	h.db.Create(&database.PollEvent{
+		WatcherID:     watcher.ID,
+		CheckedAt:     time.Now().UTC(),
+		Status:        "discarded",
+		RemoteVersion: discardedVersion,
+		Error:         "Release candidate discarded by operator",
+	})
+
+	h.triggerSync()
+	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("Release candidate %s discarded", discardedVersion)})
+}
+
+// GetWatcherCandidate retrieves candidate configuration for all services under a watcher.
+func (h *Handler) GetWatcherCandidate(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	target := strings.TrimSpace(c.Query("target"))
+	if target == "" {
+		if watcher.PendingVersion != "" {
+			target = watcher.PendingVersion
+		} else {
+			target = "next"
+		}
+	}
+
+	var services []database.Service
+	if err := h.db.Where("watcher_id = ?", watcher.ID).Find(&services).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	serviceInfos := make([]ServiceCandidateInfo, 0, len(services))
+	for _, svc := range services {
+		name := svc.WindowsServiceName
+		if name == "" {
+			name = svc.IISSiteName
+		}
+		if name == "" {
+			name = svc.IISAppPool
+		}
+		if name == "" {
+			name = svc.BinaryName
+		}
+		if name == "" {
+			name = fmt.Sprintf("Service %d", svc.ID)
+		}
+
+		var rev database.ServiceConfigRevision
+		hasCandidate := false
+		candidateEnv := svc.EnvContent
+
+		// Check for target revision first
+		if err := h.db.Where("service_id = ? AND target_version = ?", svc.ID, target).First(&rev).Error; err == nil {
+			candidateEnv = rev.EnvContent
+			hasCandidate = true
+		} else if target != "next" {
+			// Fallback to "next" revision if specific target doesn't exist yet
+			if err := h.db.Where("service_id = ? AND target_version = ?", svc.ID, "next").First(&rev).Error; err == nil {
+				candidateEnv = rev.EnvContent
+				hasCandidate = true
+			}
+		}
+
+		serviceInfos = append(serviceInfos, ServiceCandidateInfo{
+			ServiceID:       svc.ID,
+			ServiceName:     name,
+			ServiceType:     svc.ServiceType,
+			ActiveEnv:       svc.EnvContent,
+			CandidateEnv:    candidateEnv,
+			HasCandidateEnv: hasCandidate,
+			IsModified:      candidateEnv != svc.EnvContent,
+		})
+	}
+
+	c.JSON(http.StatusOK, WatcherCandidateResponse{
+		HasPendingRelease:    watcher.Status == "pending_approval",
+		TargetVersion:        target,
+		Status:               watcher.Status,
+		InterceptNextRelease: watcher.InterceptNextRelease,
+		AutoDeploy:           watcher.AutoDeploy,
+		Services:             serviceInfos,
+	})
+}
+
+// UpdateWatcherCandidate saves candidate configuration revisions across services for a watcher.
+func (h *Handler) UpdateWatcherCandidate(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	var req UpdateWatcherCandidateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	target := strings.TrimSpace(req.TargetVersion)
+	if target == "" {
+		if watcher.PendingVersion != "" {
+			target = watcher.PendingVersion
+		} else {
+			target = "next"
+		}
+	}
+
+	for _, item := range req.Services {
+		var svc database.Service
+		if err := h.db.Where("id = ? AND watcher_id = ?", item.ServiceID, watcher.ID).First(&svc).Error; err != nil {
+			continue
+		}
+
+		var rev database.ServiceConfigRevision
+		if err := h.db.Where("service_id = ? AND target_version = ?", svc.ID, target).First(&rev).Error; err != nil {
+			rev = database.ServiceConfigRevision{
+				ServiceID:     svc.ID,
+				TargetVersion: target,
+				EnvContent:    item.EnvContent,
+			}
+			_ = h.db.Create(&rev).Error
+		} else {
+			_ = h.db.Model(&rev).Update("env_content", item.EnvContent).Error
+		}
+
+		// If a snapshot directory already exists on disk for this version, sync it as well
+		if target != "next" && watcher.InstallDir != "" && svc.EnvFile != "" {
+			snapshotRoot := agent.ConfigSnapshotPath(watcher.InstallDir, target)
+			if fi, statErr := os.Stat(snapshotRoot); statErr == nil && fi.IsDir() {
+				safeName := svc.WindowsServiceName
+				if safeName == "" {
+					safeName = svc.IISSiteName
+				}
+				if safeName == "" {
+					safeName = svc.IISAppPool
+				}
+				if safeName == "" {
+					safeName = svc.BinaryName
+				}
+				var b strings.Builder
+				for _, r := range safeName {
+					switch {
+					case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+						b.WriteRune(r)
+					default:
+						fmt.Fprintf(&b, "%%%X", r)
+					}
+				}
+				finalSafeName := b.String()
+				if finalSafeName != "" {
+					envFilePath := filepath.Join(snapshotRoot, "services", finalSafeName, "env", svc.EnvFile)
+					_ = os.MkdirAll(filepath.Dir(envFilePath), 0755)
+					_ = os.WriteFile(envFilePath, []byte(item.EnvContent), 0600)
+				}
+			}
+		}
+	}
+
+	h.triggerSync()
+	c.JSON(http.StatusOK, MessageResponse{Message: "Candidate configuration saved successfully"})
+}
+

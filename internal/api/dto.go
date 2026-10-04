@@ -19,6 +19,7 @@ type CreateWatcherRequest struct {
 	HcIntervalSec                   int                    `json:"hc_interval_sec"`
 	HcTimeoutSec                    int                    `json:"hc_timeout_sec"`
 	Paused                          bool                   `json:"paused"`
+	AutoDeploy                      *bool                  `json:"auto_deploy"`
 	MaxKeptVersions                 int                    `json:"max_kept_versions"`
 	WebhookEnabled                  bool                   `json:"webhook_enabled"`
 	WebhookURL                      string                 `json:"webhook_url"`
@@ -51,6 +52,7 @@ type UpdateWatcherRequest struct {
 	HcIntervalSec                   *int    `json:"hc_interval_sec"`
 	HcTimeoutSec                    *int    `json:"hc_timeout_sec"`
 	Paused                          *bool   `json:"paused"`
+	AutoDeploy                      *bool   `json:"auto_deploy"`
 	InterceptNextRelease            *bool   `json:"intercept_next_release"`
 	MaxKeptVersions                 *int    `json:"max_kept_versions"`
 	WebhookEnabled                  *bool   `json:"webhook_enabled"`
@@ -186,4 +188,33 @@ type UpdateSelfConfigRequest struct {
 
 type ResumeWebhookRequest struct {
 	ReplaySuppressed bool `json:"replay_suppressed"`
+}
+
+type ServiceCandidateInfo struct {
+	ServiceID       uint   `json:"service_id"`
+	ServiceName     string `json:"service_name"`
+	ServiceType     string `json:"service_type"`
+	ActiveEnv       string `json:"active_env"`
+	CandidateEnv    string `json:"candidate_env"`
+	HasCandidateEnv bool   `json:"has_candidate_env"`
+	IsModified      bool   `json:"is_modified"`
+}
+
+type WatcherCandidateResponse struct {
+	HasPendingRelease    bool                   `json:"has_pending_release"`
+	TargetVersion        string                 `json:"target_version"`
+	Status               string                 `json:"status"`
+	InterceptNextRelease bool                   `json:"intercept_next_release"`
+	AutoDeploy           bool                   `json:"auto_deploy"`
+	Services             []ServiceCandidateInfo `json:"services"`
+}
+
+type UpdateWatcherCandidateService struct {
+	ServiceID  uint   `json:"service_id"`
+	EnvContent string `json:"env_content"`
+}
+
+type UpdateWatcherCandidateRequest struct {
+	TargetVersion string                          `json:"target_version"`
+	Services      []UpdateWatcherCandidateService `json:"services"`
 }

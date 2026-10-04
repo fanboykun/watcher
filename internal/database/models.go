@@ -44,6 +44,7 @@ type Watcher struct {
 	LastDeployed      *time.Time `json:"last_deployed"`
 	LastError         string     `gorm:"not null;default:''" json:"last_error"`
 
+	AutoDeploy           bool   `gorm:"not null;default:true" json:"auto_deploy"`
 	InterceptNextRelease bool   `gorm:"not null;default:false" json:"intercept_next_release"`
 	PendingVersion       string `gorm:"not null;default:''" json:"pending_version"`
 

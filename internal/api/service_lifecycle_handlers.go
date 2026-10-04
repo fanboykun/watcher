@@ -3,10 +3,20 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/fanboykun/watcher/internal/agent"
+	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
 )
+
+func (h *Handler) ensureServiceLogDir(watcherID uint) {
+	var w database.Watcher
+	if err := h.db.Select("install_dir").First(&w, watcherID).Error; err == nil && w.InstallDir != "" {
+		_ = os.MkdirAll(filepath.Join(w.InstallDir, "logs"), 0755)
+	}
+}
 
 func (h *Handler) StartService(c *gin.Context) {
 	svc, err := h.findServiceByID(c)
@@ -21,6 +31,7 @@ func (h *Handler) StartService(c *gin.Context) {
 		return
 	}
 
+	h.ensureServiceLogDir(svc.WatcherID)
 	if err := h.serviceManager.Start(c.Request.Context(), svc.WindowsServiceName); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
 			Error: err.Error(),
@@ -65,6 +76,7 @@ func (h *Handler) RestartService(c *gin.Context) {
 		return
 	}
 
+	h.ensureServiceLogDir(svc.WatcherID)
 	if err := h.serviceManager.Restart(c.Request.Context(), svc.WindowsServiceName); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
 			Error: err.Error(),

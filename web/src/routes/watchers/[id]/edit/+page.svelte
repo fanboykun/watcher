@@ -43,6 +43,7 @@
 	let editMetadataURL = $state('');
 	let editInstallDir = $state('');
 	let editReleaseRef = $state('latest');
+	let editAutoDeploy = $state(true);
 	let editHcEnabled = $state(false);
 	let editHcURL = $state('');
 	let editMaxKeptVersions = $state(3);
@@ -78,6 +79,7 @@
 	function syncEditForm() {
 		if (!watcher) return;
 		editInterval = watcher.check_interval_sec;
+		editAutoDeploy = watcher.auto_deploy ?? true;
 		editMetadataURL = watcher.metadata_url;
 		editInstallDir = watcher.install_dir;
 		editReleaseRef = watcher.release_ref || 'latest';
@@ -108,6 +110,7 @@
 		try {
 			watcher = await api.updateWatcher(id, {
 				check_interval_sec: editInterval,
+				auto_deploy: editAutoDeploy,
 				metadata_url: editMetadataURL,
 				release_ref: editReleaseRef.trim() || 'latest',
 				deployment_environment: editDeploymentEnvironment,
@@ -345,6 +348,45 @@
 								? watcher.github_token_masked || 'set'
 								: 'using global token'}
 						</p>
+					</div>
+
+					<div class="space-y-2 rounded-lg border border-border/70 bg-muted/20 p-4">
+						<Label class="text-sm font-medium">Deployment Policy</Label>
+						<div class="mt-2 space-y-3">
+							<label class="flex cursor-pointer items-start gap-3">
+								<input
+									type="radio"
+									name="editAutoDeploy"
+									class="mt-1"
+									checked={editAutoDeploy}
+									onchange={() => (editAutoDeploy = true)}
+								/>
+								<div>
+									<p class="text-sm font-medium">Automatic Deployment</p>
+									<p class="text-xs text-muted-foreground">
+										Automatically pull and deploy new releases as soon as they are detected.
+									</p>
+								</div>
+							</label>
+							<label class="flex cursor-pointer items-start gap-3">
+								<input
+									type="radio"
+									name="editAutoDeploy"
+									class="mt-1"
+									checked={!editAutoDeploy}
+									onchange={() => (editAutoDeploy = false)}
+								/>
+								<div>
+									<p class="text-sm font-medium">
+										Manual Approval Required (Release First, Deploy Later)
+									</p>
+									<p class="text-xs text-muted-foreground">
+										Hold new versions as Release Candidates. Operators can prepare and preview
+										environment changes before approving deployment.
+									</p>
+								</div>
+							</label>
+						</div>
 					</div>
 				</Card.Content>
 			</Card.Root>

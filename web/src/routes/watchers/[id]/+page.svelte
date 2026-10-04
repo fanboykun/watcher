@@ -34,6 +34,7 @@
 	import VersionsTab from './components/versions-tab.svelte';
 	import PollingTab from './components/polling-tab.svelte';
 	import WebhooksTab from './components/webhooks-tab.svelte';
+	import CandidateTab from './components/candidate-tab.svelte';
 	import RollbackDialog from './components/rollback-dialog.svelte';
 	import ConfirmationDialog from './components/confirmation-dialog.svelte';
 
@@ -388,6 +389,24 @@
 		}
 	}
 
+	async function discardRelease() {
+		openConfirmDialog({
+			title: 'Discard Release Candidate',
+			description: `Discard release candidate "${watcher?.pending_version}"? It will not be deployed, its staged candidate configurations will be removed, and polling will resume without deploying this version.`,
+			actionLabel: 'Discard Release',
+			actionClass: 'bg-red-600 text-white hover:bg-red-700',
+			action: async () => {
+				try {
+					const res = await api.discardRelease(id);
+					triggerMsg = res.message;
+					watcher = await api.getWatcher(id);
+				} catch (e) {
+					error = e instanceof Error ? e.message : 'Failed to discard release';
+				}
+			}
+		});
+	}
+
 	function hasActiveRollbackPin(w: Watcher | null): boolean {
 		if (!w) return false;
 		const ignored = (w.max_ignored_version || '').trim();
@@ -485,24 +504,49 @@
 	{:else if watcher}
 		{#if watcher.status === 'pending_approval'}
 			<div
-				class="mb-4 flex items-center justify-between rounded-lg border border-purple-500/30 bg-purple-500/10 p-4 text-sm text-purple-400"
+				class="mb-4 flex flex-col gap-3 rounded-lg border border-purple-500/30 bg-purple-500/10 p-4 text-sm text-purple-400 sm:flex-row sm:items-center sm:justify-between"
 			>
 				<div class="flex items-center gap-2">
-					<Zap class="h-4 w-4" />
+					<Zap class="h-4 w-4 shrink-0 text-purple-400" />
 					<span>
 						<strong>Release Candidate Intercepted!</strong>
-						Version <code>{watcher.pending_version}</code> is pending manual approval. Prepare its configuration
-						in the Candidates tab before approving.
+						Version <code>{watcher.pending_version}</code> is pending manual approval. You can preview,
+						edit, and verify its configuration before deploying.
 					</span>
 				</div>
-				<Button.Root
-					variant="default"
-					size="sm"
-					class="bg-purple-600 text-white hover:bg-purple-700"
-					onclick={approveRelease}
-				>
-					Approve & Deploy
-				</Button.Root>
+				<div class="flex flex-wrap items-center gap-2">
+					<Button.Root
+						variant="outline"
+						size="sm"
+						class="border-purple-500/40 text-purple-300 hover:bg-purple-500/20"
+						onclick={() => {
+							activeTab = 'candidates';
+							goto(resolve(`/watchers/[id]?tab=candidates`, { id: String(id) }), {
+								replaceState: true,
+								keepFocus: true,
+								noScroll: true
+							}).catch(() => {});
+						}}
+					>
+						Review in Candidates Tab
+					</Button.Root>
+					<Button.Root
+						variant="outline"
+						size="sm"
+						class="border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+						onclick={discardRelease}
+					>
+						Discard
+					</Button.Root>
+					<Button.Root
+						variant="default"
+						size="sm"
+						class="bg-purple-600 text-white hover:bg-purple-700"
+						onclick={approveRelease}
+					>
+						Approve & Deploy
+					</Button.Root>
+				</div>
 			</div>
 		{/if}
 
@@ -545,6 +589,12 @@
 			<Tabs.List>
 				<Tabs.Trigger value="overview">Overview</Tabs.Trigger>
 				<Tabs.Trigger value="services">Services ({watcher.services.length})</Tabs.Trigger>
+				<Tabs.Trigger value="candidates" class="relative">
+					Candidates
+					{#if watcher.status === 'pending_approval'}
+						<span class="ml-1.5 flex h-2 w-2 rounded-full bg-purple-500"></span>
+					{/if}
+				</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploy History ({deployTotal})</Tabs.Trigger>
 				<Tabs.Trigger value="versions">Versions ({versions.length})</Tabs.Trigger>
 				<Tabs.Trigger value="polling">Polling History</Tabs.Trigger>
@@ -560,6 +610,17 @@
 					{watcher}
 					readonly={true}
 					manageHref={resolve(`/watchers/${id}/edit#services`)}
+				/>
+			</Tabs.Content>
+
+			<Tabs.Content value="candidates" class="mt-4">
+				<CandidateTab
+					{watcher}
+					onApprove={approveRelease}
+					onDiscard={discardRelease}
+					onRefreshWatcher={async () => {
+						watcher = await api.getWatcher(id);
+					}}
 				/>
 			</Tabs.Content>
 

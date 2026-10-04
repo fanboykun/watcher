@@ -61,9 +61,10 @@ function errorMessageFromResponse(status: number, statusText: string, body: unkn
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+	const normalizedPath = path.startsWith('/api/') ? path.slice(4) : path;
 	let res: Response;
 	try {
-		res = await fetch(`${API_BASE}${path}`, {
+		res = await fetch(`${API_BASE}${normalizedPath}`, {
 			headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers },
 			...options
 		});
@@ -235,6 +236,7 @@ export interface Watcher {
 	hc_interval_sec: number;
 	hc_timeout_sec: number;
 	paused: boolean;
+	auto_deploy: boolean;
 	intercept_next_release: boolean;
 	pending_version: string;
 	max_kept_versions: number;
@@ -280,6 +282,7 @@ export interface WatcherWritePayload {
 	hc_interval_sec?: number;
 	hc_timeout_sec?: number;
 	paused?: boolean;
+	auto_deploy?: boolean;
 	max_kept_versions?: number;
 	webhook_enabled?: boolean;
 	webhook_url?: string;
@@ -356,6 +359,25 @@ export interface ServiceConfigRevision {
 	env_content: string;
 	created_at: string;
 	updated_at: string;
+}
+
+export interface ServiceCandidateInfo {
+	service_id: number;
+	service_name: string;
+	service_type: string;
+	active_env: string;
+	candidate_env: string;
+	has_candidate_env: boolean;
+	is_modified: boolean;
+}
+
+export interface WatcherCandidateResponse {
+	has_pending_release: boolean;
+	target_version: string;
+	status: string;
+	intercept_next_release: boolean;
+	auto_deploy: boolean;
+	services: ServiceCandidateInfo[];
 }
 
 export interface DeployLog {
@@ -769,20 +791,43 @@ export const api = {
 	selfUninstall: () => request<{ script: string }>('/self/uninstall', { method: 'POST' }),
 
 	interceptWatcher: async (id: number, intercept: boolean) =>
-		request(`/api/watchers/${id}/intercept`, {
+		request(`/watchers/${id}/intercept`, {
 			method: 'POST',
 			body: JSON.stringify({ intercept_next_release: intercept })
 		}),
-	approveRelease: async (id: number) => request(`/api/watchers/${id}/approve`, { method: 'POST' }),
+	approveRelease: async (id: number) => request(`/watchers/${id}/approve`, { method: 'POST' }),
 	getServiceConfigRevisions: async (id: number) =>
-		request<{ data: ServiceConfigRevision[] }>(`/api/services/${id}/revisions`),
+		request<{ data: ServiceConfigRevision[] }>(`/services/${id}/revisions`),
 	updateServiceConfigRevision: async (id: number, target: string, envContent: string) =>
-		request(`/api/services/${id}/revisions/${target}`, {
+		request(`/services/${id}/revisions/${target}`, {
 			method: 'PUT',
 			body: JSON.stringify({ env_content: envContent })
 		}),
 	deleteServiceConfigRevision: async (id: number, target: string) =>
-		request(`/api/services/${id}/revisions/${target}`, { method: 'DELETE' }),
+		request(`/services/${id}/revisions/${target}`, { method: 'DELETE' }),
 	getServiceSnapshotEnv: async (id: number, version: string) =>
-		request<{ env_content: string }>(`/api/services/${id}/snapshots/${version}/env`)
+		request<{ env_content: string }>(`/services/${id}/snapshots/${version}/env`),
+	updateServiceSnapshotEnv: async (id: number, version: string, envContent: string) =>
+		request<{ message: string; env_content: string }>(`/services/${id}/snapshots/${version}/env`, {
+			method: 'PUT',
+			body: JSON.stringify({ env_content: envContent })
+		}),
+	discardRelease: async (id: number) =>
+		request<{ message: string }>(`/watchers/${id}/discard`, { method: 'POST' }),
+	getWatcherCandidate: async (id: number, target?: string) => {
+		const q = target ? `?target=${encodeURIComponent(target)}` : '';
+		return request<WatcherCandidateResponse>(`/watchers/${id}/candidate${q}`);
+	},
+	updateWatcherCandidate: async (
+		id: number,
+		targetVersion: string,
+		services: { service_id: number; env_content: string }[]
+	) =>
+		request<{ message: string }>(`/watchers/${id}/candidate`, {
+			method: 'PUT',
+			body: JSON.stringify({
+				target_version: targetVersion,
+				services
+			})
+		})
 };

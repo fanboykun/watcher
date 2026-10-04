@@ -92,18 +92,19 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 		return nil
 	}
 
-	if r.wcfg.InterceptNextRelease {
+	requireApproval := !r.wcfg.AutoDeploy || r.wcfg.InterceptNextRelease
+	if requireApproval {
 		var currentStatus, pendingVersion string
 		r.db.Model(&database.Watcher{}).Select("status", "pending_version").Where("id = ?", r.watcherID).Row().Scan(&currentStatus, &pendingVersion)
 
 		if currentStatus != "approved" {
 			if pendingVersion != targetVersion || currentStatus != "pending_approval" {
-				r.log.Info("intercepting new release candidate", "version", targetVersion)
+				r.log.Info("holding new release candidate for manual approval", "version", targetVersion)
 				r.db.Model(&database.Watcher{}).Where("id = ?", r.watcherID).Updates(map[string]interface{}{
 					"status":          "pending_approval",
 					"pending_version": targetVersion,
 				})
-				r.state.RecordPollEvent("intercepted", targetVersion, "intercepted for manual approval")
+				r.state.RecordPollEvent("intercepted", targetVersion, "held as candidate for manual approval")
 			}
 			return nil
 		}

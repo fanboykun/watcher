@@ -349,16 +349,16 @@
 			</div>
 		{/if}
 
-		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 		<Tabs.Root
 			bind:value={activeTab}
 			onValueChange={(v) => {
-				if (v)
-					goto(resolve(`?tab=${v}` as any), {
+				if (v) {
+					goto(resolve(`/services/[id]?tab=${v}`, { id: String(id) }), {
 						replaceState: true,
 						keepFocus: true,
 						noScroll: true
-					});
+					}).catch(() => {});
+				}
 			}}
 		>
 			<Tabs.List>
@@ -407,7 +407,12 @@
 			</Tabs.Content>
 
 			<Tabs.Content value="candidates" class="mt-4">
-				<CandidatesTab serviceId={id} currentEnv={service?.env_content || ''} />
+				<CandidatesTab
+					serviceId={id}
+					currentEnv={service?.env_content || ''}
+					watcherId={watcher?.id}
+					pendingVersion={watcher?.pending_version}
+				/>
 			</Tabs.Content>
 		</Tabs.Root>
 	{/if}

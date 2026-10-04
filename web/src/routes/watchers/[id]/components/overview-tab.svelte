@@ -21,6 +21,12 @@
 				<span class="max-w-[220px] truncate font-mono text-xs">{watcher.metadata_url}</span>
 			</div>
 			<div class="flex justify-between">
+				<span class="text-muted-foreground">Deployment Policy</span>
+				<span class="font-medium {watcher.auto_deploy ? 'text-foreground' : 'text-purple-400'}">
+					{watcher.auto_deploy ? 'Automatic Deployment' : 'Manual Approval Required'}
+				</span>
+			</div>
+			<div class="flex justify-between">
 				<span class="text-muted-foreground">Check Interval</span>
 				<span>{watcher.check_interval_sec}s</span>
 			</div>

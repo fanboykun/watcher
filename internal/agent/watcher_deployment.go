@@ -97,7 +97,13 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 
 		// Find service ID from DB
 		var dbSvc database.Service
-		if err := r.db.Where("watcher_id = ? AND windows_service_name = ?", r.watcherID, svc.WindowsServiceName).First(&dbSvc).Error; err == nil {
+		var err error
+		if svc.ID > 0 {
+			err = r.db.First(&dbSvc, svc.ID).Error
+		} else {
+			err = r.db.Where("watcher_id = ? AND windows_service_name = ?", r.watcherID, svc.WindowsServiceName).First(&dbSvc).Error
+		}
+		if err == nil {
 
 			var revision database.ServiceConfigRevision
 			// Try exact match first, then fallback to "next"

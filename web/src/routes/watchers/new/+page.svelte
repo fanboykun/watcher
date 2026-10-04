@@ -82,6 +82,7 @@
 	let deploymentEnvironment = $state('');
 	let watcherGitHubToken = $state('');
 	let useWatcherGitHubToken = $state(false);
+	let autoDeploy = $state(true);
 
 	let serviceDrafts = $state<ServiceDraft[]>([]);
 
@@ -382,6 +383,7 @@
 			deployment_environment: deploymentEnvironment.trim(),
 			github_token: useWatcherGitHubToken ? watcherGitHubToken.trim() : '',
 			check_interval_sec: checkInterval,
+			auto_deploy: autoDeploy,
 			install_dir: installDir.trim(),
 			hc_enabled: healthChecksEnabled,
 			hc_url: healthCheckURL.trim(),
@@ -633,6 +635,44 @@
 								bind:value={healthCheckURL}
 								placeholder="http://localhost:3000/health"
 							/>
+						</div>
+						<div class="space-y-2 rounded-lg border border-border/70 bg-muted/20 p-4 md:col-span-2">
+							<Label class="text-sm font-medium">Deployment Policy</Label>
+							<div class="mt-2 space-y-2">
+								<label class="flex cursor-pointer items-start gap-3">
+									<input
+										type="radio"
+										name="autoDeploy"
+										class="mt-1"
+										checked={autoDeploy}
+										onchange={() => (autoDeploy = true)}
+									/>
+									<div>
+										<p class="text-sm font-medium">Automatic Deployment</p>
+										<p class="text-xs text-muted-foreground">
+											Automatically pull and deploy new releases as soon as they are detected.
+										</p>
+									</div>
+								</label>
+								<label class="flex cursor-pointer items-start gap-3">
+									<input
+										type="radio"
+										name="autoDeploy"
+										class="mt-1"
+										checked={!autoDeploy}
+										onchange={() => (autoDeploy = false)}
+									/>
+									<div>
+										<p class="text-sm font-medium">
+											Manual Approval Required (Release First, Deploy Later)
+										</p>
+										<p class="text-xs text-muted-foreground">
+											Hold new versions as Release Candidates. Prepare environment variables and
+											deploy manually during maintenance windows.
+										</p>
+									</div>
+								</label>
+							</div>
 						</div>
 					</div>
 				</div>
