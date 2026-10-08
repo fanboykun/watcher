@@ -50,7 +50,9 @@
 		<div>
 			<h1 class="text-2xl font-bold tracking-tight">Add Service</h1>
 			<p class="text-sm text-muted-foreground">
-				{watcher ? `Create a managed service for ${watcher.name}.` : 'Create a managed service for this watcher.'}
+				{watcher
+					? `Create a managed service for ${watcher.name}.`
+					: 'Create a managed service for this watcher.'}
 			</p>
 		</div>
 	</div>
@@ -60,7 +62,7 @@
 		description="Define how Watcher should start, health-check, and write runtime files for this service."
 		submitLabel="Create Service"
 		submitting={saving}
-		error={error}
+		{error}
 		onSubmit={createService}
 	/>
 </div>

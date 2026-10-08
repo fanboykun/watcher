@@ -1,4 +1,6 @@
+<!-- eslint-disable svelte/no-navigation-without-resolve -->
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import {
@@ -35,6 +37,7 @@
 	import DeploysTab from './components/deploys-tab.svelte';
 	import LogsTab from './components/logs-tab.svelte';
 	import EnvTab from './components/env-tab.svelte';
+	import CandidatesTab from './components/candidates-tab.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let service = $state<Service | null>(null);
@@ -49,6 +52,7 @@
 	let loading = $state(true);
 	let actionMsg = $state('');
 	let logError = $state('');
+	let logsLoading = $state(false);
 	let logType = $state<'out' | 'err'>('out');
 	let logCount = $state(100);
 
@@ -57,6 +61,16 @@
 	let savingEnv = $state(false);
 	let showDeleteDialog = $state(false);
 	let deleting = $state(false);
+	let pendingAction = $state('');
+	let restartingEnv = $state(false);
+	let confirmServiceAction = $state<'stop' | 'restart' | null>(null);
+	const actionBusy = $derived(
+		Boolean(pendingAction) ||
+			savingEnv ||
+			restartingEnv ||
+			deleting ||
+			watcher?.status === 'deploying'
+	);
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
@@ -82,6 +96,8 @@
 	}
 
 	async function loadLogs() {
+		if (logsLoading) return;
+		logsLoading = true;
 		logError = '';
 		try {
 			const res = await api.serviceLogs(id, logCount, logType);
@@ -89,6 +105,8 @@
 		} catch (e) {
 			logError = e instanceof Error ? e.message : 'Failed to load logs';
 			logLines = [];
+		} finally {
+			logsLoading = false;
 		}
 	}
 
@@ -96,50 +114,69 @@
 		const detail = await api.getService(id);
 		service = detail.service;
 		watcher = detail.watcher;
-		envContent = detail.service.env_content || '';
-		configFiles = [...(detail.service.config_files || []).map((file) => ({ ...file, target: file.target || 'app_dir' }))];
+		envContent = service?.env_content || '';
+		configFiles = [
+			...(detail.service.config_files || []).map((file) => ({
+				...file,
+				target: file.target || 'app_dir'
+			}))
+		];
 	}
 
-	async function runAction(fn: () => Promise<{ message: string }>) {
+	async function runAction(name: string, fn: () => Promise<{ message: string }>) {
+		if (pendingAction) return;
+		pendingAction = name;
+		error = '';
 		try {
 			const res = await fn();
 			actionMsg = res.message;
 			setTimeout(() => (actionMsg = ''), 4000);
 			if (service) await refreshServiceDetail();
 		} catch (e) {
-			actionMsg = e instanceof Error ? e.message : 'Action failed';
-			setTimeout(() => (actionMsg = ''), 5000);
+			error = e instanceof Error ? e.message : 'Action failed';
+		} finally {
+			pendingAction = '';
 		}
 	}
 
 	async function saveEnv() {
-		if (!service || !watcher) return;
+		if (!service || !watcher || savingEnv) return false;
 		savingEnv = true;
+		error = '';
 		try {
 			service = await api.updateService(watcher.id, service.id, {
 				env_content: envContent,
 				config_files: configFiles.filter((file) => file.file_path.trim() !== '')
 			});
 			envContent = service.env_content || '';
-			configFiles = [...(service.config_files || []).map((file) => ({ ...file, target: file.target || 'app_dir' }))];
+			configFiles = [
+				...(service.config_files || []).map((file) => ({
+					...file,
+					target: file.target || 'app_dir'
+				}))
+			];
 			actionMsg = 'Service files saved';
 			setTimeout(() => (actionMsg = ''), 4000);
+			return true;
 		} catch (e) {
-			actionMsg = e instanceof Error ? e.message : 'Failed to save env';
+			error = e instanceof Error ? e.message : 'Failed to save env';
+			return false;
 		} finally {
 			savingEnv = false;
 		}
 	}
 
 	async function deleteService() {
-		if (!service || !watcher) return;
+		if (!service || !watcher || deleting) return;
+		error = '';
 		deleting = true;
 		try {
 			await api.deleteService(watcher.id, service.id);
 			showDeleteDialog = false;
-			await goto(resolve(`/watchers/${watcher.id}/edit#services`));
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- anchor appended to a resolved route
+			await goto(`${resolve(`/watchers/${watcher.id}/edit`)}#services`);
 		} catch (e) {
-			actionMsg = e instanceof Error ? e.message : 'Failed to delete service';
+			error = e instanceof Error ? e.message : 'Failed to delete service';
 			setTimeout(() => (actionMsg = ''), 5000);
 		} finally {
 			deleting = false;
@@ -147,84 +184,99 @@
 	}
 
 	async function checkHealth() {
+		if (pendingAction) return;
+		pendingAction = 'health';
+		error = '';
 		try {
 			const h = await api.serviceHealth(id);
 			actionMsg = `Health: ${h.status} (HTTP ${h.http_status})${h.error ? ' — ' + h.error : ''}`;
 			healthHistory = await api.healthHistory(id, 50);
 			setTimeout(() => (actionMsg = ''), 5000);
 		} catch (e) {
-			actionMsg = e instanceof Error ? e.message : 'Health check failed';
+			error = e instanceof Error ? e.message : 'Health check failed';
+		} finally {
+			pendingAction = '';
 		}
 	}
 </script>
 
 <div class="space-y-6">
-	<!-- Header -->
-	<div class="flex items-center gap-4">
-		<a href={resolve('/services')}>
-			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
-				<ArrowLeft class="h-4 w-4" />
-			</Button.Root>
-		</a>
-		<div class="flex-1">
-			<h1 class="text-2xl font-bold tracking-tight">
-				{service?.windows_service_name ?? 'Loading...'}
-			</h1>
-			{#if watcher}
-				<p class="text-sm text-muted-foreground">
-					Watcher: <a href={resolve(`/watchers/${watcher.id}`)} class="hover:underline">{watcher.name}</a>
-				</p>
-			{/if}
+	<header class="page-header">
+		<div class="page-identity">
+			<Button.Root
+				href={resolve('/services')}
+				variant="ghost"
+				size="icon"
+				aria-label="Back to services"><ArrowLeft /></Button.Root
+			>
+			<div class="min-w-0">
+				<h1 class="text-2xl font-semibold tracking-tight">
+					{service?.windows_service_name || service?.binary_name || 'Service'}
+				</h1>
+				{#if watcher}<a
+						href={resolve(`/watchers/${watcher.id}`)}
+						class="text-sm text-muted-foreground hover:underline">Watcher · {watcher.name}</a
+					>{/if}
+			</div>
 		</div>
 		{#if service}
-			<div class="flex items-center gap-2">
-				<a href={resolve(`/services/${id}/edit`)}>
-					<Button.Root variant="outline" size="sm">
-						<Pencil class="mr-1.5 h-4 w-4" /> Edit
-					</Button.Root>
-				</a>
-				<Button.Root variant="outline" size="sm" class="text-red-400" onclick={() => (showDeleteDialog = true)}>
-					<Trash2 class="mr-1.5 h-4 w-4" /> Delete
-				</Button.Root>
+			<div class="page-actions">
 				{#if !isIISService(service.service_type)}
 					<Button.Root
 						variant="outline"
 						size="sm"
-						class="text-emerald-400"
-						onclick={() => runAction(() => api.startService(id))}
+						disabled={actionBusy}
+						loading={pendingAction === 'start'}
+						onclick={() => runAction('start', () => api.startService(id))}
+						><Play /> Start</Button.Root
 					>
-						<Play class="mr-1.5 h-4 w-4" /> Start
-					</Button.Root>
 					<Button.Root
 						variant="outline"
 						size="sm"
-						class="text-red-400"
-						onclick={() => runAction(() => api.stopService(id))}
+						disabled={actionBusy}
+						onclick={() => {
+							error = '';
+							confirmServiceAction = 'stop';
+						}}><Square /> Stop</Button.Root
 					>
-						<Square class="mr-1.5 h-4 w-4" /> Stop
-					</Button.Root>
 					<Button.Root
 						variant="outline"
 						size="sm"
-						class="text-amber-400"
-						onclick={() => runAction(() => api.restartService(id))}
+						disabled={actionBusy}
+						onclick={() => {
+							error = '';
+							confirmServiceAction = 'restart';
+						}}><RefreshCw /> Restart</Button.Root
 					>
-						<RefreshCw class="mr-1.5 h-4 w-4" /> Restart
-					</Button.Root>
 				{/if}
-				<Button.Root variant="outline" size="sm" class="text-blue-400" onclick={checkHealth}>
-					<Heart class="mr-1.5 h-4 w-4" /> Health
-				</Button.Root>
+				<Button.Root
+					variant="outline"
+					size="sm"
+					disabled={actionBusy}
+					loading={pendingAction === 'health'}
+					onclick={checkHealth}><Heart /> Check health</Button.Root
+				>
+				<Button.Root
+					href={resolve(`/services/${id}/edit`)}
+					variant="outline"
+					size="sm"
+					disabled={actionBusy}><Pencil /> Edit</Button.Root
+				>
+				<Button.Root
+					variant="ghost"
+					size="sm"
+					class="text-red-400"
+					disabled={actionBusy}
+					onclick={() => {
+						error = '';
+						showDeleteDialog = true;
+					}}><Trash2 /> Delete</Button.Root
+				>
 			</div>
 		{/if}
-	</div>
+	</header>
 
-	{#if error}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			<AlertCircle class="mr-2 inline h-4 w-4" />
-			{error}
-		</div>
-	{/if}
+	{#if !showDeleteDialog && !confirmServiceAction}<RequestError message={error} />{/if}
 
 	{#if actionMsg}
 		<div class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400">
@@ -237,45 +289,64 @@
 	{:else if service}
 		<!-- Service Info Card -->
 		<Card.Root class="border-border bg-card">
-			<Card.Content class="grid gap-4 p-6 sm:grid-cols-4">
+			<Card.Content class="grid min-w-0 grid-cols-2 gap-x-6 gap-y-4 px-6 sm:grid-cols-3">
 				<div>
 					<p class="text-xs text-muted-foreground">Hosting Mode</p>
 					<p class="mt-1 text-sm">{serviceTypeLabel(service.service_type)}</p>
 				</div>
 				<div>
-					<p class="text-xs text-muted-foreground">{isIISService(service.service_type) ? 'IIS App Kind' : 'Binary'}</p>
-					<p class="mt-1 font-mono text-sm">{isIISService(service.service_type) ? iisAppKindLabel(service.iis_app_kind || 'static') : (service.binary_name || '—')}</p>
+					<p class="text-xs text-muted-foreground">
+						{isIISService(service.service_type) ? 'IIS App Kind' : 'Binary'}
+					</p>
+					<p class="mt-1 font-mono text-sm break-all">
+						{isIISService(service.service_type)
+							? iisAppKindLabel(service.iis_app_kind || 'static')
+							: service.binary_name || '—'}
+					</p>
 				</div>
 				<div>
-					<p class="text-xs text-muted-foreground">{isIISService(service.service_type) ? 'IIS App Pool' : 'Env File'}</p>
-					<p class="mt-1 font-mono text-sm">{isIISService(service.service_type) ? (service.iis_app_pool || '—') : (service.env_file || '—')}</p>
+					<p class="text-xs text-muted-foreground">
+						{isIISService(service.service_type) ? 'IIS App Pool' : 'Env File'}
+					</p>
+					<p class="mt-1 font-mono text-sm break-all">
+						{isIISService(service.service_type)
+							? service.iis_app_pool || '—'
+							: service.env_file || '—'}
+					</p>
 				</div>
-				<div>
-					<p class="text-xs text-muted-foreground">{isIISService(service.service_type) ? 'IIS Site Name' : 'Health URL'}</p>
-					<p class="mt-1 font-mono text-sm">{isIISService(service.service_type) ? (service.iis_site_name || '—') : (service.health_check_url || '—')}</p>
-				</div>
+				{#if isIISService(service.service_type)}
+					<div>
+						<p class="text-xs text-muted-foreground">IIS Site Name</p>
+						<p class="mt-1 font-mono text-sm break-all">{service.iis_site_name || '—'}</p>
+					</div>
+				{/if}
 				<div>
 					<p class="text-xs text-muted-foreground">Health URL</p>
-					<p class="mt-1 font-mono text-sm">{service.health_check_url || '—'}</p>
+					<p class="mt-1 font-mono text-sm break-all">
+						{service.health_check_url || watcher?.hc_url || 'Not configured'}
+					</p>
 				</div>
 				<div>
 					<p class="text-xs text-muted-foreground">Install Dir</p>
-					<p class="mt-1 font-mono text-sm">{watcher?.install_dir ?? '—'}</p>
+					<p class="mt-1 font-mono text-sm break-all">{watcher?.install_dir ?? '—'}</p>
 				</div>
 				<div>
 					<p class="text-xs text-muted-foreground">Public URL</p>
-					<p class="mt-1 font-mono text-sm">
+					<p class="mt-1 font-mono text-sm break-all">
 						{#if service.public_url}
 							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-							<a
+							<Button.Root
+								variant="link"
+								size="sm"
 								href={service.public_url}
+								data-sveltekit-noscroll
 								target="_blank"
 								rel="noopener noreferrer"
-								class="inline-flex items-center gap-1.5 text-blue-400 hover:underline"
+								class="h-auto min-w-0 justify-start gap-1.5 p-0 text-left text-xs break-all whitespace-normal text-blue-400 hover:underline"
 							>
 								{service.public_url}
 								<ExternalLink class="h-3 w-3" />
-							</a>
+							</Button.Root>
 						{:else}
 							—
 						{/if}
@@ -285,39 +356,49 @@
 		</Card.Root>
 
 		{#if isIISService(service.service_type)}
-			<div class="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
+			<details class="rounded-lg border border-border p-4">
+				<summary class="cursor-pointer text-sm font-medium">IIS deployment details</summary>
 				<div class="mb-2 flex items-center gap-2 font-medium text-blue-400">
 					<TerminalSquare class="h-5 w-5" />
 					IIS Bootstrap
 				</div>
 				<p class="mb-4 text-sm text-foreground/80">
 					Watcher can now create the IIS app pool and site automatically on first deploy when
-					<code>iis_app_pool</code>, <code>iis_site_name</code>, and <code>public_url</code> are set. The
-					root application is kept pointed at <code>{watcher?.install_dir}\current</code> on each deploy.
+					<code>iis_app_pool</code>, <code>iis_site_name</code>, and <code>public_url</code> are
+					set. The root application is kept pointed at <code>{watcher?.install_dir}.urrent</code> on each
+					deploy.
 				</p>
 				<p class="text-sm text-foreground/80">
-					This service is configured as <code>{iisAppKindLabel(service.iis_app_kind || 'static')}</code>.
-					Watcher will choose the IIS managed runtime automatically for that app kind, and if the site already
-					exists it will reuse it and refresh the root path and app pool assignment.
+					This service is configured as <code
+						>{iisAppKindLabel(service.iis_app_kind || 'static')}</code
+					>. Watcher will choose the IIS managed runtime automatically for that app kind, and if the
+					site already exists it will reuse it and refresh the root path and app pool assignment.
 				</p>
 				<p class="text-sm text-foreground/80">
-					Watcher does not install PHP, .NET hosting bundles, or IIS handler mappings. Those server-level
-					prerequisites still need to exist before the deployed site can serve traffic successfully.
+					Watcher does not install PHP, .NET hosting bundles, or IIS handler mappings. Those
+					server-level prerequisites still need to exist before the deployed site can serve traffic
+					successfully.
 				</p>
-			</div>
+			</details>
 		{/if}
 
-		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 		<Tabs.Root
 			bind:value={activeTab}
 			onValueChange={(v) => {
-				if (v) goto(`?tab=${v}`, { replaceState: true, keepFocus: true, noScroll: true });
+				if (v) {
+					goto(resolve(`/services/[id]?tab=${v}`, { id: String(id) }), {
+						replaceState: true,
+						keepFocus: true,
+						noScroll: true
+					}).catch(() => {});
+				}
 			}}
 		>
 			<Tabs.List>
-				<Tabs.Trigger value="health">Health History ({healthHistory.length})</Tabs.Trigger>
+				<Tabs.Trigger value="health">Health</Tabs.Trigger>
 				<Tabs.Trigger value="logs">Logs</Tabs.Trigger>
-				<Tabs.Trigger value="env">Environment (.env)</Tabs.Trigger>
+				<Tabs.Trigger value="env">Files</Tabs.Trigger>
+				<Tabs.Trigger value="candidates">Candidates</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploys ({deployTotal})</Tabs.Trigger>
 			</Tabs.List>
 
@@ -328,7 +409,14 @@
 
 			<!-- Logs -->
 			<Tabs.Content value="logs" class="mt-4">
-				<LogsTab bind:logLines bind:logError bind:logType bind:logCount onLoadLogs={loadLogs} />
+				<LogsTab
+					loading={logsLoading}
+					bind:logLines
+					bind:logError
+					bind:logType
+					bind:logCount
+					onLoadLogs={loadLogs}
+				/>
 			</Tabs.Content>
 
 			<!-- Environment -->
@@ -337,11 +425,17 @@
 					{service}
 					bind:envContent
 					bind:configFiles
-					bind:savingEnv
-					onSaveEnv={saveEnv}
-					onSaveAndRestart={async () => {
+					savingEnv={savingEnv || restartingEnv || actionBusy}
+					onSaveEnv={async () => {
 						await saveEnv();
-						await runAction(() => api.restartService(id));
+					}}
+					onSaveAndRestart={async () => {
+						restartingEnv = true;
+						try {
+							if (await saveEnv()) await runAction('restart', () => api.restartService(id));
+						} finally {
+							restartingEnv = false;
+						}
 					}}
 				/>
 			</Tabs.Content>
@@ -357,25 +451,91 @@
 					onLoadDeploys={loadDeploys}
 				/>
 			</Tabs.Content>
+
+			<Tabs.Content value="candidates" class="mt-4">
+				<CandidatesTab
+					serviceId={id}
+					currentEnv={service?.env_content || ''}
+					watcherId={watcher?.id}
+					pendingVersion={watcher?.pending_version}
+				/>
+			</Tabs.Content>
 		</Tabs.Root>
 	{/if}
 </div>
 
-<Dialog.Root bind:open={showDeleteDialog}>
-	<Dialog.Content class="sm:max-w-[420px]">
+<Dialog.Root
+	bind:open={showDeleteDialog}
+	onOpenChange={(open) => {
+		if (deleting && !open) showDeleteDialog = true;
+	}}
+>
+	<Dialog.Content class="sm:max-w-[420px]" showCloseButton={!deleting}>
 		<Dialog.Header>
 			<Dialog.Title>Delete Service</Dialog.Title>
 			<Dialog.Description>
-				Delete <span class="font-medium">{service?.windows_service_name || 'this service'}</span>? This removes it from Watcher.
+				Delete <span class="font-medium">{service?.windows_service_name || 'this service'}</span>?
+				This removes it from Watcher.
 			</Dialog.Description>
 		</Dialog.Header>
+		<RequestError message={error} />
 		<Dialog.Footer>
-			<Button.Root variant="outline" type="button" onclick={() => (showDeleteDialog = false)} disabled={deleting}>
+			<Button.Root
+				variant="outline"
+				type="button"
+				onclick={() => (showDeleteDialog = false)}
+				disabled={deleting}
+			>
 				Cancel
 			</Button.Root>
-			<Button.Root type="button" class="bg-red-600 text-white hover:bg-red-700" onclick={deleteService} disabled={deleting}>
+			<Button.Root
+				type="button"
+				class="bg-red-600 text-white hover:bg-red-700"
+				onclick={deleteService}
+				disabled={deleting}
+			>
 				{deleting ? 'Deleting...' : 'Delete Service'}
 			</Button.Root>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root
+	open={confirmServiceAction !== null}
+	onOpenChange={(open) => {
+		if (!open && !pendingAction) confirmServiceAction = null;
+	}}
+>
+	<Dialog.Content showCloseButton={!pendingAction}>
+		<Dialog.Header
+			><Dialog.Title
+				>{confirmServiceAction === 'stop' ? 'Stop service?' : 'Restart service?'}</Dialog.Title
+			><Dialog.Description
+				>{service?.windows_service_name} will {confirmServiceAction === 'stop'
+					? 'stop serving traffic.'
+					: 'briefly stop serving traffic while it restarts.'}</Dialog.Description
+			></Dialog.Header
+		>
+		<RequestError message={error} />
+		<Dialog.Footer>
+			<Button.Root
+				variant="outline"
+				disabled={Boolean(pendingAction)}
+				onclick={() => (confirmServiceAction = null)}>Cancel</Button.Root
+			>
+			<Button.Root
+				variant="destructive"
+				disabled={Boolean(pendingAction)}
+				loading={Boolean(pendingAction)}
+				onclick={async () => {
+					const action = confirmServiceAction;
+					if (!action) return;
+					await runAction(action, () =>
+						action === 'stop' ? api.stopService(id) : api.restartService(id)
+					);
+					if (!error) confirmServiceAction = null;
+				}}>{confirmServiceAction === 'stop' ? 'Stop service' : 'Restart service'}</Button.Root
+			>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

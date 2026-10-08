@@ -46,27 +46,32 @@
 
 <div class="space-y-6">
 	<div class="flex items-center gap-4">
-		<a href={resolve(`/services/${serviceId}`)}>
-			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
-				<ArrowLeft class="h-4 w-4" />
-			</Button.Root>
-		</a>
+		<Button.Root
+			href={resolve(`/services/${serviceId}`)}
+			variant="ghost"
+			size="icon"
+			class="h-8 w-8"
+			aria-label="Back to service"><ArrowLeft class="h-4 w-4" /></Button.Root
+		>
 		<div>
 			<h1 class="text-2xl font-bold tracking-tight">Edit Service</h1>
 			<p class="text-sm text-muted-foreground">
-				{service ? `Update how Watcher manages ${service.windows_service_name}.` : 'Update this service configuration.'}
+				{service
+					? `Update how Watcher manages ${service.windows_service_name}.`
+					: 'Update this service configuration.'}
 			</p>
 		</div>
 	</div>
 
 	{#if service}
 		<ServiceWizardForm
+			showHeader={false}
 			title="Service Setup"
 			description="Edit service runtime details, IIS or NSSM settings, and managed files."
 			submitLabel="Save Service Changes"
 			initial={service}
 			submitting={saving}
-			error={error}
+			{error}
 			onSubmit={updateService}
 		/>
 	{/if}

@@ -1,13 +1,17 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
 )
@@ -79,3 +83,111 @@ func (h *Handler) writeServiceFile(installDir, relativePath, content string) err
 // ── Deploy Log Detail ─────────────────────────────────────────
 
 // GetDeployLog returns a single deploy log by ID (URL-able for GitHub Deployment API log_url).
+
+// ── Configuration Revisions (Deployment Candidates) ──────────
+
+func (h *Handler) ListServiceConfigRevisions(c *gin.Context) {
+	svc, err := h.findServiceByID(c)
+	if err != nil {
+		return
+	}
+	var revisions []database.ServiceConfigRevision
+	if err := h.db.Where("service_id = ?", svc.ID).Order("id desc").Find(&revisions).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": revisions})
+}
+
+func (h *Handler) UpdateServiceConfigRevision(c *gin.Context) {
+	svc, err := h.findServiceByID(c)
+	if err != nil {
+		return
+	}
+	targetVersion := c.Param("target")
+	if targetVersion == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Target version is required"})
+		return
+	}
+
+	var req struct {
+		EnvContent *string `json:"env_content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	if err := saveServiceConfigRevision(h.db, svc.ID, targetVersion, *req.EnvContent); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, MessageResponse{Message: "Configuration candidate saved successfully"})
+}
+
+func (h *Handler) DeleteServiceConfigRevision(c *gin.Context) {
+	svc, err := h.findServiceByID(c)
+	if err != nil {
+		return
+	}
+	targetVersion := c.Param("target")
+	if targetVersion == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Target version is required"})
+		return
+	}
+	if err := h.db.Where("service_id = ? AND target_version = ?", svc.ID, targetVersion).Delete(&database.ServiceConfigRevision{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "Configuration candidate deleted successfully"})
+}
+
+// ── Configuration Snapshots (Read-Only History) ──────────────
+
+func (h *Handler) GetServiceSnapshotEnv(c *gin.Context) {
+	svc, err := h.findServiceByID(c)
+	if err != nil {
+		return
+	}
+	version := c.Param("version")
+	if version == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Version is required"})
+		return
+	}
+
+	var watcher database.Watcher
+	if err := h.db.Preload("Services", func(tx *gorm.DB) *gorm.DB { return tx.Order("id ASC") }).First(&watcher, svc.WatcherID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	wcfg := agent.WatcherConfigFromDB(&watcher)
+	serviceIndex := -1
+	for i := range wcfg.Services {
+		if wcfg.Services[i].ID == svc.ID {
+			serviceIndex = i
+			break
+		}
+	}
+	if serviceIndex < 0 {
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "Service not found in watcher"})
+		return
+	}
+	content, err := agent.ReadServiceSnapshotEnv(wcfg, version, serviceIndex)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if os.IsNotExist(err) || errors.Is(err, agent.ErrConfigSnapshotNotFound) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"env_content": content})
+}
+
+func saveServiceConfigRevision(db *gorm.DB, serviceID uint, target, content string) error {
+	revision := database.ServiceConfigRevision{ServiceID: serviceID, TargetVersion: target, EnvContent: content}
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "service_id"}, {Name: "target_version"}},
+		DoUpdates: clause.AssignmentColumns([]string{"env_content", "updated_at"}),
+	}).Create(&revision).Error
+}

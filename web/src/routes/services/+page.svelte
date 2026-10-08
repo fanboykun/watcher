@@ -1,10 +1,19 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
-	import { api, isIISService, serviceTypeLabel, iisAppKindLabel, type ServiceWithWatcher } from '$lib/api';
+	import {
+		api,
+		isIISService,
+		serviceTypeLabel,
+		iisAppKindLabel,
+		type ServiceWithWatcher
+	} from '$lib/api';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
-	import { Server, Play, Square, RefreshCw, Heart, AlertCircle } from '@lucide/svelte';
+	import { Server, Play, Square, RefreshCw, Heart, ChevronDown } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
@@ -13,6 +22,17 @@
 	let loading = $state(true);
 	let actionMsg = $state('');
 	let actionError = $state('');
+	let pendingServiceID = $state<number | null>(null);
+	let pendingServiceAction = $state<'start' | 'stop' | 'restart' | 'health' | null>(null);
+	const pendingLabels = {
+		start: 'Starting…',
+		stop: 'Stopping…',
+		restart: 'Restarting…',
+		health: 'Checking…'
+	};
+	let serviceConfirmation = $state<{ id: number; name: string; action: 'stop' | 'restart' } | null>(
+		null
+	);
 
 	onMount(load);
 
@@ -28,18 +48,93 @@
 		}
 	}
 
-	async function serviceAction(fn: () => Promise<{ message: string }>) {
+	async function serviceAction(
+		id: number,
+		action: 'start' | 'stop' | 'restart' | 'health',
+		fn: () => Promise<{ message: string }>
+	) {
+		if (pendingServiceID !== null) return;
+		pendingServiceID = id;
+		pendingServiceAction = action;
 		actionError = '';
+		actionMsg = '';
 		try {
 			const res = await fn();
-			actionMsg = res.message;
+			actionMsg = `${services.find((service) => service.id === id)?.windows_service_name || 'Service'}: ${res.message}`;
 			setTimeout(() => (actionMsg = ''), 3000);
 		} catch (e) {
 			actionError = e instanceof Error ? e.message : 'Action failed';
-			setTimeout(() => (actionError = ''), 5000);
+		} finally {
+			pendingServiceID = null;
+			pendingServiceAction = null;
 		}
 	}
 </script>
+
+{#snippet serviceControls(svc: ServiceWithWatcher, alignEnd = false)}
+	<div class={`flex ${alignEnd ? 'justify-end' : ''}`}>
+		<DropdownMenu.Root>
+			<DropdownMenu.Trigger
+				class={Button.buttonVariants({ variant: 'outline', size: 'sm' })}
+				disabled={pendingServiceID !== null}
+				aria-label={`Actions for ${svc.windows_service_name}`}
+				aria-busy={pendingServiceID === svc.id}
+			>
+				{#if pendingServiceID === svc.id && pendingServiceAction}<RefreshCw
+						class="size-4 animate-spin"
+					/>{pendingLabels[pendingServiceAction]}{:else}Actions<ChevronDown class="size-4" />{/if}
+			</DropdownMenu.Trigger>
+			<DropdownMenu.Content
+				align="end"
+				class="w-44"
+				onCloseAutoFocus={(event) => {
+					if (serviceConfirmation) event.preventDefault();
+				}}
+			>
+				{#if !isIISService(svc.service_type)}
+					<DropdownMenu.Item
+						disabled={pendingServiceID !== null}
+						onSelect={() => {
+							void serviceAction(svc.id, 'start', () => api.startService(svc.id));
+						}}><Play />Start service</DropdownMenu.Item
+					>
+					<DropdownMenu.Item
+						disabled={pendingServiceID !== null}
+						onSelect={() => {
+							actionError = '';
+							serviceConfirmation = {
+								id: svc.id,
+								name: svc.windows_service_name,
+								action: 'restart'
+							};
+						}}><RefreshCw />Restart service</DropdownMenu.Item
+					>
+				{/if}
+				<DropdownMenu.Item
+					disabled={pendingServiceID !== null}
+					onSelect={() => {
+						void serviceAction(svc.id, 'health', () =>
+							api
+								.serviceHealth(svc.id)
+								.then((h) => ({ message: `${h.status}${h.error ? ` — ${h.error}` : ''}` }))
+						);
+					}}><Heart />Check health</DropdownMenu.Item
+				>
+				{#if !isIISService(svc.service_type)}
+					<DropdownMenu.Item
+						variant="destructive"
+						class="mt-1 border-t border-border pt-2"
+						disabled={pendingServiceID !== null}
+						onSelect={() => {
+							actionError = '';
+							serviceConfirmation = { id: svc.id, name: svc.windows_service_name, action: 'stop' };
+						}}><Square />Stop service</DropdownMenu.Item
+					>
+				{/if}
+			</DropdownMenu.Content>
+		</DropdownMenu.Root>
+	</div>
+{/snippet}
 
 <div class="space-y-6">
 	<div>
@@ -47,117 +142,95 @@
 		<p class="text-sm text-muted-foreground">All managed services across NSSM and IIS watchers</p>
 	</div>
 
-	{#if error}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			<AlertCircle class="mr-2 inline h-4 w-4" />
-			{error}
-		</div>
-	{/if}
+	<RequestError message={error} onRetry={load} />
 
 	{#if actionMsg}
-		<div class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400">
+		<div
+			role="status"
+			class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400"
+		>
 			{actionMsg}
 		</div>
 	{/if}
 
-	{#if actionError}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			<AlertCircle class="mr-2 inline h-4 w-4" />
-			{actionError}
-		</div>
-	{/if}
+	{#if !serviceConfirmation}<RequestError message={actionError} />{/if}
 
 	{#if loading}
 		<RequestLoading label="Loading services…" />
 	{:else if services.length > 0}
-		<Card.Root class="border-border bg-card">
+		<div class="grid gap-4 lg:hidden">
+			{#each services as svc (svc.id)}
+				<Card.Root
+					><Card.Content class="space-y-4">
+						<div class="section-toolbar">
+							<div class="min-w-0">
+								<a
+									href={resolve(`/services/${svc.id}`)}
+									class="font-medium break-all hover:underline">{svc.windows_service_name}</a
+								>
+								<p class="mt-1 text-xs text-muted-foreground">
+									{serviceTypeLabel(svc.service_type)}
+								</p>
+							</div>
+							<a
+								href={resolve(`/watchers/${svc.watcher_id}`)}
+								class="text-sm text-muted-foreground hover:underline">{svc.watcher_name}</a
+							>
+						</div>
+						<div class="space-y-1 text-xs text-muted-foreground">
+							<p class="font-mono break-all">
+								{isIISService(svc.service_type)
+									? iisAppKindLabel(svc.iis_app_kind || 'static')
+									: svc.binary_name}
+							</p>
+							{#if svc.health_check_url}<p class="break-all">Health: {svc.health_check_url}</p>{/if}
+						</div>
+						{@render serviceControls(svc)}
+					</Card.Content></Card.Root
+				>
+			{/each}
+		</div>
+		<Card.Root class="hidden border-border bg-card lg:block">
 			<Table.Root>
-				<Table.Header>
-					<Table.Row class="border-border hover:bg-transparent">
-						<Table.Head>Service</Table.Head>
-						<Table.Head>Watcher</Table.Head>
-						<Table.Head>Mode</Table.Head>
-						<Table.Head>Target</Table.Head>
-						<Table.Head>Health URL</Table.Head>
-						<Table.Head class="text-right">Actions</Table.Head>
-					</Table.Row>
-				</Table.Header>
+				<Table.Header
+					><Table.Row
+						><Table.Head>Service</Table.Head><Table.Head>Watcher</Table.Head><Table.Head
+							>Runtime</Table.Head
+						><Table.Head class="text-right">Actions</Table.Head></Table.Row
+					></Table.Header
+				>
 				<Table.Body>
 					{#each services as svc (svc.id)}
-						<Table.Row class="border-border">
-							<Table.Cell>
-								<a href={resolve(`/services/${svc.id}`)} class="font-medium hover:underline"
+						<Table.Row>
+							<Table.Cell
+								><a href={resolve(`/services/${svc.id}`)} class="font-medium hover:underline"
 									>{svc.windows_service_name}</a
 								>
-							</Table.Cell>
-							<Table.Cell>
-								<a
-									href={resolve(`/watchers/${svc.watcher_id}`)}
-									class="text-sm text-muted-foreground hover:underline"
-								>
-									{svc.watcher_name}
-								</a>
-							</Table.Cell>
-							<Table.Cell class="font-mono text-xs text-muted-foreground">
-								{serviceTypeLabel(svc.service_type)}
-							</Table.Cell>
-							<Table.Cell class="font-mono text-xs text-muted-foreground">
-								{#if isIISService(svc.service_type)}
-									{iisAppKindLabel(svc.iis_app_kind || 'static')}
-								{:else}
-									{svc.binary_name}
-								{/if}
-							</Table.Cell>
-							<Table.Cell class="font-mono text-xs text-muted-foreground"
-								>{svc.health_check_url || '—'}</Table.Cell
+								<p class="mt-1 text-xs text-muted-foreground">
+									{serviceTypeLabel(svc.service_type)}
+								</p></Table.Cell
 							>
-							<Table.Cell>
-								<div class="flex items-center justify-end gap-1">
-									{#if !isIISService(svc.service_type)}
-										<Button.Root
-											variant="ghost"
-											size="icon"
-											class="h-8 w-8 text-emerald-400"
-											onclick={() => serviceAction(() => api.startService(svc.id))}
-											title="Start"
-										>
-											<Play class="h-4 w-4" />
-										</Button.Root>
-										<Button.Root
-											variant="ghost"
-											size="icon"
-											class="h-8 w-8 text-red-400"
-											onclick={() => serviceAction(() => api.stopService(svc.id))}
-											title="Stop"
-										>
-											<Square class="h-4 w-4" />
-										</Button.Root>
-										<Button.Root
-											variant="ghost"
-											size="icon"
-											class="h-8 w-8 text-amber-400"
-											onclick={() => serviceAction(() => api.restartService(svc.id))}
-											title="Restart"
-										>
-											<RefreshCw class="h-4 w-4" />
-										</Button.Root>
-									{/if}
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										class="h-8 w-8 text-blue-400"
-										onclick={() =>
-											serviceAction(() =>
-												api
-													.serviceHealth(svc.id)
-													.then((h) => ({ message: `${svc.windows_service_name}: ${h.status}` }))
-											)}
-										title="Health check"
-									>
-										<Heart class="h-4 w-4" />
-									</Button.Root>
-								</div>
-							</Table.Cell>
+							<Table.Cell
+								><a
+									href={resolve(`/watchers/${svc.watcher_id}`)}
+									class="text-sm text-muted-foreground hover:underline">{svc.watcher_name}</a
+								></Table.Cell
+							>
+							<Table.Cell class="max-w-64 whitespace-normal"
+								><p class="font-mono text-xs break-all text-muted-foreground">
+									{isIISService(svc.service_type)
+										? iisAppKindLabel(svc.iis_app_kind || 'static')
+										: svc.binary_name}
+								</p>
+								{#if svc.health_check_url}<p class="mt-1 text-xs break-all text-muted-foreground">
+										Health: {svc.health_check_url}
+									</p>{/if}</Table.Cell
+							>
+							<Table.Cell
+								><div class="ml-auto max-w-80">
+									{@render serviceControls(svc, true)}
+								</div></Table.Cell
+							>
 						</Table.Row>
 					{/each}
 				</Table.Body>
@@ -173,3 +246,48 @@
 		</Card.Root>
 	{/if}
 </div>
+
+<Dialog.Root
+	open={serviceConfirmation !== null}
+	onOpenChange={(open) => {
+		if (!open && pendingServiceID === null) serviceConfirmation = null;
+	}}
+>
+	<Dialog.Content showCloseButton={pendingServiceID === null}>
+		<Dialog.Header
+			><Dialog.Title
+				>{serviceConfirmation?.action === 'stop'
+					? 'Stop service?'
+					: 'Restart service?'}</Dialog.Title
+			><Dialog.Description
+				>{serviceConfirmation?.name} will stop serving traffic{serviceConfirmation?.action ===
+				'restart'
+					? ' briefly while it restarts'
+					: ''}.</Dialog.Description
+			></Dialog.Header
+		>
+		<RequestError message={actionError} />
+		<Dialog.Footer
+			><Button.Root
+				variant="outline"
+				disabled={pendingServiceID !== null}
+				onclick={() => (serviceConfirmation = null)}>Cancel</Button.Root
+			><Button.Root
+				variant="destructive"
+				loading={pendingServiceID !== null}
+				disabled={pendingServiceID !== null}
+				onclick={async () => {
+					const selected = serviceConfirmation;
+					if (!selected) return;
+					await serviceAction(selected.id, selected.action, () =>
+						selected.action === 'stop'
+							? api.stopService(selected.id)
+							: api.restartService(selected.id)
+					);
+					if (!actionError) serviceConfirmation = null;
+				}}
+				>{serviceConfirmation?.action === 'stop' ? 'Stop service' : 'Restart service'}</Button.Root
+			></Dialog.Footer
+		>
+	</Dialog.Content>
+</Dialog.Root>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -6,17 +7,19 @@
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Plus, Trash2 } from '@lucide/svelte';
-	import { iisAppKindLabel, type ServiceConfigFile, type IISAppKind, type ServiceWritePayload } from '$lib/api';
+	import {
+		iisAppKindLabel,
+		type ServiceConfigFile,
+		type IISAppKind,
+		type ServiceWritePayload
+	} from '$lib/api';
 
 	interface Props {
 		open: boolean;
 		onServiceAdded: (data: ServiceWritePayload) => Promise<void> | void;
 	}
 
-	let {
-		open = $bindable(false),
-		onServiceAdded
-	}: Props = $props();
+	let { open = $bindable(false), onServiceAdded }: Props = $props();
 
 	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
 		{
@@ -74,7 +77,10 @@
 	});
 
 	function addSvcConfigFile() {
-		svcConfigFiles = [...svcConfigFiles, { file_path: '', target: 'app_dir' as const, content: '' }];
+		svcConfigFiles = [
+			...svcConfigFiles,
+			{ file_path: '', target: 'app_dir' as const, content: '' }
+		];
 	}
 
 	function removeSvcConfigFile(index: number) {
@@ -123,11 +129,7 @@
 				<Dialog.Description>Register a service for this watcher to manage</Dialog.Description>
 			</Dialog.Header>
 			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-				{#if error}
-					<div class="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
-						{error}
-					</div>
-				{/if}
+				<RequestError message={error} />
 
 				<div class="grid gap-4 md:grid-cols-2">
 					<div class="space-y-2">
@@ -161,11 +163,19 @@
 						</div>
 						<div class="space-y-2">
 							<Label for="svcStartArguments">Start Arguments (optional)</Label>
-							<Input id="svcStartArguments" placeholder="serve --port 8080" bind:value={svcStartArguments} />
+							<Input
+								id="svcStartArguments"
+								placeholder="serve --port 8080"
+								bind:value={svcStartArguments}
+							/>
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="svcEnvFile">Env File (optional)</Label>
-							<Input id="svcEnvFile" placeholder="C:\apps\my-app\.env.web.1" bind:value={svcEnvFile} />
+							<Input
+								id="svcEnvFile"
+								placeholder="C:\apps\my-app\.env.web.1"
+								bind:value={svcEnvFile}
+							/>
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="svcEnvContent">Env Content (optional)</Label>
@@ -176,7 +186,8 @@
 								placeholder="KEY=VALUE&#10;API_URL=https://example.com"
 							/>
 							<p class="text-xs text-muted-foreground">
-								If set, watcher writes this content into <code>{svcEnvFile || '.env'}</code> during service sync/deploy.
+								If set, watcher writes this content into <code>{svcEnvFile || '.env'}</code> during service
+								sync/deploy.
 							</p>
 						</div>
 					{:else}
@@ -204,9 +215,12 @@
 							<Label for="svcIISSiteName">IIS Site Name</Label>
 							<Input id="svcIISSiteName" placeholder="my-frontend" bind:value={svcIISSiteName} />
 						</div>
-						<div class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
+						<div
+							class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2"
+						>
 							<span class="font-medium text-foreground/90">Bootstrap profile:</span>
-							{iisAppKindLabel(svcIISAppKind)}. Watcher will set the IIS managed runtime automatically for this app kind.
+							{iisAppKindLabel(svcIISAppKind)}. Watcher will set the IIS managed runtime
+							automatically for this app kind.
 						</div>
 					{/if}
 
@@ -237,9 +251,18 @@
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div>
 							<Label>Additional managed config files</Label>
-							<p class="text-xs text-muted-foreground">Store runtime-generated config alongside this service. Use <code>Current dir</code> for IIS files like <code>web.config</code>.</p>
+							<p class="text-xs text-muted-foreground">
+								Store runtime-generated config alongside this service. Use <code>Current dir</code>
+								for IIS files like <code>web.config</code>.
+							</p>
 						</div>
-						<Button.Root variant="outline" size="sm" type="button" class="h-8 shrink-0" onclick={addSvcConfigFile}>
+						<Button.Root
+							variant="outline"
+							size="sm"
+							type="button"
+							class="h-8 shrink-0"
+							onclick={addSvcConfigFile}
+						>
 							<Plus class="mr-1.5 h-3 w-3" /> Add file
 						</Button.Root>
 					</div>
@@ -260,14 +283,21 @@
 										</Button.Root>
 									</div>
 									<div class="grid gap-2 sm:grid-cols-[1fr_160px]">
-										<Input bind:value={file.file_path} placeholder="web.config or settings/appsettings.json" />
+										<Input
+											bind:value={file.file_path}
+											placeholder="web.config or settings/appsettings.json"
+										/>
 										<Select.Root type="single" bind:value={file.target}>
 											<Select.Trigger>
 												{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
 											</Select.Trigger>
 											<Select.Content>
-												<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
-												<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
+												<Select.Item value="app_dir" label="Service/app dir"
+													>Service/app dir</Select.Item
+												>
+												<Select.Item value="release_dir" label="Current dir"
+													>Current dir</Select.Item
+												>
 											</Select.Content>
 										</Select.Root>
 									</div>
@@ -281,13 +311,16 @@
 						</div>
 					{:else}
 						<p class="text-xs text-muted-foreground">
-							Use this for runtime files like <code>config.json</code>, <code>appsettings.json</code>, or other generated config.
+							Use this for runtime files like <code>config.json</code>,
+							<code>appsettings.json</code>, or other generated config.
 						</p>
 					{/if}
 				</div>
 			</div>
 			<Dialog.Footer class="shrink-0 border-t border-border/70 px-6 py-4">
-				<Button.Root variant="outline" type="button" onclick={() => (open = false)}>Cancel</Button.Root>
+				<Button.Root variant="outline" type="button" onclick={() => (open = false)}
+					>Cancel</Button.Root
+				>
 				<Button.Root type="submit" disabled={submitting}>
 					{submitting ? 'Adding...' : 'Add Service'}
 				</Button.Root>

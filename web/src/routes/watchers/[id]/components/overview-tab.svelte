@@ -10,73 +10,103 @@
 	} = $props();
 </script>
 
-<div class="grid gap-4 sm:grid-cols-2">
-	<Card.Root class="border-border bg-card">
-		<Card.Header class="pb-3">
-			<Card.Title class="text-sm font-medium text-muted-foreground">Configuration</Card.Title>
-		</Card.Header>
-		<Card.Content class="space-y-2 text-sm">
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Metadata URL</span>
-				<span class="max-w-[220px] truncate font-mono text-xs">{watcher.metadata_url}</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Check Interval</span>
-				<span>{watcher.check_interval_sec}s</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Install Dir</span>
-				<span class="font-mono text-xs">{watcher.install_dir}</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Download Retries</span>
-				<span>{watcher.download_retries}</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Health Check</span>
-				<span>{watcher.hc_enabled ? 'Enabled' : 'Disabled'}</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Deploy Environment</span>
-				<span>{watcher.deployment_environment || 'Global default'}</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">GitHub Token</span>
-				<span>{watcher.has_github_token ? (watcher.github_token_masked || 'Configured') : 'Global default'}</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Webhook</span>
-				<span>{watcher.webhook_enabled ? 'Enabled' : 'Disabled'}</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Webhook URL</span>
-				<span class="max-w-[220px] truncate font-mono text-xs">{watcher.webhook_url || 'Global default / unset'}</span>
-			</div>
+<div class="space-y-4">
+	<Card.Root>
+		<Card.Header><Card.Title class="text-base">Deployment</Card.Title></Card.Header>
+		<Card.Content>
+			<dl class="grid grid-cols-2 gap-4 sm:grid-cols-3">
+				<div>
+					<dt class="text-xs text-muted-foreground">Current version</dt>
+					<dd class="mt-1 font-mono text-lg font-semibold break-all">
+						{watcher.current_version || 'No deployment yet'}
+					</dd>
+				</div>
+				<div>
+					<dt class="text-xs text-muted-foreground">Last deployed</dt>
+					<dd class="mt-1 text-sm">
+						{watcher.last_deployed ? timeAgo(watcher.last_deployed) : 'Never'}
+					</dd>
+				</div>
+				<div>
+					<dt class="text-xs text-muted-foreground">Last checked</dt>
+					<dd class="mt-1 text-sm">
+						{watcher.last_checked ? timeAgo(watcher.last_checked) : 'Never'}
+					</dd>
+				</div>
+			</dl>
+			{#if watcher.last_error}<p
+					role="alert"
+					class="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm break-words text-red-400"
+				>
+					{watcher.last_error}
+				</p>{/if}
 		</Card.Content>
 	</Card.Root>
-
-	<Card.Root class="border-border bg-card">
-		<Card.Header class="pb-3">
-			<Card.Title class="text-sm font-medium text-muted-foreground">Deploy State</Card.Title>
-		</Card.Header>
-		<Card.Content class="space-y-2 text-sm">
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Current Version</span>
-				<span class="font-mono">{watcher.current_version || '—'}</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Last Checked</span>
-				<span>{watcher.last_checked ? timeAgo(watcher.last_checked) : 'Never'}</span>
-			</div>
-			<div class="flex justify-between">
-				<span class="text-muted-foreground">Last Deployed</span>
-				<span>{watcher.last_deployed ? timeAgo(watcher.last_deployed) : 'Never'}</span>
-			</div>
-			{#if watcher.last_error}
-				<div class="mt-2 rounded border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-400">
-					{watcher.last_error}
+	<Card.Root>
+		<Card.Header><Card.Title class="text-base">Configuration</Card.Title></Card.Header>
+		<Card.Content class="space-y-4">
+			<dl class="grid grid-cols-2 gap-4">
+				<div>
+					<dt class="text-xs text-muted-foreground">Deployment policy</dt>
+					<dd class="mt-1 text-sm">
+						{watcher.auto_deploy
+							? 'Automatic'
+							: 'Manual approval'}{#if watcher.intercept_next_release}
+							· Next release held{/if}
+					</dd>
 				</div>
-			{/if}
+				<div>
+					<dt class="text-xs text-muted-foreground">Polling</dt>
+					<dd class="mt-1 text-sm">
+						{watcher.paused ? 'Paused' : `Every ${watcher.check_interval_sec}s`}
+					</dd>
+				</div>
+				<div>
+					<dt class="text-xs text-muted-foreground">Health checks</dt>
+					<dd class="mt-1 text-sm">{watcher.hc_enabled ? 'Enabled' : 'Disabled'}</dd>
+				</div>
+				<div>
+					<dt class="text-xs text-muted-foreground">Install directory</dt>
+					<dd class="mt-1 font-mono text-xs break-all">{watcher.install_dir}</dd>
+				</div>
+			</dl>
+			<details class="border-t border-border pt-4 text-sm">
+				<summary class="cursor-pointer text-muted-foreground"
+					>Source and integration details</summary
+				>
+				<dl class="mt-4 grid gap-4 sm:grid-cols-2">
+					<div class="sm:col-span-2">
+						<dt class="text-xs text-muted-foreground">Metadata URL</dt>
+						<dd class="mt-1 font-mono text-xs break-all">{watcher.metadata_url}</dd>
+					</div>
+					<div>
+						<dt class="text-xs text-muted-foreground">Download retries</dt>
+						<dd class="mt-1">{watcher.download_retries}</dd>
+					</div>
+					<div>
+						<dt class="text-xs text-muted-foreground">Deployment environment</dt>
+						<dd class="mt-1 break-words">{watcher.deployment_environment || 'Global default'}</dd>
+					</div>
+					<div>
+						<dt class="text-xs text-muted-foreground">GitHub token</dt>
+						<dd class="mt-1 break-all">
+							{watcher.has_github_token
+								? watcher.github_token_masked || 'Watcher override'
+								: 'Global default'}
+						</dd>
+					</div>
+					<div>
+						<dt class="text-xs text-muted-foreground">Webhooks</dt>
+						<dd class="mt-1">{watcher.webhook_enabled ? 'Enabled' : 'Disabled'}</dd>
+					</div>
+					{#if watcher.webhook_enabled}<div class="sm:col-span-2">
+							<dt class="text-xs text-muted-foreground">Webhook URL</dt>
+							<dd class="mt-1 font-mono text-xs break-all">
+								{watcher.webhook_url || 'Global default'}
+							</dd>
+						</div>{/if}
+				</dl>
+			</details>
 		</Card.Content>
 	</Card.Root>
 </div>

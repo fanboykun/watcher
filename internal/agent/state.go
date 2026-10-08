@@ -129,9 +129,12 @@ func (s *StateManager) SetHealthy(version string) error {
 	// Update watcher state
 	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
 		UpdateColumns(map[string]any{
-			"status":        string(StatusHealthy),
-			"last_deployed": &now,
-			"last_error":    "",
+			"status":                 string(StatusHealthy),
+			"last_deployed":          &now,
+			"last_error":             "",
+			"intercept_next_release": false,
+			"pending_version":        "",
+			"approved_version":       "",
 		}).Error
 	if err != nil {
 		return err

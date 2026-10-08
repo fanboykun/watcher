@@ -23,10 +23,18 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	// Earlier candidate builds allowed duplicates. Keep the latest saved revision
+	// before installing the service/target uniqueness constraint.
+	if db.Migrator().HasTable(&ServiceConfigRevision{}) {
+		if err := db.Exec("DELETE FROM service_config_revisions WHERE id NOT IN (SELECT MAX(id) FROM service_config_revisions GROUP BY service_id, target_version)").Error; err != nil {
+			return nil, fmt.Errorf("deduplicate configuration revisions: %w", err)
+		}
+	}
 	if err := db.AutoMigrate(
 		&AuthCredential{},
 		&Watcher{},
 		&Service{},
+		&ServiceConfigRevision{},
 		&ServiceConfigFile{},
 		&DeployLog{},
 		&HealthEvent{},
@@ -123,6 +131,8 @@ func ensureSchemaCompatibility(db *gorm.DB) error {
 		{model: &Service{}, column: "last_health_http_status", field: "LastHealthHTTPStatus"},
 		{model: &Service{}, column: "last_health_error", field: "LastHealthError"},
 		{model: &Service{}, column: "last_health_checked_at", field: "LastHealthCheckedAt"},
+		{model: &Watcher{}, column: "intercept_next_release", field: "InterceptNextRelease"},
+		{model: &Watcher{}, column: "pending_version", field: "PendingVersion"},
 		{model: &ServiceConfigFile{}, column: "target", field: "Target"},
 		{model: &HealthEvent{}, column: "previous_status", field: "PreviousStatus"},
 		{model: &HealthEvent{}, column: "source", field: "Source"},

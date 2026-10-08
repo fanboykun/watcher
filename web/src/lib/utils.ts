@@ -1,14 +1,14 @@
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
 
 export function cn(...inputs: ClassValue[]) {
 	return twMerge(clsx(inputs));
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type WithoutChild<T> = T extends { child?: any } ? Omit<T, "child"> : T;
+export type WithoutChild<T> = T extends { child?: any } ? Omit<T, 'child'> : T;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type WithoutChildren<T> = T extends { children?: any } ? Omit<T, "children"> : T;
+export type WithoutChildren<T> = T extends { children?: any } ? Omit<T, 'children'> : T;
 export type WithoutChildrenOrChild<T> = WithoutChildren<WithoutChild<T>>;
 export type WithElementRef<T, U extends HTMLElement = HTMLElement> = T & { ref?: U | null };
 
@@ -17,19 +17,19 @@ export function timeAgo(dateString: string | null | undefined): string {
 	const date = new Date(dateString);
 	const now = new Date();
 	const diffMs = now.getTime() - date.getTime();
-	
+
 	const diffSec = Math.floor(diffMs / 1000);
 	if (diffSec < 60) return `${diffSec}s ago`;
-	
+
 	const diffMin = Math.floor(diffSec / 60);
 	if (diffMin < 60) return `${diffMin}m ago`;
-	
+
 	const diffHour = Math.floor(diffMin / 60);
 	if (diffHour < 24) return `${diffHour}h ago`;
-	
+
 	const diffDay = Math.floor(diffHour / 24);
 	if (diffDay < 30) return `${diffDay}d ago`;
-	
+
 	return date.toLocaleDateString();
 }
 
@@ -47,12 +47,16 @@ export function formatDuration(ms: number): string {
 export function statusColor(s: string): string {
 	switch (s) {
 		case 'healthy':
+		case 'succeeded':
 			return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
 		case 'deploying':
+		case 'approved':
+		case 'in_progress':
 			return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
 		case 'failed':
 			return 'bg-red-500/15 text-red-400 border-red-500/30';
 		case 'rollback':
+		case 'pending_approval':
 			return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
 		default:
 			return 'bg-muted text-muted-foreground border-border';

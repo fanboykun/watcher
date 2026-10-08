@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/gin-gonic/gin"
@@ -87,16 +85,20 @@ func (h *Handler) SelfRestart(c *gin.Context) {
 		return
 	}
 
-	// Respond first so the client can receive status before process restart affects connectivity.
+	exePath, err := os.Executable()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Could not locate watcher executable: " + err.Error()})
+		return
+	}
+	if err := agent.ScheduleServiceRestart(h.nssmPath, svc, filepath.Dir(exePath)); err != nil {
+		h.log.Error("could not schedule service restart", "error", err)
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
 	c.JSON(http.StatusAccepted, gin.H{
-		"message":      "watcher restart triggered",
+		"message":      "watcher restart scheduled",
 		"service_name": svc,
 	})
-
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		exec.Command(h.nssmPath, "restart", svc).CombinedOutput()
-	}()
 }
 
 // SelfUninstall returns a PowerShell uninstall script for the watcher.

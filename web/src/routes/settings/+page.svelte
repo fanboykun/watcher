@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import {
@@ -26,23 +27,72 @@
 		AlertTriangle,
 		CheckCircle2,
 		Copy,
-		LockKeyhole,
-		BookOpenText,
-		ExternalLink
+		LockKeyhole
 	} from '@lucide/svelte';
-	import { webhookDocsHref } from '$lib/webhooks';
+	import * as Tabs from '$lib/components/ui/tabs';
+	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let versionInfo = $state<SelfVersionResponse | null>(null);
 	let updateInfo = $state<SelfUpdateCheckResponse | null>(null);
 	let agentConfig = $state<SelfConfigResponse | null>(null);
 	let authStatus = $state<{ authenticated: boolean; using_default_password: boolean } | null>(null);
-	let error = $state('');
-	let success = $state('');
+	let loading = $state(true);
+	let loadError = $state('');
+	let configError = $state('');
+	let configSuccess = $state('');
+	let passwordError = $state('');
+	let passwordSuccess = $state('');
+	let maintenanceError = $state('');
+	let maintenanceSuccess = $state('');
+	let saveNotes = $state<string[]>([]);
+	let activeSection = $state('deployment');
+	let savedDraft = $state('');
+	const configDirty = $derived(Boolean(agentConfig) && draftKey() !== savedDraft);
+
+	function draftKey() {
+		return JSON.stringify([
+			cfgEnvironment,
+			cfgGithubDeployEnabled,
+			cfgLogDir,
+			cfgNssmPath,
+			cfgDBPath,
+			cfgAPIPort,
+			cfgAPIBaseURL,
+			cfgWebAssetsPath,
+			cfgWatcherRepoURL,
+			cfgWatcherServiceName,
+			cfgWebhookDefaultURL,
+			cfgWebhookTimeoutSec,
+			cfgWebhookRetryScheduleSec,
+			cfgWebhookAutoPauseEnabled,
+			cfgWebhookAutoPauseAfterFailures,
+			cfgWebhookEventRetentionDays,
+			cfgWebhookDeliveryRetentionDays,
+			githubTokenInput,
+			clearGitHubToken,
+			webhookDefaultSigningSecretInput,
+			clearWebhookDefaultSigningSecret
+		]);
+	}
+
+	function resetConfig() {
+		syncConfigForm();
+		githubTokenInput = '';
+		clearGitHubToken = false;
+		webhookDefaultSigningSecretInput = '';
+		clearWebhookDefaultSigningSecret = false;
+		savedDraft = draftKey();
+		configError = '';
+		configSuccess = '';
+		saveNotes = [];
+	}
 
 	let isChecking = $state(false);
 	let isUpdating = $state(false);
 	let isSavingConfig = $state(false);
 	let isSavingPassword = $state(false);
+	let isRestarting = $state(false);
+	const agentBusy = $derived(isSavingConfig || isRestarting || isUpdating);
 	let uninstallScript = $state('');
 	let githubTokenInput = $state('');
 	let clearGitHubToken = $state(false);
@@ -57,6 +107,7 @@
 	let cfgDBPath = $state('');
 	let cfgAPIPort = $state('');
 	let cfgAPIBaseURL = $state('');
+	let cfgWebAssetsPath = $state('');
 	let cfgWatcherRepoURL = $state('');
 	let cfgWatcherServiceName = $state('');
 	let cfgWebhookDefaultURL = $state('');
@@ -72,26 +123,29 @@
 	let showUpdateDialog = $state(false);
 
 	onMount(() => {
-		const init = async () => {
-			try {
-				updateInfo = getSelfUpdateSnapshot().info;
-				[versionInfo, agentConfig, authStatus] = await Promise.all([
-					api.selfVersion(),
-					api.selfConfig(),
-					api.authStatus()
-				]);
-				syncConfigForm();
-				void lookupSelfUpdate({ silent: true }).then((info) => {
-					if (info) {
-						updateInfo = info;
-					}
-				});
-			} catch (e) {
-				error = e instanceof Error ? e.message : 'Failed to load version info';
-			}
-		};
-		init();
+		void loadSettings();
 	});
+
+	async function loadSettings() {
+		loading = true;
+		loadError = '';
+		try {
+			updateInfo = getSelfUpdateSnapshot().info;
+			[versionInfo, agentConfig, authStatus] = await Promise.all([
+				api.selfVersion(),
+				api.selfConfig(),
+				api.authStatus()
+			]);
+			resetConfig();
+			void lookupSelfUpdate({ silent: true }).then((info) => {
+				if (info) updateInfo = info;
+			});
+		} catch (e) {
+			loadError = e instanceof Error ? e.message : 'Global settings could not be loaded';
+		} finally {
+			loading = false;
+		}
+	}
 
 	function syncConfigForm() {
 		if (!agentConfig) return;
@@ -102,6 +156,7 @@
 		cfgDBPath = agentConfig.db_path;
 		cfgAPIPort = agentConfig.api_port;
 		cfgAPIBaseURL = agentConfig.api_base_url;
+		cfgWebAssetsPath = agentConfig.web_assets_path ?? '';
 		cfgWatcherRepoURL = agentConfig.watcher_repo_url;
 		cfgWatcherServiceName = agentConfig.watcher_service_name;
 		cfgWebhookDefaultURL = agentConfig.webhook_default_url;
@@ -114,9 +169,10 @@
 	}
 
 	async function saveAgentConfig() {
+		if (agentBusy || isSavingPassword || !agentConfig || !configDirty) return;
 		isSavingConfig = true;
-		error = '';
-		success = '';
+		configError = '';
+		configSuccess = '';
 		try {
 			const payload: Record<string, string | boolean | number> = {
 				environment: cfgEnvironment,
@@ -126,6 +182,7 @@
 				db_path: cfgDBPath,
 				api_port: cfgAPIPort,
 				api_base_url: cfgAPIBaseURL,
+				web_assets_path: cfgWebAssetsPath.trim(),
 				watcher_repo_url: cfgWatcherRepoURL,
 				watcher_service_name: cfgWatcherServiceName,
 				webhook_default_url: cfgWebhookDefaultURL,
@@ -155,19 +212,21 @@
 			clearGitHubToken = false;
 			webhookDefaultSigningSecretInput = '';
 			clearWebhookDefaultSigningSecret = false;
-			success = res.message;
-			setTimeout(() => (success = ''), 4000);
+			savedDraft = draftKey();
+			configSuccess = res.message;
+			saveNotes = res.notes || [];
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to save config';
+			configError = e instanceof Error ? e.message : 'Failed to save config';
 		} finally {
 			isSavingConfig = false;
 		}
 	}
 
 	async function savePassword() {
+		if (isSavingPassword || agentBusy) return;
 		isSavingPassword = true;
-		error = '';
-		success = '';
+		passwordError = '';
+		passwordSuccess = '';
 		try {
 			if (!newPassword.trim()) {
 				throw new Error('New password is required');
@@ -181,30 +240,33 @@
 			currentPassword = '';
 			newPassword = '';
 			confirmPassword = '';
-			success = res.message;
-			setTimeout(() => (success = ''), 4000);
+			passwordSuccess = res.message;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to update password';
+			passwordError = e instanceof Error ? e.message : 'Failed to update password';
 		} finally {
 			isSavingPassword = false;
 		}
 	}
 
 	async function restartWatcherService() {
-		error = '';
-		success = '';
+		if (agentBusy || isSavingPassword || configDirty) return;
+		isRestarting = true;
+		maintenanceError = '';
+		maintenanceSuccess = '';
 		try {
 			const res = await api.selfRestart();
-			success = `${res.message} (${res.service_name})`;
+			maintenanceSuccess = `${res.message} (${res.service_name})`;
 			showRestartDialog = false;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to restart watcher service';
+			maintenanceError = e instanceof Error ? e.message : 'Failed to restart watcher service';
+		} finally {
+			isRestarting = false;
 		}
 	}
 
 	async function checkForUpdates() {
 		isChecking = true;
-		error = '';
+		maintenanceError = '';
 		try {
 			const info = await lookupSelfUpdate({ force: true });
 			updateInfo = info;
@@ -212,15 +274,16 @@
 				clearSelfUpdateDismissal();
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Check failed';
+			maintenanceError = e instanceof Error ? e.message : 'Check failed';
 		} finally {
 			isChecking = false;
 		}
 	}
 
 	async function performUpdate() {
+		if (agentBusy || isSavingPassword || configDirty) return;
 		isUpdating = true;
-		error = '';
+		maintenanceError = '';
 		try {
 			await api.selfUpdate();
 			clearSelfUpdateCache();
@@ -230,7 +293,7 @@
 				window.location.reload();
 			}, 3000);
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Update failed';
+			maintenanceError = e instanceof Error ? e.message : 'Update failed';
 			isUpdating = false;
 		}
 	}
@@ -240,7 +303,7 @@
 			const res = await api.selfUninstall();
 			uninstallScript = res.script;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Uninstall generation failed';
+			maintenanceError = e instanceof Error ? e.message : 'Uninstall generation failed';
 		}
 	}
 
@@ -249,7 +312,7 @@
 		try {
 			await navigator.clipboard.writeText(uninstallScript);
 		} catch (e) {
-			error = 'Failed to copy script';
+			maintenanceError = 'Failed to copy script';
 		}
 	}
 </script>
@@ -260,492 +323,765 @@
 
 <div class="space-y-6">
 	<div>
-		<h1 class="text-2xl font-bold tracking-tight">System Settings</h1>
+		<h1 class="text-2xl font-bold tracking-tight">Global settings</h1>
 		<p class="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
-			<Info class="h-4 w-4" /> Manage the Watcher agent installation and updates
+			<Info class="h-4 w-4" /> Defaults, access and maintenance for this agent
 		</p>
 	</div>
 
-	{#if success}
-		<div class="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-sm text-green-400">
-			{success}
-		</div>
-	{/if}
-
-	{#if error}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			{error}
-		</div>
-	{/if}
-
-	<Card.Root class="bg-card">
-		<Card.Header>
-			<Card.Title class="flex items-center gap-2">
-				<LockKeyhole class="h-4 w-4" /> Dashboard Password
-			</Card.Title>
-			<Card.Description>Change the password used for the dashboard and API.</Card.Description>
-		</Card.Header>
-		<Card.Content class="space-y-4">
-			{#if authStatus?.using_default_password}
-				<div
-					class="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300"
-				>
-					The dashboard is still using the default password. Change it before exposing Watcher
-					beyond a trusted machine.
-				</div>
-			{/if}
-
-			<div class="grid gap-4 md:grid-cols-3">
-				<div class="space-y-2">
-					<label class="text-sm text-muted-foreground" for="current-password"
-						>Current Password</label
-					>
-					<Input
-						id="current-password"
-						type="password"
-						bind:value={currentPassword}
-						autocomplete="current-password"
-					/>
-				</div>
-				<div class="space-y-2">
-					<label class="text-sm text-muted-foreground" for="new-password">New Password</label>
-					<Input
-						id="new-password"
-						type="password"
-						bind:value={newPassword}
-						autocomplete="new-password"
-					/>
-				</div>
-				<div class="space-y-2">
-					<label class="text-sm text-muted-foreground" for="confirm-password"
-						>Confirm Password</label
-					>
-					<Input
-						id="confirm-password"
-						type="password"
-						bind:value={confirmPassword}
-						autocomplete="new-password"
-					/>
-				</div>
-			</div>
-
-			<Button.Root onclick={savePassword} disabled={isSavingPassword}>
-				{isSavingPassword ? 'Saving...' : 'Update Password'}
-			</Button.Root>
-		</Card.Content>
-	</Card.Root>
-
-	<Card.Root class="bg-card">
-		<Card.Header>
-			<Card.Title>Deploy Agent Configuration</Card.Title>
-			<Card.Description>
-				Runtime values for polling, deployment reporting, storage, and the Watcher service itself.
-			</Card.Description>
-		</Card.Header>
-		<Card.Content class="space-y-4">
-			{#if agentConfig}
-				<div class="grid gap-4 md:grid-cols-2">
-					<div class="space-y-2">
-						<label class="text-sm text-muted-foreground" for="cfg-environment">Environment</label>
-						<Input id="cfg-environment" bind:value={cfgEnvironment} />
-					</div>
-					<div class="flex items-center gap-2 py-2">
-						<Checkbox id="cfg-github-deploy-enabled" bind:checked={cfgGithubDeployEnabled} />
-						<label
-							class="text-sm text-muted-foreground select-none"
-							for="cfg-github-deploy-enabled"
+	{#if loading}
+		<RequestLoading label="Loading global settings…" />
+	{:else if loadError}
+		<RequestError message={loadError} onRetry={loadSettings} />
+	{:else}
+		<Tabs.Root bind:value={activeSection}>
+			<Tabs.List>
+				<Tabs.Trigger value="deployment">Deployment</Tabs.Trigger>
+				<Tabs.Trigger value="webhooks">Webhooks</Tabs.Trigger>
+				<Tabs.Trigger value="installation">Installation</Tabs.Trigger>
+				<Tabs.Trigger value="access">Access</Tabs.Trigger>
+				<Tabs.Trigger value="maintenance">Maintenance</Tabs.Trigger>
+			</Tabs.List>
+			<Tabs.Content value="deployment"
+				><fieldset disabled={agentBusy || isSavingPassword}>
+					<Card.Root>
+						<Card.Header
+							><Card.Title>Deployment defaults</Card.Title><Card.Description
+								>Inherited by watchers unless overridden in their settings.</Card.Description
+							></Card.Header
 						>
-							Enable GitHub Deployment API
-						</label>
-					</div>
-					<div class="space-y-2">
-						<label class="text-sm text-muted-foreground" for="cfg-api-port">API Port</label>
-						<Input id="cfg-api-port" bind:value={cfgAPIPort} />
-					</div>
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-github-token"
-							>GitHub Token (leave blank to keep current)</label
-						>
-						<Input
-							id="cfg-github-token"
-							type="password"
-							placeholder={agentConfig.github_token_masked || 'not set'}
-							bind:value={githubTokenInput}
-						/>
-						<div class="mt-2 flex items-center gap-2">
-							<Checkbox id="clear-github-token" bind:checked={clearGitHubToken} />
-							<label class="text-xs text-muted-foreground select-none" for="clear-github-token">
-								Clear existing GitHub token
-							</label>
-						</div>
-						<div
-							class="space-y-1 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
-						>
-							<p class="font-medium text-foreground/90">GitHub token requirements</p>
-							<p>Public repos: token optional. Private repos: token required.</p>
-							<p>Fine-grained PAT minimum: <code>Contents: Read</code>.</p>
-							<p>
-								If GitHub Deployment API is enabled: also grant <code
-									>Deployments: Read and write</code
-								>.
-							</p>
-							<p class="pt-1 font-medium text-foreground/90">Org private repo checklist</p>
-							<p>Token must be authorized for org SSO/SAML and allowed by org PAT policy.</p>
-							<p>Token owner must already have access to the target private repository.</p>
-						</div>
-					</div>
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-api-base-url">API Base URL</label>
-						<Input
-							id="cfg-api-base-url"
-							bind:value={cfgAPIBaseURL}
-							placeholder="http://192.168.1.100:8080"
-						/>
-					</div>
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-watcher-repo-url"
-							>Watcher Repo URL</label
-						>
-						<Input id="cfg-watcher-repo-url" bind:value={cfgWatcherRepoURL} />
-					</div>
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-watcher-service-name"
-							>Watcher Service Name</label
-						>
-						<Input id="cfg-watcher-service-name" bind:value={cfgWatcherServiceName} />
-					</div>
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-nssm-path">NSSM Path</label>
-						<Input id="cfg-nssm-path" bind:value={cfgNssmPath} />
-					</div>
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-log-dir">Log Directory</label>
-						<Input id="cfg-log-dir" bind:value={cfgLogDir} />
-					</div>
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-db-path">Database Path</label>
-						<Input id="cfg-db-path" bind:value={cfgDBPath} />
-					</div>
-				</div>
-
-				<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-					Changes are written to <code>{agentConfig.env_path}</code>. Watcher loops reload
-					automatically, but changing API port or DB path requires service restart.
-				</div>
-
-				<div class="flex gap-2">
-					<Button.Root onclick={saveAgentConfig} disabled={isSavingConfig}>
-						{isSavingConfig ? 'Saving...' : 'Save Deploy Agent Config'}
-					</Button.Root>
-					<Button.Root variant="outline" onclick={() => (showRestartDialog = true)}>
-						Restart Watcher Service
-					</Button.Root>
-				</div>
-			{:else}
-				<div class="h-20 animate-pulse rounded bg-muted/50"></div>
-			{/if}
-		</Card.Content>
-	</Card.Root>
-
-	<Card.Root class="bg-card">
-		<Card.Header>
-			<Card.Title>Webhook Defaults</Card.Title>
-			<Card.Description>
-				Global webhook routing, authentication, retry, and retention defaults used across watchers.
-			</Card.Description>
-			<div class="flex flex-wrap gap-2">
-				<a href={resolve('/webhooks')}>
-					<Button.Root size="sm" variant="outline">Webhook Hub</Button.Root>
-				</a>
-				<a href={resolve('/docs/webhooks')}>
-					<Button.Root size="sm" variant="outline">
-						<BookOpenText class="mr-2 h-4 w-4" />
-						Integration Guide
-					</Button.Root>
-				</a>
-				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-				<a href={webhookDocsHref} target="_blank" rel="noopener noreferrer">
-					<Button.Root size="sm" variant="outline">
-						<ExternalLink class="mr-2 h-4 w-4" />
-						Repo Docs
-					</Button.Root>
-				</a>
-			</div>
-		</Card.Header>
-		<Card.Content class="space-y-4">
-			{#if agentConfig}
-				<div class="grid gap-4 md:grid-cols-2">
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-url"
-							>Default Webhook URL</label
-						>
-						<Input
-							id="cfg-webhook-default-url"
-							bind:value={cfgWebhookDefaultURL}
-							placeholder="https://example.com/hooks/watcher"
-						/>
-						<p class="text-xs text-muted-foreground">
-							Watchers can override this, but leaving watcher URL blank will inherit this default.
-						</p>
-					</div>
-					<div class="space-y-2 md:col-span-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-default-signing-secret">
-							Default Webhook Signing Secret (leave blank to keep current)
-						</label>
-						<Input
-							id="cfg-webhook-default-signing-secret"
-							type="password"
-							placeholder={agentConfig.webhook_default_signing_secret_masked || 'not set'}
-							bind:value={webhookDefaultSigningSecretInput}
-						/>
-						<div class="mt-2 flex items-center gap-2">
-							<Checkbox
-								id="clear-webhook-default-signing-secret"
-								bind:checked={clearWebhookDefaultSigningSecret}
-							/>
-							<label
-								class="text-xs text-muted-foreground select-none"
-								for="clear-webhook-default-signing-secret"
-							>
-								Clear existing default webhook signing secret
-							</label>
-						</div>
-						<p class="text-xs text-muted-foreground">
-							Use a Standard Webhooks HMAC signing secret. Raw base64 secret material or the conventional <code>whsec_...</code> form both work.
-						</p>
-					</div>
-					<div class="space-y-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-timeout-sec"
-							>Webhook Timeout (s)</label
-						>
-						<Input
-							id="cfg-webhook-timeout-sec"
-							type="number"
-							min="1"
-							bind:value={cfgWebhookTimeoutSec}
-						/>
-					</div>
-					<div class="space-y-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-retry-schedule-sec">
-							Webhook Retry Schedule (seconds CSV)
-						</label>
-						<Input
-							id="cfg-webhook-retry-schedule-sec"
-							bind:value={cfgWebhookRetryScheduleSec}
-							placeholder="0,10,60,300"
-						/>
-					</div>
-					<div class="flex items-center gap-2 py-2">
-						<Checkbox
-							id="cfg-webhook-auto-pause-enabled"
-							bind:checked={cfgWebhookAutoPauseEnabled}
-						/>
-						<label
-							class="text-sm text-muted-foreground select-none"
-							for="cfg-webhook-auto-pause-enabled"
-						>
-							Enable webhook auto-pause
-						</label>
-					</div>
-					<div class="space-y-2">
-						<label
-							class="text-sm text-muted-foreground"
-							for="cfg-webhook-auto-pause-after-failures"
-						>
-							Auto-pause after failures
-						</label>
-						<Input
-							id="cfg-webhook-auto-pause-after-failures"
-							type="number"
-							min="1"
-							bind:value={cfgWebhookAutoPauseAfterFailures}
-						/>
-					</div>
-					<div class="space-y-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-event-retention-days">
-							Webhook Event Retention (days)
-						</label>
-						<Input
-							id="cfg-webhook-event-retention-days"
-							type="number"
-							min="1"
-							bind:value={cfgWebhookEventRetentionDays}
-						/>
-					</div>
-					<div class="space-y-2">
-						<label class="text-sm text-muted-foreground" for="cfg-webhook-delivery-retention-days">
-							Webhook Delivery Retention (days)
-						</label>
-						<Input
-							id="cfg-webhook-delivery-retention-days"
-							type="number"
-							min="1"
-							bind:value={cfgWebhookDeliveryRetentionDays}
-						/>
-					</div>
-				</div>
-
-				<div class="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-					These values act as global defaults. Watchers can still override URL, signing secret, and
-					subscriptions individually.
-				</div>
-
-				<div class="flex gap-2">
-					<Button.Root onclick={saveAgentConfig} disabled={isSavingConfig}>
-						{isSavingConfig ? 'Saving...' : 'Save Webhook Defaults'}
-					</Button.Root>
-				</div>
-			{:else}
-				<div class="h-20 animate-pulse rounded bg-muted/50"></div>
-			{/if}
-		</Card.Content>
-	</Card.Root>
-
-	<Card.Root class="bg-card">
-		<Card.Header>
-			<Card.Title>Watcher Version</Card.Title>
-			<Card.Description>Current version and system info</Card.Description>
-		</Card.Header>
-		<Card.Content class="space-y-4">
-			{#if versionInfo}
-				<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-					<div class="rounded border border-border bg-muted/50 p-3">
-						<div class="mb-1 text-xs text-muted-foreground">Version</div>
-						<div class="font-mono text-sm">{versionInfo.version}</div>
-					</div>
-					<div class="rounded border border-border bg-muted/50 p-3">
-						<div class="mb-1 text-xs text-muted-foreground">Go Runtime</div>
-						<div class="font-mono text-sm">{versionInfo.go_version}</div>
-					</div>
-					<div class="rounded border border-border bg-muted/50 p-3">
-						<div class="mb-1 text-xs text-muted-foreground">Platform</div>
-						<div class="font-mono text-sm">{versionInfo.os} / {versionInfo.arch}</div>
-					</div>
-					<div class="rounded border border-border bg-muted/50 p-3 lg:col-span-4">
-						<div class="mb-1 text-xs text-muted-foreground">Executable Path</div>
-						<div class="truncate font-mono text-xs break-all">{versionInfo.executable}</div>
-					</div>
-				</div>
-			{:else if !error}
-				<div class="h-24 animate-pulse rounded bg-muted/50"></div>
-			{/if}
-
-			<div class="mt-4 border-t border-border pt-4">
-				<Button.Root
-					onclick={checkForUpdates}
-					disabled={isChecking || isUpdating}
-					variant="outline"
-				>
-					<RotateCcw class={`mr-2 h-4 w-4 ${isChecking ? 'animate-spin' : ''}`} />
-					{isChecking ? 'Checking...' : 'Check for Updates'}
-				</Button.Root>
-			</div>
-
-			{#if updateInfo}
-				<div
-					class="mt-4 rounded border p-4 {updateInfo.update_available
-						? 'border-blue-500/50 bg-blue-500/5 text-blue-50'
-						: 'border-emerald-500/30 bg-emerald-500/5'}"
-				>
-					{#if updateInfo.update_available}
-						<div class="flex items-start justify-between">
-							<div>
-								<h4 class="mb-1 flex items-center gap-2 font-medium text-blue-400">
-									<Download class="h-4 w-4" /> Update Available
-								</h4>
-								<p class="text-sm">
-									A new version of Watcher <strong>{updateInfo.latest_version}</strong> is available.
-								</p>
-								<p class="mt-1 text-xs text-muted-foreground">
-									Currently running: {updateInfo.current_version}
-								</p>
-								{#if updateInfo.published_at}
-									<p class="mt-1 text-xs text-muted-foreground">
-										Published: {new Date(updateInfo.published_at).toLocaleString()}
+						<Card.Content
+							><div class="grid gap-4 md:grid-cols-2">
+								<div class="space-y-2">
+									<label class="text-sm text-muted-foreground" for="cfg-environment"
+										>Environment</label
+									>
+									<Input
+										id="cfg-environment"
+										bind:value={cfgEnvironment}
+										aria-describedby="cfg-environment-help"
+									/>
+									<p id="cfg-environment-help" class="text-xs text-muted-foreground">
+										Default environment name reported to GitHub. Individual watchers can override
+										it.
 									</p>
-								{/if}
-							</div>
-							<Button.Root
-								onclick={() => (showUpdateDialog = true)}
-								disabled={isUpdating}
-								class="bg-blue-600 text-white hover:bg-blue-700"
-							>
-								{isUpdating ? 'Updating...' : 'Update & Restart Watcher'}
-							</Button.Root>
-						</div>
-					{:else}
-						<div class="flex items-center gap-2 text-sm font-medium text-emerald-500">
-							<CheckCircle2 class="h-4 w-4" /> Watcher is up to date (running the latest version: {updateInfo.latest_version}).
-						</div>
-					{/if}
-				</div>
-			{/if}
-		</Card.Content>
-	</Card.Root>
+								</div>
+								<div class="flex flex-wrap items-center gap-2 py-2">
+									<Checkbox
+										id="cfg-github-deploy-enabled"
+										bind:checked={cfgGithubDeployEnabled}
+										aria-describedby="cfg-github-deploy-enabled-help"
+									/>
 
-	<Card.Root class="bg-card">
-		<Card.Header>
-			<Card.Title class="flex items-center gap-2 text-red-400">
-				<AlertTriangle class="h-4 w-4" /> Uninstall Watcher
-			</Card.Title>
-			<Card.Description
-				>Generate a PowerShell script to safely remove the Watcher agent, services, and registry
-				keys.</Card.Description
+									<label
+										class="text-sm text-muted-foreground select-none"
+										for="cfg-github-deploy-enabled"
+									>
+										Enable GitHub Deployment API
+									</label>
+									<p
+										id="cfg-github-deploy-enabled-help"
+										class="w-full text-xs text-muted-foreground"
+									>
+										Report deployment progress to GitHub. Watcher can still deploy when reporting is
+										disabled.
+									</p>
+								</div>
+								<div class="space-y-2 md:col-span-2">
+									<label class="text-sm text-muted-foreground" for="cfg-github-token"
+										>GitHub token</label
+									>
+									<Input
+										id="cfg-github-token"
+										type="password"
+										placeholder={agentConfig?.github_token_masked || 'not set'}
+										bind:value={githubTokenInput}
+										disabled={clearGitHubToken}
+										autocomplete="off"
+									/>
+									<div class="mt-2 flex items-center gap-2">
+										<Checkbox id="clear-github-token" bind:checked={clearGitHubToken} />
+										<label
+											class="text-xs text-muted-foreground select-none"
+											for="clear-github-token"
+										>
+											Clear existing GitHub token
+										</label>
+									</div>
+									<p class="text-xs text-muted-foreground">
+										Leave blank to keep the current token.
+									</p>
+									<details class="text-xs text-muted-foreground">
+										<summary class="cursor-pointer">Token permissions</summary>
+										<p class="mt-2">
+											Private releases need Contents: Read. Deployment reporting also needs
+											Deployments: Read and write. Include the target repositories and any required
+											organization authorization.
+										</p>
+									</details>
+								</div>
+								<div class="space-y-2 md:col-span-2">
+									<label class="text-sm text-muted-foreground" for="cfg-api-base-url"
+										>API Base URL</label
+									>
+									<Input
+										id="cfg-api-base-url"
+										bind:value={cfgAPIBaseURL}
+										placeholder="http://192.168.1.100:8080"
+										aria-describedby="cfg-api-base-url-help"
+									/>
+									<p id="cfg-api-base-url-help" class="text-xs text-muted-foreground">
+										Dashboard URL reachable by your team. Used for deployment log links in GitHub.
+									</p>
+								</div>
+							</div></Card.Content
+						>
+					</Card.Root>
+				</fieldset></Tabs.Content
 			>
-		</Card.Header>
-		<Card.Content>
-			<Button.Root variant="destructive" onclick={generateUninstall} class="mb-4">
-				Generate Uninstall Script
-			</Button.Root>
+			<Tabs.Content value="webhooks"
+				><fieldset disabled={agentBusy || isSavingPassword}>
+					<Card.Root class="bg-card">
+						<Card.Header>
+							<Card.Title>Webhook Defaults</Card.Title>
+							<Card.Description>
+								Watchers inherit these values unless they supply their own URL or signing secret.
+							</Card.Description><Button.Root
+								size="sm"
+								variant="outline"
+								href={resolve('/docs/webhooks')}>Integration guide</Button.Root
+							>
+						</Card.Header>
+						<Card.Content class="space-y-4">
+							{#if agentConfig}
+								<div class="grid gap-4 md:grid-cols-2">
+									<div class="space-y-2 md:col-span-2">
+										<label class="text-sm text-muted-foreground" for="cfg-webhook-default-url"
+											>Default Webhook URL</label
+										>
+										<Input
+											id="cfg-webhook-default-url"
+											bind:value={cfgWebhookDefaultURL}
+											placeholder="https://example.com/hooks/watcher"
+										/>
+										<p class="text-xs text-muted-foreground">
+											Watchers can override this, but leaving watcher URL blank will inherit this
+											default.
+										</p>
+									</div>
+									<div class="space-y-2 md:col-span-2">
+										<label
+											class="text-sm text-muted-foreground"
+											for="cfg-webhook-default-signing-secret"
+										>
+											Signing secret
+										</label>
+										<Input
+											id="cfg-webhook-default-signing-secret"
+											type="password"
+											placeholder={agentConfig.webhook_default_signing_secret_masked || 'not set'}
+											bind:value={webhookDefaultSigningSecretInput}
+											disabled={clearWebhookDefaultSigningSecret}
+											autocomplete="off"
+										/>
+										<div class="mt-2 flex items-center gap-2">
+											<Checkbox
+												id="clear-webhook-default-signing-secret"
+												bind:checked={clearWebhookDefaultSigningSecret}
+											/>
+											<label
+												class="text-xs text-muted-foreground select-none"
+												for="clear-webhook-default-signing-secret"
+											>
+												Clear existing default webhook signing secret
+											</label>
+										</div>
+										<p class="text-xs text-muted-foreground">
+											Use a Standard Webhooks HMAC signing secret. Raw base64 secret material or the
+											conventional <code>whsec_...</code> form both work.
+										</p>
+									</div>
+									<details class="md:col-span-2">
+										<summary class="cursor-pointer text-sm font-medium"
+											>Delivery, retries and retention</summary
+										>
+										<div class="mt-4 grid gap-4 md:grid-cols-2">
+											<div class="space-y-2">
+												<label class="text-sm text-muted-foreground" for="cfg-webhook-timeout-sec"
+													>Webhook Timeout (s)</label
+												>
+												<Input
+													id="cfg-webhook-timeout-sec"
+													type="number"
+													min="1"
+													bind:value={cfgWebhookTimeoutSec}
+													aria-describedby="cfg-webhook-timeout-sec-help"
+												/>
+												<p id="cfg-webhook-timeout-sec-help" class="text-xs text-muted-foreground">
+													Maximum seconds to wait for the receiver to respond to each delivery.
+												</p>
+											</div>
+											<div class="space-y-2">
+												<label
+													class="text-sm text-muted-foreground"
+													for="cfg-webhook-retry-schedule-sec"
+												>
+													Webhook Retry Schedule (seconds CSV)
+												</label>
+												<Input
+													id="cfg-webhook-retry-schedule-sec"
+													bind:value={cfgWebhookRetryScheduleSec}
+													placeholder="0,10,60,300"
+													aria-describedby="cfg-webhook-retry-schedule-sec-help"
+												/>
+												<p
+													id="cfg-webhook-retry-schedule-sec-help"
+													class="text-xs text-muted-foreground"
+												>
+													Comma-separated retry delays in seconds, for example 0,10,60,300.
+												</p>
+											</div>
+											<div class="flex items-center gap-2 py-2">
+												<Checkbox
+													id="cfg-webhook-auto-pause-enabled"
+													bind:checked={cfgWebhookAutoPauseEnabled}
+												/>
+												<label
+													class="text-sm text-muted-foreground select-none"
+													for="cfg-webhook-auto-pause-enabled"
+												>
+													Enable webhook auto-pause
+												</label>
+											</div>
+											<div class="space-y-2">
+												<label
+													class="text-sm text-muted-foreground"
+													for="cfg-webhook-auto-pause-after-failures"
+												>
+													Auto-pause after failures
+												</label>
+												<Input
+													id="cfg-webhook-auto-pause-after-failures"
+													type="number"
+													min="1"
+													bind:value={cfgWebhookAutoPauseAfterFailures}
+													aria-describedby="cfg-webhook-auto-pause-after-failures-help"
+												/>
+												<p
+													id="cfg-webhook-auto-pause-after-failures-help"
+													class="text-xs text-muted-foreground"
+												>
+													Failed deliveries allowed before automatic delivery pauses. Used when
+													auto-pause is enabled.
+												</p>
+											</div>
+											<div class="space-y-2">
+												<label
+													class="text-sm text-muted-foreground"
+													for="cfg-webhook-event-retention-days"
+												>
+													Webhook Event Retention (days)
+												</label>
+												<Input
+													id="cfg-webhook-event-retention-days"
+													type="number"
+													min="1"
+													bind:value={cfgWebhookEventRetentionDays}
+													aria-describedby="cfg-webhook-event-retention-days-help"
+												/>
+												<p
+													id="cfg-webhook-event-retention-days-help"
+													class="text-xs text-muted-foreground"
+												>
+													Days to keep recorded webhook events before cleanup.
+												</p>
+											</div>
+											<div class="space-y-2">
+												<label
+													class="text-sm text-muted-foreground"
+													for="cfg-webhook-delivery-retention-days"
+												>
+													Webhook Delivery Retention (days)
+												</label>
+												<Input
+													id="cfg-webhook-delivery-retention-days"
+													type="number"
+													min="1"
+													bind:value={cfgWebhookDeliveryRetentionDays}
+													aria-describedby="cfg-webhook-delivery-retention-days-help"
+												/>
+												<p
+													id="cfg-webhook-delivery-retention-days-help"
+													class="text-xs text-muted-foreground"
+												>
+													Days to keep delivery attempts and their responses before cleanup.
+												</p>
+											</div>
+										</div>
+									</details>
+								</div>
+							{:else}
+								<div class="h-20 animate-pulse rounded bg-muted/50"></div>
+							{/if}
+						</Card.Content>
+					</Card.Root>
+				</fieldset></Tabs.Content
+			>
+			<Tabs.Content value="installation"
+				><fieldset disabled={agentBusy || isSavingPassword}>
+					<Card.Root>
+						<Card.Header
+							><Card.Title>Agent installation</Card.Title><Card.Description
+								>Network, storage and Windows service settings.</Card.Description
+							></Card.Header
+						>
+						<Card.Content
+							><div class="grid gap-4 md:grid-cols-2">
+								<div class="space-y-2">
+									<label class="text-sm text-muted-foreground" for="cfg-api-port">API Port</label>
+									<Input
+										id="cfg-api-port"
+										bind:value={cfgAPIPort}
+										aria-describedby="cfg-api-port-help"
+									/>
+									<p id="cfg-api-port-help" class="text-xs text-muted-foreground">
+										Port used by the dashboard and API. Requires an agent restart; reconnect using
+										the new port.
+									</p>
+								</div>
+								<div class="space-y-2 md:col-span-2">
+									<label class="text-sm text-muted-foreground" for="cfg-web-assets-path"
+										>Web Assets / Base Path</label
+									>
+									<Input
+										id="cfg-web-assets-path"
+										bind:value={cfgWebAssetsPath}
+										placeholder="/watcher"
+									/>
+									<p class="text-xs text-muted-foreground">
+										Subpath prefix when hosting behind a reverse proxy (e.g. <code>/watcher</code>
+										for
+										<code>https://domain.co.id/watcher</code>). Leave empty if serving from root.
+									</p>
+								</div>
+								<div class="space-y-2 md:col-span-2">
+									<label class="text-sm text-muted-foreground" for="cfg-watcher-repo-url"
+										>Watcher Repo URL</label
+									>
+									<Input
+										id="cfg-watcher-repo-url"
+										bind:value={cfgWatcherRepoURL}
+										aria-describedby="cfg-watcher-repo-url-help"
+									/>
+									<p id="cfg-watcher-repo-url-help" class="text-xs text-muted-foreground">
+										GitHub repository used to check for updates to the Watcher agent itself.
+									</p>
+								</div>
+								<div class="space-y-2 md:col-span-2">
+									<label class="text-sm text-muted-foreground" for="cfg-watcher-service-name"
+										>Watcher Service Name</label
+									>
+									<Input
+										id="cfg-watcher-service-name"
+										bind:value={cfgWatcherServiceName}
+										aria-describedby="cfg-watcher-service-name-help"
+									/>
+									<p id="cfg-watcher-service-name-help" class="text-xs text-muted-foreground">
+										Installed Windows service name used when restarting or updating this agent.
+									</p>
+								</div>
+								<div class="space-y-2 md:col-span-2">
+									<label class="text-sm text-muted-foreground" for="cfg-nssm-path">NSSM Path</label>
+									<Input
+										id="cfg-nssm-path"
+										bind:value={cfgNssmPath}
+										aria-describedby="cfg-nssm-path-help"
+									/>
+									<p id="cfg-nssm-path-help" class="text-xs text-muted-foreground">
+										Full path to nssm.exe on the machine running Watcher.
+									</p>
+								</div>
+								<div class="space-y-2 md:col-span-2">
+									<label class="text-sm text-muted-foreground" for="cfg-log-dir"
+										>Log Directory</label
+									>
+									<Input
+										id="cfg-log-dir"
+										bind:value={cfgLogDir}
+										aria-describedby="cfg-log-dir-help"
+									/>
+									<p id="cfg-log-dir-help" class="text-xs text-muted-foreground">
+										Directory for agent log files on the Watcher machine. Restart the agent after
+										changing it.
+									</p>
+								</div>
+								<div class="space-y-2 md:col-span-2">
+									<label class="text-sm text-muted-foreground" for="cfg-db-path"
+										>Database Path</label
+									>
+									<Input
+										id="cfg-db-path"
+										bind:value={cfgDBPath}
+										aria-describedby="cfg-db-path-help"
+									/>
+									<p id="cfg-db-path-help" class="text-xs text-muted-foreground">
+										Path to the SQLite database. Changing it selects a different database; it does
+										not move existing data. Requires a restart.
+									</p>
+								</div>
+							</div></Card.Content
+						>
+					</Card.Root>
+				</fieldset></Tabs.Content
+			>
+			<Tabs.Content value="access">
+				<Card.Root class="bg-card">
+					<Card.Header>
+						<Card.Title class="flex items-center gap-2">
+							<LockKeyhole class="h-4 w-4" /> Dashboard Password
+						</Card.Title>
+						<Card.Description>Change the password used for the dashboard and API.</Card.Description>
+					</Card.Header>
+					<Card.Content class="space-y-4">
+						<RequestError message={passwordError} />
+						{#if passwordSuccess}<p role="status" class="text-sm text-green-400">
+								{passwordSuccess}
+							</p>{/if}
+						<form
+							onsubmit={(event) => {
+								event.preventDefault();
+								void savePassword();
+							}}
+						>
+							<fieldset disabled={isSavingPassword || agentBusy} class="space-y-4">
+								{#if authStatus?.using_default_password}
+									<div
+										class="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300"
+									>
+										The dashboard is still using the default password. Change it before exposing
+										Watcher beyond a trusted machine.
+									</div>
+								{/if}
 
-			{#if uninstallScript}
-				<div class="relative rounded border border-red-500/30 bg-[#0a0a0a] p-4">
-					<Button.Root
-						variant="secondary"
-						size="icon"
-						class="absolute top-2 right-2 h-8 w-8 bg-muted text-xs hover:bg-muted/80"
-						onclick={copyUninstallScript}
+								<div class="grid gap-4 md:grid-cols-3">
+									<div class="space-y-2">
+										<label class="text-sm text-muted-foreground" for="current-password"
+											>Current Password</label
+										>
+										<Input
+											id="current-password"
+											type="password"
+											bind:value={currentPassword}
+											autocomplete="current-password"
+										/>
+									</div>
+									<div class="space-y-2">
+										<label class="text-sm text-muted-foreground" for="new-password"
+											>New Password</label
+										>
+										<Input
+											id="new-password"
+											type="password"
+											bind:value={newPassword}
+											autocomplete="new-password"
+										/>
+									</div>
+									<div class="space-y-2">
+										<label class="text-sm text-muted-foreground" for="confirm-password"
+											>Confirm Password</label
+										>
+										<Input
+											id="confirm-password"
+											type="password"
+											bind:value={confirmPassword}
+											autocomplete="new-password"
+										/>
+									</div>
+								</div>
+
+								<Button.Root
+									type="submit"
+									loading={isSavingPassword}
+									disabled={isSavingPassword || agentBusy}
+								>
+									{isSavingPassword ? 'Saving...' : 'Update Password'}
+								</Button.Root>
+							</fieldset>
+						</form></Card.Content
 					>
-						<Copy class="h-3.5 w-3.5" />
-					</Button.Root>
-					<pre class="overflow-x-auto p-2 font-mono text-xs leading-relaxed text-red-300"><code
-							>{uninstallScript}</code
-						></pre>
+				</Card.Root></Tabs.Content
+			>
+			<Tabs.Content value="maintenance"
+				><div class="space-y-6">
+					{#if configDirty}<div
+							class="section-toolbar rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+						>
+							<p class="text-sm text-amber-300">
+								Save or discard your configuration changes before restarting or updating.
+							</p>
+							<Button.Root
+								size="sm"
+								variant="outline"
+								onclick={() => {
+									activeSection = 'deployment';
+								}}>Review changes</Button.Root
+							>
+						</div>{/if}
+					{#if !showRestartDialog && !showUpdateDialog}<RequestError
+							message={maintenanceError}
+						/>{/if}
+					{#if maintenanceSuccess}<p role="status" class="text-sm text-green-400">
+							{maintenanceSuccess}
+						</p>{/if}
+					<Card.Root class="bg-card">
+						<Card.Header>
+							<Card.Title>Watcher Version</Card.Title>
+							<Card.Description>Current version and system info</Card.Description>
+						</Card.Header>
+						<Card.Content class="space-y-4">
+							{#if versionInfo}
+								<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+									<div class="rounded border border-border bg-muted/50 p-3">
+										<div class="mb-1 text-xs text-muted-foreground">Version</div>
+										<div class="font-mono text-sm">{versionInfo.version}</div>
+									</div>
+									<div class="rounded border border-border bg-muted/50 p-3">
+										<div class="mb-1 text-xs text-muted-foreground">Go Runtime</div>
+										<div class="font-mono text-sm">{versionInfo.go_version}</div>
+									</div>
+									<div class="rounded border border-border bg-muted/50 p-3">
+										<div class="mb-1 text-xs text-muted-foreground">Platform</div>
+										<div class="font-mono text-sm">{versionInfo.os} / {versionInfo.arch}</div>
+									</div>
+									<div class="rounded border border-border bg-muted/50 p-3 lg:col-span-4">
+										<div class="mb-1 text-xs text-muted-foreground">Executable Path</div>
+										<div class="font-mono text-xs break-all">{versionInfo.executable}</div>
+									</div>
+								</div>
+							{:else if !loadError}
+								<div class="h-24 animate-pulse rounded bg-muted/50"></div>
+							{/if}
+
+							<div class="mt-4 border-t border-border pt-4">
+								<Button.Root
+									onclick={checkForUpdates}
+									disabled={isChecking || agentBusy}
+									variant="outline"
+								>
+									<RotateCcw class={`mr-2 h-4 w-4 ${isChecking ? 'animate-spin' : ''}`} />
+									{isChecking ? 'Checking...' : 'Check for Updates'}
+								</Button.Root>
+							</div>
+
+							{#if updateInfo}
+								<div
+									class="mt-4 rounded border p-4 {updateInfo.update_available
+										? 'border-blue-500/50 bg-blue-500/5 text-blue-50'
+										: 'border-emerald-500/30 bg-emerald-500/5'}"
+								>
+									{#if updateInfo.update_available}
+										<div class="section-toolbar">
+											<div>
+												<h4 class="mb-1 flex items-center gap-2 font-medium text-blue-400">
+													<Download class="h-4 w-4" /> Update Available
+												</h4>
+												<p class="text-sm">
+													A new version of Watcher <strong>{updateInfo.latest_version}</strong> is available.
+												</p>
+												<p class="mt-1 text-xs text-muted-foreground">
+													Currently running: {updateInfo.current_version}
+												</p>
+												{#if updateInfo.published_at}
+													<p class="mt-1 text-xs text-muted-foreground">
+														Published: {new Date(updateInfo.published_at).toLocaleString()}
+													</p>
+												{/if}
+											</div>
+											<Button.Root
+												onclick={() => {
+													maintenanceError = '';
+													showUpdateDialog = true;
+												}}
+												disabled={agentBusy || configDirty || isSavingPassword}
+												class="bg-blue-600 text-white hover:bg-blue-700"
+											>
+												{isUpdating ? 'Updating...' : 'Update & Restart Watcher'}
+											</Button.Root>
+										</div>
+									{:else}
+										<div class="flex items-center gap-2 text-sm font-medium text-emerald-500">
+											<CheckCircle2 class="h-4 w-4" /> Watcher is up to date (running the latest version:
+											{updateInfo.latest_version}).
+										</div>
+									{/if}
+								</div>
+							{/if}
+						</Card.Content>
+					</Card.Root>
+					<Card.Root
+						><Card.Header
+							><Card.Title>Restart agent</Card.Title><Card.Description
+								>Temporarily disconnects the dashboard. Save pending configuration changes first.</Card.Description
+							></Card.Header
+						><Card.Content
+							><Button.Root
+								variant="outline"
+								disabled={agentBusy || isSavingPassword || configDirty}
+								onclick={() => {
+									maintenanceError = '';
+									showRestartDialog = true;
+								}}>Restart Watcher</Button.Root
+							></Card.Content
+						></Card.Root
+					>
+					<Card.Root class="bg-card">
+						<Card.Header>
+							<Card.Title class="flex items-center gap-2 text-red-400">
+								<AlertTriangle class="h-4 w-4" /> Uninstall Watcher
+							</Card.Title>
+							<Card.Description
+								>Generate a PowerShell script to safely remove the Watcher agent, services, and
+								registry keys.</Card.Description
+							>
+						</Card.Header>
+						<Card.Content>
+							<details>
+								<summary class="cursor-pointer text-sm font-medium text-red-400"
+									>Show uninstall tools</summary
+								>
+								<div class="mt-4">
+									<Button.Root
+										variant="destructive"
+										onclick={generateUninstall}
+										disabled={agentBusy}
+										class="mb-4"
+									>
+										Generate Uninstall Script
+									</Button.Root>
+
+									{#if uninstallScript}
+										<div class="relative rounded border border-red-500/30 bg-[#0a0a0a] p-4">
+											<Button.Root
+												variant="secondary"
+												size="icon"
+												class="absolute top-2 right-2 h-8 w-8 bg-muted text-xs hover:bg-muted/80"
+												onclick={copyUninstallScript}
+												aria-label="Copy uninstall script"
+											>
+												<Copy class="h-3.5 w-3.5" />
+											</Button.Root>
+											<pre
+												class="overflow-x-auto p-2 font-mono text-xs leading-relaxed text-red-300"><code
+													>{uninstallScript}</code
+												></pre>
+										</div>
+										<p class="mt-2 text-xs text-muted-foreground">
+											Save this script as <code>uninstall-watcher.ps1</code> and run it from an elevated
+											PowerShell window to completely remove watcher.
+										</p>
+									{/if}
+								</div>
+							</details></Card.Content
+						>
+					</Card.Root>
+				</div></Tabs.Content
+			>
+		</Tabs.Root>
+		{#if ['deployment', 'webhooks', 'installation'].includes(activeSection)}
+			<div
+				class="sticky bottom-3 z-10 space-y-3 rounded-lg border border-border bg-background p-4 shadow-lg"
+			>
+				<RequestError message={configError} />
+				{#if configSuccess && !configDirty}<p role="status" class="text-sm text-green-400">
+						{configSuccess}
+					</p>{/if}
+				{#if saveNotes.length && !configDirty}<ul
+						class="list-inside list-disc text-xs text-muted-foreground"
+					>
+						{#each saveNotes as note (note)}<li>{note}</li>{/each}
+					</ul>{/if}
+				<div class="section-toolbar">
+					<div class="min-w-0">
+						<p class="text-sm font-medium">
+							{configDirty ? 'Unsaved changes' : 'All changes saved'}
+						</p>
+						<p class="text-xs text-muted-foreground">
+							Saves deployment, webhook and installation settings together.
+						</p>
+					</div>
+					<div class="flex flex-wrap gap-2">
+						<Button.Root
+							variant="outline"
+							disabled={!configDirty || agentBusy || isSavingPassword}
+							onclick={resetConfig}>Discard changes</Button.Root
+						>
+						<Button.Root
+							loading={isSavingConfig}
+							disabled={!configDirty || agentBusy || isSavingPassword}
+							onclick={saveAgentConfig}>Save changes</Button.Root
+						>
+					</div>
 				</div>
-				<p class="mt-2 text-xs text-muted-foreground">
-					Save this script as <code>uninstall-watcher.ps1</code> and run it from an elevated PowerShell
-					window to completely remove watcher.
-				</p>
-			{/if}
-		</Card.Content>
-	</Card.Root>
+				<details class="text-xs text-muted-foreground">
+					<summary class="cursor-pointer">Where settings are saved</summary>
+					<p class="mt-2 break-all">{agentConfig?.env_path}</p>
+					<p class="mt-1">
+						Watcher loops reload after saving. Port, database, logging and dashboard path changes
+						require an agent restart.
+					</p>
+				</details>
+			</div>
+		{/if}
+	{/if}
 </div>
 
-<Dialog.Root bind:open={showRestartDialog}>
-	<Dialog.Content class="sm:max-w-115">
+<Dialog.Root
+	bind:open={showRestartDialog}
+	onOpenChange={(open) => {
+		if (isRestarting && !open) showRestartDialog = true;
+	}}
+>
+	<Dialog.Content class="sm:max-w-115" showCloseButton={!isRestarting}>
 		<Dialog.Header>
 			<Dialog.Title>Restart Watcher Service</Dialog.Title>
 			<Dialog.Description>
 				Restart watcher service now? This may temporarily disconnect the dashboard.
 			</Dialog.Description>
 		</Dialog.Header>
+		<RequestError message={maintenanceError} />
 		<Dialog.Footer>
-			<Button.Root variant="outline" type="button" onclick={() => (showRestartDialog = false)}>
+			<Button.Root
+				variant="outline"
+				type="button"
+				disabled={isRestarting}
+				onclick={() => (showRestartDialog = false)}
+			>
 				Cancel
 			</Button.Root>
-			<Button.Root type="button" onclick={restartWatcherService}>Restart</Button.Root>
+			<Button.Root
+				type="button"
+				disabled={isRestarting}
+				loading={isRestarting}
+				onclick={restartWatcherService}>Restart</Button.Root
+			>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
 
-<Dialog.Root bind:open={showUpdateDialog}>
-	<Dialog.Content class="sm:max-w-115">
+<Dialog.Root
+	bind:open={showUpdateDialog}
+	onOpenChange={(open) => {
+		if (isUpdating && !open) showUpdateDialog = true;
+	}}
+>
+	<Dialog.Content class="sm:max-w-115" showCloseButton={!isUpdating}>
 		<Dialog.Header>
 			<Dialog.Title>Update Watcher</Dialog.Title>
 			<Dialog.Description>
 				Update Watcher now? The service will be restarted automatically.
 			</Dialog.Description>
 		</Dialog.Header>
+		<RequestError message={maintenanceError} />
 		<Dialog.Footer>
 			<Button.Root
 				variant="outline"

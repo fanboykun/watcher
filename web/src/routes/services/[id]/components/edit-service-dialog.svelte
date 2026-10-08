@@ -1,5 +1,13 @@
 <script lang="ts">
-	import { isIISService, iisAppKindLabel, type Service, type ServiceConfigFile, type IISAppKind, type ServiceWritePayload } from '$lib/api';
+	import RequestError from '$lib/components/request-error.svelte';
+	import {
+		isIISService,
+		iisAppKindLabel,
+		type Service,
+		type ServiceConfigFile,
+		type IISAppKind,
+		type ServiceWritePayload
+	} from '$lib/api';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -124,16 +132,12 @@
 				handleSubmit();
 			}}
 		>
-			<Dialog.Header class="shrink-0 border-b border-border/70 px-6 pb-4 pt-6">
+			<Dialog.Header class="shrink-0 border-b border-border/70 px-6 pt-6 pb-4">
 				<Dialog.Title>Edit Service</Dialog.Title>
 				<Dialog.Description>Update how this watcher manages this service</Dialog.Description>
 			</Dialog.Header>
 			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-				{#if error}
-					<div class="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
-						{error}
-					</div>
-				{/if}
+				<RequestError message={error} />
 
 				<div class="grid gap-4 md:grid-cols-2">
 					<div class="space-y-2">
@@ -218,7 +222,11 @@
 						</div>
 						<div class="space-y-2">
 							<Label for="editSvcIISAppPool">IIS App Pool Name</Label>
-							<Input id="editSvcIISAppPool" placeholder="my-frontend" bind:value={editSvcIISAppPool} />
+							<Input
+								id="editSvcIISAppPool"
+								placeholder="my-frontend"
+								bind:value={editSvcIISAppPool}
+							/>
 						</div>
 						<div class="space-y-2">
 							<Label for="editSvcIISSiteName">IIS Site Name</Label>
@@ -232,8 +240,8 @@
 							class="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2"
 						>
 							<span class="font-medium text-foreground/90">Bootstrap profile:</span>
-							{' '}{iisAppKindLabel(editSvcIISAppKind)}. Watcher will set the IIS managed runtime automatically
-							for this app kind.
+							{iisAppKindLabel(editSvcIISAppKind)}. Watcher will set the IIS managed runtime
+							automatically for this app kind.
 						</div>
 					{/if}
 
@@ -265,8 +273,8 @@
 						<div>
 							<Label>Additional managed config files</Label>
 							<p class="text-xs text-muted-foreground">
-								Store runtime-generated config alongside this service. Use <code>Current dir</code> for
-								IIS files like <code>web.config</code>.
+								Store runtime-generated config alongside this service. Use <code>Current dir</code>
+								for IIS files like <code>web.config</code>.
 							</p>
 						</div>
 						<Button.Root
@@ -305,8 +313,12 @@
 												{file.target === 'release_dir' ? 'Current dir' : 'Service/app dir'}
 											</Select.Trigger>
 											<Select.Content>
-												<Select.Item value="app_dir" label="Service/app dir">Service/app dir</Select.Item>
-												<Select.Item value="release_dir" label="Current dir">Current dir</Select.Item>
+												<Select.Item value="app_dir" label="Service/app dir"
+													>Service/app dir</Select.Item
+												>
+												<Select.Item value="release_dir" label="Current dir"
+													>Current dir</Select.Item
+												>
 											</Select.Content>
 										</Select.Root>
 									</div>
@@ -320,13 +332,13 @@
 						</div>
 					{:else}
 						<p class="text-xs text-muted-foreground">
-							Use this for runtime files like <code>config.json</code>, <code>appsettings.json</code>,
-							or other generated config.
+							Use this for runtime files like <code>config.json</code>,
+							<code>appsettings.json</code>, or other generated config.
 						</p>
 					{/if}
 				</div>
 			</div>
-			<Dialog.Footer class="shrink-0 border-t border-border/70 px-6 pb-4 pt-4">
+			<Dialog.Footer class="shrink-0 border-t border-border/70 px-6 pt-4 pb-4">
 				<Button.Root variant="outline" type="button" onclick={() => (open = false)}>
 					Cancel
 				</Button.Root>

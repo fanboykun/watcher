@@ -43,6 +43,11 @@ func (d *Deployer) ensureServiceByType(ctx context.Context, svc ServiceConfig, c
 // This means you never need to manually register services -- the watcher
 // handles it on first deploy.
 func (d *Deployer) ensureService(ctx context.Context, svc ServiceConfig, binPath string) error {
+	logDir := filepath.Join(d.wcfg.InstallDir, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		d.lWarn("could not create log dir", "path", logDir, "error", err)
+	}
+
 	existing, err := d.serviceExists(ctx, svc.WindowsServiceName)
 	if err != nil {
 		return err
@@ -54,12 +59,6 @@ func (d *Deployer) ensureService(ctx context.Context, svc ServiceConfig, binPath
 		out, err := runCommand(d.nssmPath, "install", svc.WindowsServiceName, binPath)
 		if err != nil {
 			return fmt.Errorf("nssm install %s: %w (output: %s)", svc.WindowsServiceName, err, string(out))
-		}
-
-		// Configure service settings
-		logDir := filepath.Join(d.wcfg.InstallDir, "logs")
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			d.lWarn("could not create log dir", "path", logDir, "error", err)
 		}
 
 		settings := []nssmSetting{
@@ -89,6 +88,8 @@ func (d *Deployer) ensureService(ctx context.Context, svc ServiceConfig, binPath
 			{key: "Application", value: binPath, required: true},
 			{key: "AppDirectory", value: d.wcfg.InstallDir, required: true},
 			{key: "AppParameters", value: svc.StartArguments, required: true},
+			{key: "AppStdout", value: filepath.Join(logDir, svc.WindowsServiceName+".out.log")},
+			{key: "AppStderr", value: filepath.Join(logDir, svc.WindowsServiceName+".err.log")},
 		}
 		if svc.EnvFile != "" {
 			settings = append(settings, nssmSetting{key: "AppEnvironmentExtra", value: "ENV_FILE=" + svc.EnvFile, required: true})
@@ -222,6 +223,10 @@ func (d *Deployer) startServiceByType(ctx context.Context, svc ServiceConfig) er
 	case "iis", "static":
 		return d.recycleAppPool(svc)
 	default: // "nssm"
+		logDir := filepath.Join(d.wcfg.InstallDir, "logs")
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			d.lWarn("could not create log dir before starting service", "path", logDir, "error", err)
+		}
 		d.l("starting service", "name", svc.WindowsServiceName)
 		if err := d.serviceManager.Start(ctx, svc.WindowsServiceName); err != nil {
 			return err

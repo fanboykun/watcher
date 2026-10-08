@@ -1,16 +1,19 @@
 <script lang="ts">
+	import RequestLoading from '$lib/components/request-loading.svelte';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { RefreshCw, FileText } from '@lucide/svelte';
 
 	let {
+		loading = false,
 		logLines = $bindable([]),
 		logError = $bindable(''),
 		logType = $bindable<'out' | 'err'>('out'),
 		logCount = $bindable(100),
 		onLoadLogs
 	}: {
+		loading?: boolean;
 		logLines: string[];
 		logError: string;
 		logType: 'out' | 'err';
@@ -19,9 +22,10 @@
 	} = $props();
 </script>
 
-<div class="mb-3 flex items-center gap-2">
+<div class="mb-3 flex flex-wrap items-center gap-2">
 	<Select.Root
 		type="single"
+		disabled={loading}
 		value={logType}
 		onValueChange={(v) => {
 			if (v === 'out' || v === 'err') {
@@ -40,6 +44,7 @@
 	</Select.Root>
 	<Select.Root
 		type="single"
+		disabled={loading}
 		value={String(logCount)}
 		onValueChange={(v) => {
 			if (v) {
@@ -58,7 +63,7 @@
 			<Select.Item value="500" label="500 lines">500 lines</Select.Item>
 		</Select.Content>
 	</Select.Root>
-	<Button.Root variant="outline" size="sm" onclick={onLoadLogs}>
+	<Button.Root variant="outline" size="sm" disabled={loading} {loading} onclick={onLoadLogs}>
 		<RefreshCw class="mr-2 h-4 w-4" /> Refresh
 	</Button.Root>
 </div>
@@ -73,10 +78,12 @@
 
 <Card.Root class="border-border bg-card">
 	<Card.Content class="p-0">
-		{#if logLines.length > 0}
+		{#if loading}<RequestLoading label="Loading logs…" />
+		{:else if logLines.length > 0}
 			<div class="max-h-[500px] overflow-auto">
-				<pre class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">{#each logLines as line, i (i)}{line}
-{/each}</pre>
+				<pre
+					class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">{#each logLines as line, i (i)}{line}
+					{/each}</pre>
 			</div>
 		{:else if !logError}
 			<div class="flex flex-col items-center justify-center py-12 text-center">

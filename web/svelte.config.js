@@ -6,8 +6,12 @@ const config = {
 		adapter: adapter({
 			pages: 'build',
 			assets: 'build',
-			fallback: 'index.html'  // SPA fallback for client-side routing
-		})
+			fallback: 'index.html' // SPA fallback for client-side routing
+		}),
+		paths: {
+			// Go injects the dashboard prefix into the root-built SPA at runtime.
+			base: ''
+		}
 	},
 	vitePlugin: {
 		dynamicCompileOptions: ({ filename }) =>

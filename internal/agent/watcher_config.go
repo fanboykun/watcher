@@ -18,6 +18,9 @@ type WatcherConfig struct {
 	DownloadRetries       int
 	InstallDir            string
 	Paused                bool
+	AutoDeploy            bool
+	InterceptNextRelease  bool
+	PendingVersion        string
 	MaxKeptVersions       int
 	HealthCheck           HealthCheckConfig
 	Services              []ServiceConfig
@@ -38,6 +41,7 @@ type ConfigFile struct {
 }
 
 type ServiceConfig struct {
+	ID                 uint
 	ServiceType        string
 	WindowsServiceName string
 	BinaryName         string
@@ -70,6 +74,9 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 		DownloadRetries:       w.DownloadRetries,
 		InstallDir:            w.InstallDir,
 		Paused:                w.Paused,
+		AutoDeploy:            w.AutoDeploy,
+		InterceptNextRelease:  w.InterceptNextRelease,
+		PendingVersion:        w.PendingVersion,
 		MaxKeptVersions:       max(w.MaxKeptVersions, 1),
 		HealthCheck: HealthCheckConfig{
 			Enabled:     w.HcEnabled,
@@ -81,6 +88,7 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 	}
 	for _, s := range w.Services {
 		svc := ServiceConfig{
+			ID:                 s.ID,
 			ServiceType:        normalizeServiceType(s.ServiceType),
 			WindowsServiceName: s.WindowsServiceName,
 			BinaryName:         s.BinaryName,

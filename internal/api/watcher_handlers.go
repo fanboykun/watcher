@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"errors"
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (h *Handler) ListWatchers(c *gin.Context) {
@@ -99,6 +101,11 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		return
 	}
 
+	autoDeploy := true
+	if req.AutoDeploy != nil {
+		autoDeploy = *req.AutoDeploy
+	}
+
 	watcher := database.Watcher{
 		Name:                            req.Name,
 		ServiceName:                     req.ServiceName,
@@ -115,6 +122,7 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		HcIntervalSec:                   withDefault(req.HcIntervalSec, 3),
 		HcTimeoutSec:                    withDefault(req.HcTimeoutSec, 5),
 		Paused:                          req.Paused,
+		AutoDeploy:                      autoDeploy,
 		MaxKeptVersions:                 withDefault(req.MaxKeptVersions, 3),
 		WebhookEnabled:                  req.WebhookEnabled,
 		WebhookURL:                      strings.TrimSpace(req.WebhookURL),
@@ -131,7 +139,16 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 	}
 
 	// Create watcher
-	if err := h.db.Create(&watcher).Error; err != nil {
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&watcher).Error; err != nil {
+			return err
+		}
+		// GORM substitutes the true default for a zero bool during Create.
+		if !autoDeploy {
+			return tx.Model(&watcher).UpdateColumn("auto_deploy", false).Error
+		}
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -276,6 +293,12 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	if req.Paused != nil {
 		updates["paused"] = *req.Paused
 	}
+	if req.AutoDeploy != nil {
+		updates["auto_deploy"] = *req.AutoDeploy
+	}
+	if req.InterceptNextRelease != nil {
+		updates["intercept_next_release"] = *req.InterceptNextRelease
+	}
 	if req.MaxKeptVersions != nil {
 		updates["max_kept_versions"] = *req.MaxKeptVersions
 	}
@@ -354,4 +377,238 @@ func (h *Handler) DeleteWatcher(c *gin.Context) {
 	}
 	h.triggerSync()
 	c.JSON(http.StatusOK, MessageResponse{Message: "watcher deleted"})
+}
+
+func (h *Handler) InterceptRelease(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+	var req struct {
+		Intercept bool `json:"intercept_next_release"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	if err := h.db.Model(watcher).UpdateColumn("intercept_next_release", req.Intercept).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	h.triggerSync()
+	c.JSON(http.StatusOK, MessageResponse{Message: "Intercept setting updated"})
+}
+
+func (h *Handler) ApproveRelease(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+	var req struct {
+		Version string `json:"version" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	result := h.db.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", req.Version).
+		UpdateColumns(map[string]any{"status": "approved", "approved_version": req.Version})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: result.Error.Error()})
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusConflict, ErrorResponse{Error: "The pending release changed; refresh before approving"})
+		return
+	}
+
+	select {
+	case h.checkTrigger <- watcher.ID:
+	default:
+	}
+
+	c.JSON(http.StatusOK, MessageResponse{Message: "Release approved and deployment triggered"})
+}
+
+// DiscardRelease discards a pending release candidate and unblocks polling.
+func (h *Handler) DiscardRelease(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+	if watcher.Status != "pending_approval" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "No release pending approval"})
+		return
+	}
+
+	discardedVersion := watcher.PendingVersion
+	status := "healthy"
+	if watcher.CurrentVersion == "" {
+		status = "unknown"
+	}
+
+	updates := map[string]interface{}{
+		"status":                 status,
+		"pending_version":        "",
+		"intercept_next_release": false,
+	}
+	if discardedVersion != "" {
+		updates["max_ignored_version"] = discardedVersion
+	}
+
+	updates["approved_version"] = ""
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", discardedVersion).UpdateColumns(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if discardedVersion != "" {
+			if err := tx.Where("service_id IN (SELECT id FROM services WHERE watcher_id = ?) AND target_version = ?", watcher.ID, discardedVersion).Delete(&database.ServiceConfigRevision{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&database.PollEvent{WatcherID: watcher.ID, CheckedAt: time.Now().UTC(), Status: "discarded", RemoteVersion: discardedVersion, Error: "Release candidate discarded by operator"}).Error
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	h.triggerSync()
+	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("Release candidate %s discarded", discardedVersion)})
+}
+
+// GetWatcherCandidate retrieves candidate configuration for all services under a watcher.
+func (h *Handler) GetWatcherCandidate(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	target := strings.TrimSpace(c.Query("target"))
+	if target == "" {
+		if watcher.PendingVersion != "" {
+			target = watcher.PendingVersion
+		} else {
+			target = "next"
+		}
+	}
+
+	var services []database.Service
+	if err := h.db.Where("watcher_id = ?", watcher.ID).Find(&services).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	serviceIDs := make([]uint, 0, len(services))
+	for _, svc := range services {
+		serviceIDs = append(serviceIDs, svc.ID)
+	}
+	var revisions []database.ServiceConfigRevision
+	if len(serviceIDs) > 0 {
+		if err := h.db.Where("service_id IN ? AND target_version IN ?", serviceIDs, []string{target, "next"}).Find(&revisions).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+			return
+		}
+	}
+	revisionsByService := make(map[uint]database.ServiceConfigRevision)
+	for _, rev := range revisions {
+		previous, exists := revisionsByService[rev.ServiceID]
+		if !exists || previous.TargetVersion != target {
+			revisionsByService[rev.ServiceID] = rev
+		}
+	}
+	serviceInfos := make([]ServiceCandidateInfo, 0, len(services))
+	for _, svc := range services {
+		name := svc.WindowsServiceName
+		if name == "" {
+			name = svc.IISSiteName
+		}
+		if name == "" {
+			name = svc.IISAppPool
+		}
+		if name == "" {
+			name = svc.BinaryName
+		}
+		if name == "" {
+			name = fmt.Sprintf("Service %d", svc.ID)
+		}
+
+		rev, hasCandidate := revisionsByService[svc.ID]
+		candidateEnv := svc.EnvContent
+		if hasCandidate {
+			candidateEnv = rev.EnvContent
+		}
+
+		serviceInfos = append(serviceInfos, ServiceCandidateInfo{
+			ServiceID:       svc.ID,
+			ServiceName:     name,
+			ServiceType:     svc.ServiceType,
+			ActiveEnv:       svc.EnvContent,
+			CandidateEnv:    candidateEnv,
+			HasCandidateEnv: hasCandidate,
+			IsModified:      candidateEnv != svc.EnvContent,
+		})
+	}
+
+	c.JSON(http.StatusOK, WatcherCandidateResponse{
+		HasPendingRelease:    watcher.Status == "pending_approval",
+		TargetVersion:        target,
+		Status:               watcher.Status,
+		InterceptNextRelease: watcher.InterceptNextRelease,
+		AutoDeploy:           watcher.AutoDeploy,
+		Services:             serviceInfos,
+	})
+}
+
+// UpdateWatcherCandidate saves candidate configuration revisions across services for a watcher.
+func (h *Handler) UpdateWatcherCandidate(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+
+	var req UpdateWatcherCandidateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	target := strings.TrimSpace(req.TargetVersion)
+	if target == "" {
+		if watcher.PendingVersion != "" {
+			target = watcher.PendingVersion
+		} else {
+			target = "next"
+		}
+	}
+
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range req.Services {
+			var svc database.Service
+			if err := tx.Where("id = ? AND watcher_id = ?", item.ServiceID, watcher.ID).First(&svc).Error; err != nil {
+				return err
+			}
+			if err := saveServiceConfigRevision(tx, svc.ID, target, item.EnvContent); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, ErrorResponse{Error: "Could not save candidate configuration: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, MessageResponse{Message: "Candidate configuration saved successfully"})
 }

@@ -19,7 +19,7 @@
 	import * as Button from '$lib/components/ui/button';
 	import Separator from '$lib/components/ui/separator/separator.svelte';
 	import { Input } from '$lib/components/ui/input';
-	import { asset, resolve } from '$app/paths';
+	import { asset, base, resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { api, auth, type SelfUpdateCheckResponse } from '$lib/api';
 	import {
@@ -133,9 +133,12 @@
 		dismissSelfUpdate(selfUpdateInfo.latest_version);
 	}
 
-	function isActive(href: string) {
-		if (href === '/') return page.url.pathname === '/';
-		return page.url.pathname.startsWith(href);
+	function isActive(href: (typeof navItems)[number]['href']) {
+		const target = resolve(href);
+		if (target === base || target === `${base}/`) {
+			return page.url.pathname === base || page.url.pathname === `${base}/`;
+		}
+		return page.url.pathname.startsWith(target);
 	}
 </script>
 
@@ -207,7 +210,7 @@
 		</form>
 	</div>
 {:else}
-	<div class="dark flex min-h-screen bg-background text-foreground">
+	<div class="dark flex min-h-dvh w-full bg-background text-foreground">
 		<!-- Sidebar -->
 		<aside
 			class="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card transition-transform duration-200 lg:translate-x-0 {mobileOpen
@@ -224,13 +227,25 @@
 					<h1 class="text-sm font-semibold">Watcher</h1>
 					<p class="text-[11px] text-muted-foreground">Deploy Agent</p>
 				</div>
+				<Button.Root
+					variant="ghost"
+					size="icon"
+					class="ml-auto lg:hidden"
+					aria-label="Close navigation"
+					onclick={() => (mobileOpen = false)}><X class="h-5 w-5" /></Button.Root
+				>
 			</div>
 
-			<nav class="flex-1 space-y-1 p-3">
+			<nav
+				id="main-navigation"
+				aria-label="Main navigation"
+				class="min-h-0 flex-1 space-y-1 overflow-y-auto p-3"
+			>
 				{#each navItems as item (item.href)}
 					<a
 						href={resolve(item.href)}
 						onclick={() => (mobileOpen = false)}
+						aria-current={isActive(item.href) ? 'page' : undefined}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors {isActive(
 							item.href
 						)
@@ -272,20 +287,6 @@
 			</div>
 		</aside>
 
-		<!-- Mobile toggle -->
-		<Button.Root
-			variant="ghost"
-			size="icon"
-			class="fixed top-4 left-4 z-50 lg:hidden"
-			onclick={() => (mobileOpen = !mobileOpen)}
-		>
-			{#if mobileOpen}
-				<X class="h-5 w-5" />
-			{:else}
-				<Menu class="h-5 w-5" />
-			{/if}
-		</Button.Root>
-
 		<!-- Mobile overlay -->
 		{#if mobileOpen}
 			<button
@@ -296,8 +297,34 @@
 		{/if}
 
 		<!-- Main content -->
-		<main class="flex-1 lg:ml-64">
-			<div class="mx-auto max-w-6xl p-4 lg:p-6">
+		<main id="main-content" class="min-w-0 flex-1 lg:ml-64">
+			<header
+				aria-label="Watcher mobile header"
+				class="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background px-4 shadow-sm sm:px-6 lg:hidden"
+			>
+				<Button.Root
+					href={resolve('/')}
+					variant="ghost"
+					class="gap-2.5 px-0 hover:bg-transparent"
+					aria-label="Watcher dashboard"
+				>
+					<img
+						src={asset('/watcher.svg')}
+						alt=""
+						class="h-8 w-8 rounded-lg bg-primary p-1.5 invert"
+					/>
+					<span class="text-sm font-semibold">Watcher</span>
+				</Button.Root>
+				<Button.Root
+					variant="outline"
+					size="icon"
+					aria-label="Open navigation"
+					aria-expanded={mobileOpen}
+					aria-controls="main-navigation"
+					onclick={() => (mobileOpen = true)}><Menu class="h-5 w-5" /></Button.Root
+				>
+			</header>
+			<div class="mx-auto w-full max-w-6xl min-w-0 px-4 py-6 sm:px-6 lg:p-6">
 				{#if showSelfUpdateBanner && selfUpdateInfo?.update_available}
 					<div
 						class="mb-4 flex flex-col gap-3 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-50 md:flex-row md:items-center md:justify-between"

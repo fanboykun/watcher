@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { api, type Watcher } from '$lib/api';
 	import * as Button from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
@@ -38,7 +39,7 @@
 			showSuccess(`Watcher ${w.name} ${newPaused ? 'paused' : 'resumed'}`);
 			invalidate('app:watchers');
 		} catch (e: unknown) {
-			showError(`Failed to toggle pause: ${(e as {message: string}).message}`);
+			showError(`Failed to toggle pause: ${(e as { message: string }).message}`);
 		}
 	}
 
@@ -49,22 +50,21 @@
 
 	function showError(msg: string) {
 		globalError = msg;
-		setTimeout(() => (globalError = ''), 5000);
 	}
 
 	function getNextCheck(w: Watcher) {
 		if (w.paused) return 'Paused';
 		if (!w.last_checked) return 'Pending...';
-		
+
 		const last = new Date(w.last_checked).getTime();
-		const next = last + (w.check_interval_sec * 1000);
+		const next = last + w.check_interval_sec * 1000;
 		const now = Date.now();
-		
+
 		if (next <= now) return 'Imminent';
-		
+
 		const diffSec = Math.floor((next - now) / 1000);
 		if (diffSec < 60) return `in ${diffSec}s`;
-		return `in ${Math.floor(diffSec/60)}m ${diffSec%60}s`;
+		return `in ${Math.floor(diffSec / 60)}m ${diffSec % 60}s`;
 	}
 
 	let filteredWatchers = $derived(
@@ -84,21 +84,23 @@
 	</div>
 
 	<div class="flex items-center gap-2">
-		<div class="relative flex-1 max-w-sm">
-			<Search class="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+		<div class="relative max-w-sm flex-1">
+			<Search class="absolute top-2.5 left-2.5 h-4 w-4 text-muted-foreground" />
 			<Input type="search" placeholder="Filter watchers..." class="pl-8" bind:value={searchQuery} />
 		</div>
-		<Button.Root variant="outline" size="icon" onclick={() => { invalidate('app:watchers'); showSuccess('Refreshed'); }}>
+		<Button.Root
+			variant="outline"
+			size="icon"
+			onclick={() => {
+				invalidate('app:watchers');
+				showSuccess('Refreshed');
+			}}
+		>
 			<RefreshCw class="h-4 w-4" />
 		</Button.Root>
 	</div>
 
-	{#if globalError}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			<AlertCircle class="mr-2 inline h-4 w-4" />
-			{globalError}
-		</div>
-	{/if}
+	<RequestError message={globalError} />
 
 	{#if loadError}
 		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
@@ -135,20 +137,18 @@
 				<Table.Body>
 					{#if filteredWatchers.length === 0 && !loadError}
 						<Table.Row>
-							<Table.Cell colspan={7} class="h-24 text-center">
-								No watchers found.
-							</Table.Cell>
+							<Table.Cell colspan={7} class="h-24 text-center">No watchers found.</Table.Cell>
 						</Table.Row>
 					{/if}
 					{#each filteredWatchers as w (w.id)}
 						<Table.Row
-							class="cursor-pointer hover:bg-muted/50 transition-colors"
+							class="cursor-pointer transition-colors hover:bg-muted/50"
 							onclick={() => goto(resolve(`/watchers/${w.id}?tab=polling`))}
 						>
 							<Table.Cell class="font-medium">{w.name}</Table.Cell>
 							<Table.Cell>{w.service_name}</Table.Cell>
 							<Table.Cell>
-								<div class="flex items-center gap-1.5 text-muted-foreground text-sm">
+								<div class="flex items-center gap-1.5 text-sm text-muted-foreground">
 									<Clock class="h-3.5 w-3.5" />
 									{w.check_interval_sec}s
 								</div>
@@ -165,11 +165,15 @@
 							</Table.Cell>
 							<Table.Cell>
 								{#if w.paused}
-									<span class="inline-flex items-center rounded-md bg-yellow-400/10 px-2 py-1 text-xs font-medium text-yellow-500 ring-1 ring-inset ring-yellow-400/20">
+									<span
+										class="inline-flex items-center rounded-md bg-yellow-400/10 px-2 py-1 text-xs font-medium text-yellow-500 ring-1 ring-yellow-400/20 ring-inset"
+									>
 										Paused
 									</span>
 								{:else}
-									<span class="inline-flex items-center rounded-md bg-green-500/10 px-2 py-1 text-xs font-medium text-green-500 ring-1 ring-inset ring-green-500/20">
+									<span
+										class="inline-flex items-center rounded-md bg-green-500/10 px-2 py-1 text-xs font-medium text-green-500 ring-1 ring-green-500/20 ring-inset"
+									>
 										Active
 									</span>
 								{/if}
@@ -177,11 +181,25 @@
 							<Table.Cell class="text-right">
 								<div class="flex justify-end gap-2" role="group" aria-label="Actions">
 									{#if w.paused}
-										<Button.Root size="sm" variant="outline" onclick={(e) => { e.stopPropagation(); togglePause(w); }}>
+										<Button.Root
+											size="sm"
+											variant="outline"
+											onclick={(e) => {
+												e.stopPropagation();
+												togglePause(w);
+											}}
+										>
 											<Play class="mr-1 h-3.5 w-3.5" /> Resume
 										</Button.Root>
 									{:else}
-										<Button.Root size="sm" variant="outline" onclick={(e) => { e.stopPropagation(); togglePause(w); }}>
+										<Button.Root
+											size="sm"
+											variant="outline"
+											onclick={(e) => {
+												e.stopPropagation();
+												togglePause(w);
+											}}
+										>
 											<Pause class="mr-1 h-3.5 w-3.5" /> Pause
 										</Button.Root>
 									{/if}

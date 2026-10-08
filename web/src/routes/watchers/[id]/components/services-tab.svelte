@@ -1,10 +1,17 @@
+<!-- eslint-disable svelte/no-navigation-without-resolve -->
 <script lang="ts">
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
 	import { Server, Plus, ExternalLink, Pencil, Trash2 } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
-	import { isIISService, serviceTypeLabel, iisAppKindLabel, type Watcher, type Service } from '$lib/api';
+	import {
+		isIISService,
+		serviceTypeLabel,
+		iisAppKindLabel,
+		type Watcher,
+		type Service
+	} from '$lib/api';
 
 	let {
 		watcher,
@@ -25,12 +32,14 @@
 
 <div class="mb-4 flex justify-end">
 	{#if readonly && manageHref}
+		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 		<a href={manageHref}>
 			<Button.Root size="sm" variant="outline">
 				<Pencil class="mr-2 h-4 w-4" /> Manage Settings
 			</Button.Root>
 		</a>
 	{:else if createHref}
+		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 		<a href={createHref}>
 			<Button.Root size="sm">
 				<Plus class="mr-2 h-4 w-4" /> Add Service
@@ -57,25 +66,30 @@
 				{#each watcher.services as svc (svc.id)}
 					<Table.Row class="border-border">
 						<Table.Cell>
+							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 							<a href={resolve(`/services/${svc.id}`)} class="font-medium hover:underline">
 								{svc.windows_service_name}
 							</a>
 							{#if svc.public_url}
 								<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-								<a
+								<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+								<Button.Root
 									href={svc.public_url}
 									target="_blank"
 									rel="noopener noreferrer"
-									class="ml-1.5 inline-flex items-center text-muted-foreground hover:text-foreground"
-									title="Open Public URL"
+									variant="ghost"
+									size="xs"
+									class="ml-1.5 text-muted-foreground"
+									aria-label={`Open application ${svc.windows_service_name}`}
+									><ExternalLink />Open app</Button.Root
 								>
-									<ExternalLink class="h-3 w-3" />
-								</a>
 							{/if}
 						</Table.Cell>
 						<Table.Cell>
 							<span
-								class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {isIISService(svc.service_type)
+								class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {isIISService(
+									svc.service_type
+								)
 									? 'border-blue-500/30 bg-blue-500/10 text-blue-400'
 									: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'}"
 							>
@@ -93,25 +107,25 @@
 							{svc.health_check_url || '—'}
 						</Table.Cell>
 						{#if !readonly}
-							<Table.Cell class="text-right">
-								{#if editHrefBase}
-									<a href={`${editHrefBase}/${svc.id}/edit`}>
-										<Button.Root variant="ghost" size="icon" class="h-8 w-8" title="Edit">
-											<Pencil class="h-4 w-4" />
+							<Table.Cell class="text-right"
+								><div class="flex flex-wrap justify-end gap-2">
+									{#if editHrefBase}
+										<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+										<Button.Root href={`${editHrefBase}/${svc.id}/edit`} variant="outline" size="sm"
+											><Pencil />Edit</Button.Root
+										>
+									{/if}
+									{#if onDeleteService}
+										<Button.Root
+											variant="destructive"
+											size="sm"
+											onclick={() => onDeleteService(svc.id, svc.windows_service_name)}
+											title="Delete"
+										>
+											<Trash2 class="h-4 w-4" />Delete
 										</Button.Root>
-									</a>
-								{/if}
-								{#if onDeleteService}
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										class="h-8 w-8 text-red-400 hover:text-red-300"
-										onclick={() => onDeleteService(svc.id, svc.windows_service_name)}
-										title="Delete"
-									>
-										<Trash2 class="h-4 w-4" />
-									</Button.Root>
-								{/if}
+									{/if}
+								</div>
 							</Table.Cell>
 						{/if}
 					</Table.Row>

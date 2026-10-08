@@ -31,6 +31,8 @@ var appConfigEnvKeys = []string{
 	"WEBHOOK_AUTO_PAUSE_AFTER_FAILURES",
 	"WEBHOOK_EVENT_RETENTION_DAYS",
 	"WEBHOOK_DELIVERY_RETENTION_DAYS",
+	"WEB_ASSETS_PATH",
+	"WEB_BASE_PATH",
 }
 
 func clearAppConfigEnvironment(t *testing.T) {
@@ -204,6 +206,9 @@ func TestAppConfigValidate(t *testing.T) {
 		{name: "non-positive max size", mutate: func(c *AppConfig) { c.LogMaxSizeMB = 0 }, wantErr: "LOG_MAX_SIZE_MB"},
 		{name: "negative backups", mutate: func(c *AppConfig) { c.LogMaxBackups = -1 }, wantErr: "LOG_MAX_BACKUPS"},
 		{name: "negative age", mutate: func(c *AppConfig) { c.LogMaxAgeDays = -1 }, wantErr: "LOG_MAX_AGE_DAYS"},
+		{name: "invalid web assets path with query", mutate: func(c *AppConfig) { c.WebAssetsPath = "/watcher?foo=bar" }, wantErr: "WEB_ASSETS_PATH"},
+		{name: "invalid web assets path with spaces", mutate: func(c *AppConfig) { c.WebAssetsPath = "/watcher path" }, wantErr: "WEB_ASSETS_PATH"},
+		{name: "valid web assets path", mutate: func(c *AppConfig) { c.WebAssetsPath = "/watcher" }},
 	}
 
 	for _, tt := range tests {
@@ -219,6 +224,47 @@ func TestAppConfigValidate(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("Validate() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNormalizedWebBasePath(t *testing.T) {
+	tests := []struct {
+		name       string
+		assetsPath string
+		basePath   string
+		want       string
+	}{
+		{name: "both empty", assetsPath: "", basePath: "", want: ""},
+		{name: "single slash", assetsPath: "/", basePath: "", want: ""},
+		{name: "whitespace only", assetsPath: "   ", basePath: "", want: ""},
+		{name: "standard subpath", assetsPath: "/watcher", basePath: "", want: "/watcher"},
+		{name: "trailing slash trimmed", assetsPath: "/watcher/", basePath: "", want: "/watcher"},
+		{name: "leading slash added", assetsPath: "watcher", basePath: "", want: "/watcher"},
+		{name: "nested path", assetsPath: "/apps/watcher/", basePath: "", want: "/apps/watcher"},
+		{name: "base path fallback", assetsPath: "", basePath: "/watcher-base", want: "/watcher-base"},
+		{name: "assets path takes priority over base path", assetsPath: "/watcher-assets", basePath: "/watcher-base", want: "/watcher-assets"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := AppConfig{
+				WebAssetsPath: tt.assetsPath,
+				WebBasePath:   tt.basePath,
+			}
+			if got := cfg.NormalizedWebBasePath(); got != tt.want {
+				t.Errorf("NormalizedWebBasePath() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWebBasePathRejectsUnsafePrefixes(t *testing.T) {
+	for _, path := range []string{`//evil.example`, `/a/../b`, `/a/./b`, `/a//b`, `/a" onclick="alert(1)`, `/a\\b`, `/a%2Fb`, `/a?query`, `/a#fragment`, `/a<b`} {
+		t.Run(path, func(t *testing.T) {
+			if _, err := NormalizeWebBasePath(path); err == nil {
+				t.Fatalf("unsafe prefix accepted: %q", path)
 			}
 		})
 	}

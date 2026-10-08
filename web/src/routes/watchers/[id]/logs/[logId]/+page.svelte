@@ -3,14 +3,7 @@
 	import { api, type AuthenticatedEventStream, type DeployLog, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
-	import {
-		ArrowLeft,
-		Clock,
-		CheckCircle2,
-		XCircle,
-		Loader2,
-		Copy
-	} from '@lucide/svelte';
+	import { ArrowLeft, Clock, CheckCircle2, XCircle, Loader2, Copy } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { timeAgo, formatDate, formatDuration, statusColor } from '$lib/utils';
 	import { onMount } from 'svelte';
@@ -68,8 +61,6 @@
 		};
 	});
 
-
-
 	function deployIcon(s: string) {
 		switch (s) {
 			case 'succeeded':
@@ -85,7 +76,10 @@
 
 	function normalizedLines(input: string): string[] {
 		if (!input) return [];
-		return input.replace(/\r\n/g, '\n').split('\n').filter((line) => line.trim() !== '');
+		return input
+			.replace(/\r\n/g, '\n')
+			.split('\n')
+			.filter((line) => line.trim() !== '');
 	}
 
 	function lineTone(line: string): string {
@@ -249,8 +243,8 @@
 					{#if liveLogs}
 						{#each normalizedLines(liveLogs) as line, idx (idx)}
 							<div class="grid grid-cols-[56px_1fr] border-b border-border/40 px-3 py-1.5 text-xs">
-								<div class="select-none pr-3 text-right text-zinc-500">{idx + 1}</div>
-								<div class={`whitespace-pre-wrap wrap-break-word ${lineTone(line)}`}>{line}</div>
+								<div class="pr-3 text-right text-zinc-500 select-none">{idx + 1}</div>
+								<div class={`wrap-break-word whitespace-pre-wrap ${lineTone(line)}`}>{line}</div>
 							</div>
 						{/each}
 					{:else}

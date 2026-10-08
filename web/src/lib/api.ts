@@ -1,5 +1,6 @@
 // API client for the watcher agent backend
-const API_BASE = '/api';
+import { base } from '$app/paths';
+const API_BASE = `${base}/api`;
 const AUTH_PASSWORD_KEY = 'watcher.auth.password';
 
 export function getAuthPassword(): string {
@@ -33,7 +34,11 @@ export class APIRequestError extends Error {
 	}
 }
 
-function errorMessageFromResponse(status: number, statusText: string, body: unknown): string {
+export function errorMessageFromResponse(
+	status: number,
+	statusText: string,
+	body: unknown
+): string {
 	const detail =
 		body && typeof body === 'object'
 			? typeof (body as { error?: unknown }).error === 'string'
@@ -44,32 +49,38 @@ function errorMessageFromResponse(status: number, statusText: string, body: unkn
 			: typeof body === 'string'
 				? body.trim()
 				: '';
-	const genericServerError =
-		!detail ||
-		/^\s*</.test(detail) ||
-		/^(internal server error|server error|http \d+)$/i.test(detail || statusText);
-
-	if (status >= 500 && genericServerError) {
-		return `The Watcher API could not complete this request (HTTP ${status}). Check the agent logs and try again.`;
-	}
-	if (detail) return detail;
-	if (status === 401) return 'Your dashboard session is not authorized. Sign in again and retry.';
-	if (status === 403) return 'You are not allowed to perform this operation.';
-	if (status === 404) return 'The requested resource no longer exists or could not be found.';
-	return statusText || `Request failed with HTTP ${status}.`;
+	const usable =
+		detail &&
+		!/^\s*</.test(detail) &&
+		!/^(internal server error|server error|http \d+)$/i.test(detail);
+	const guidance: Record<number, string> = {
+		401: 'Your dashboard session expired or is no longer authorized. Sign in again, then retry.',
+		403: 'This request was refused. Check the credentials and permissions for this operation.',
+		404: 'This item could not be found. Refresh the page to check whether it still exists.',
+		409: 'The current state changed or another operation is running. Refresh the details before trying again.',
+		422: 'Check the entered values and submit again.',
+		429: 'Too many requests. Wait before trying again.'
+	};
+	if (usable) return guidance[status] ? `${detail} ${guidance[status]}` : detail;
+	if (guidance[status]) return guidance[status];
+	if (status === 400) return 'Check the entered values and try again.';
+	if (status >= 500)
+		return 'Watcher could not complete this request. Try again; if it keeps failing, inspect the agent logs.';
+	return statusText || `Request failed (HTTP ${status}).`;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+	const normalizedPath = path.startsWith('/api/') ? path.slice(4) : path;
 	let res: Response;
 	try {
-		res = await fetch(`${API_BASE}${path}`, {
-			headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers },
-			...options
+		res = await fetch(`${API_BASE}${normalizedPath}`, {
+			...options,
+			headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers }
 		});
 	} catch (error) {
 		if (error instanceof Error && error.name === 'AbortError') throw error;
 		throw new APIRequestError(
-			'Could not reach the Watcher API. Check that the agent service is running and retry.',
+			'The dashboard could not reach Watcher. Check your connection and that the agent service is running. For a deployment action, refresh its history before retrying: the request may already have been accepted.',
 			0,
 			error
 		);
@@ -88,7 +99,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 		}
 		throw new APIRequestError(message, res.status, body);
 	}
-	return res.json();
+	if (res.status === 204) return undefined as T;
+	try {
+		return await res.json();
+	} catch {
+		throw new APIRequestError(
+			'Watcher returned an unreadable response. Refresh the details to confirm the result before repeating the action.',
+			res.status
+		);
+	}
 }
 
 export interface AuthenticatedEventStream {
@@ -175,7 +194,6 @@ export function openAuthenticatedEventStream(
 	};
 }
 
-
 // ── Types ────────────────────────────────────────────────────
 
 export interface AuthStatusResponse {
@@ -235,6 +253,9 @@ export interface Watcher {
 	hc_interval_sec: number;
 	hc_timeout_sec: number;
 	paused: boolean;
+	auto_deploy: boolean;
+	intercept_next_release: boolean;
+	pending_version: string;
 	max_kept_versions: number;
 	current_version: string;
 	max_ignored_version: string;
@@ -278,6 +299,7 @@ export interface WatcherWritePayload {
 	hc_interval_sec?: number;
 	hc_timeout_sec?: number;
 	paused?: boolean;
+	auto_deploy?: boolean;
 	max_kept_versions?: number;
 	webhook_enabled?: boolean;
 	webhook_url?: string;
@@ -345,6 +367,34 @@ export interface ServiceConfigFile {
 export interface ServiceWithWatcher extends Service {
 	watcher_name: string;
 	install_dir: string;
+}
+
+export interface ServiceConfigRevision {
+	id: number;
+	service_id: number;
+	target_version: string;
+	env_content: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ServiceCandidateInfo {
+	service_id: number;
+	service_name: string;
+	service_type: string;
+	active_env: string;
+	candidate_env: string;
+	has_candidate_env: boolean;
+	is_modified: boolean;
+}
+
+export interface WatcherCandidateResponse {
+	has_pending_release: boolean;
+	target_version: string;
+	status: string;
+	intercept_next_release: boolean;
+	auto_deploy: boolean;
+	services: ServiceCandidateInfo[];
 }
 
 export interface DeployLog {
@@ -537,6 +587,7 @@ export interface SelfConfigResponse {
 	webhook_auto_pause_after_failures: number;
 	webhook_event_retention_days: number;
 	webhook_delivery_retention_days: number;
+	web_assets_path?: string;
 	env_path: string;
 }
 
@@ -559,6 +610,7 @@ export interface UpdateSelfConfigRequest {
 	webhook_auto_pause_after_failures?: number;
 	webhook_event_retention_days?: number;
 	webhook_delivery_retention_days?: number;
+	web_assets_path?: string;
 }
 
 export function isIISService(serviceType: Service['service_type'] | ServiceType): boolean {
@@ -611,19 +663,31 @@ export const api = {
 	// Watchers
 	listWatchers: () => request<Watcher[]>('/watchers'),
 	getWatcher: (id: number) => request<Watcher>(`/watchers/${id}`),
-	createWatcher: (data: WatcherWritePayload) => request<Watcher>('/watchers', { method: 'POST', body: JSON.stringify(data) }),
-	updateWatcher: (id: number, data: WatcherWritePayload) => request<Watcher>(`/watchers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-	deleteWatcher: (id: number) => request<{ message: string }>(`/watchers/${id}`, { method: 'DELETE' }),
-	triggerCheck: (id: number) => request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
+	createWatcher: (data: WatcherWritePayload) =>
+		request<Watcher>('/watchers', { method: 'POST', body: JSON.stringify(data) }),
+	updateWatcher: (id: number, data: WatcherWritePayload) =>
+		request<Watcher>(`/watchers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+	deleteWatcher: (id: number) =>
+		request<{ message: string }>(`/watchers/${id}`, { method: 'DELETE' }),
+	triggerCheck: (id: number) =>
+		request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
 	redeployWatcher: (id: number) =>
-		request<{ message: string; deploy_log_id: number; log_url: string }>(`/watchers/${id}/redeploy`, {
-			method: 'POST'
-		}),
+		request<{ message: string; deploy_log_id: number; log_url: string }>(
+			`/watchers/${id}/redeploy`,
+			{
+				method: 'POST'
+			}
+		),
 	watcherDeploys: (id: number, page = 1, pageSize = 10) =>
-		request<PaginatedResponse<DeployLog>>(`/watchers/${id}/deploys?page=${page}&pageSize=${pageSize}`),
-	watcherDeployLog: (id: number, logId: number) => request<DeployLog>(`/watchers/${id}/deploys/${logId}`),
+		request<PaginatedResponse<DeployLog>>(
+			`/watchers/${id}/deploys?page=${page}&pageSize=${pageSize}`
+		),
+	watcherDeployLog: (id: number, logId: number) =>
+		request<DeployLog>(`/watchers/${id}/deploys/${logId}`),
 	watcherVersions: async (id: number) => {
-		const res = await request<{ versions: ReleaseInfo[]; current_version: string }>(`/watchers/${id}/versions`);
+		const res = await request<{ versions: ReleaseInfo[]; current_version: string }>(
+			`/watchers/${id}/versions`
+		);
 		const current = (res.current_version || '').trim();
 		if (!current) return res.versions;
 		return res.versions.map((v) => ({
@@ -636,9 +700,16 @@ export const api = {
 			method: 'POST',
 			body: JSON.stringify({ version, report_github: reportGithub })
 		}),
-	resumeWatcherUpdates: (id: number) => request<{ message: string }>(`/watchers/${id}/resume`, { method: 'POST' }),
-	deleteWatcherVersion: (id: number, version: string) => request<{ message: string }>(`/watchers/${id}/versions/${version}`, { method: 'DELETE' }),
-	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') => request<{ data: PollEvent[], total: number, page: number, pageSize: number }>(`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`),
+	resumeWatcherUpdates: (id: number) =>
+		request<{ message: string }>(`/watchers/${id}/resume`, { method: 'POST' }),
+	deleteWatcherVersion: (id: number, version: string) =>
+		request<{ message: string }>(`/watchers/${id}/versions/${encodeURIComponent(version)}`, {
+			method: 'DELETE'
+		}),
+	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') =>
+		request<{ data: PollEvent[]; total: number; page: number; pageSize: number }>(
+			`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`
+		),
 	watcherWebhookEvents: (id: number) => request<WebhookEvent[]>(`/watchers/${id}/webhook-events`),
 	watcherWebhookDeliveries: async (id: number, page = 1, pageSize = 20) =>
 		normalizePaginatedResponse(
@@ -646,45 +717,135 @@ export const api = {
 				`/watchers/${id}/webhook-deliveries?page=${page}&pageSize=${pageSize}`
 			)
 		),
-	watcherWebhookDelivery: (id: number, deliveryId: number) => request<WebhookDeliveryDetails>(`/watchers/${id}/webhook-deliveries/${deliveryId}`),
-	sendWatcherWebhookTest: (id: number) => request<{ message: string }>(`/watchers/${id}/webhook/test`, { method: 'POST' }),
-	resumeWatcherWebhook: (id: number, replaySuppressed = false) => request<{ message: string; replay_suppressed: boolean }>(`/watchers/${id}/webhook/resume`, { method: 'POST', body: JSON.stringify({ replay_suppressed: replaySuppressed }) }),
-	streamWatcherEvents: (id: number, onMessage: (data: string) => void | Promise<void>, onError?: (error: unknown) => void) =>
-		openAuthenticatedEventStream(`/watchers/${id}/events`, { onMessage, onError }, { reconnect: true }),
-	streamDeployLog: (id: number, logId: number, onMessage: (data: string) => void | Promise<void>, onError?: (error: unknown) => void) =>
+	watcherWebhookDelivery: (id: number, deliveryId: number) =>
+		request<WebhookDeliveryDetails>(`/watchers/${id}/webhook-deliveries/${deliveryId}`),
+	sendWatcherWebhookTest: (id: number) =>
+		request<{ message: string }>(`/watchers/${id}/webhook/test`, { method: 'POST' }),
+	resumeWatcherWebhook: (id: number, replaySuppressed = false) =>
+		request<{ message: string; replay_suppressed: boolean }>(`/watchers/${id}/webhook/resume`, {
+			method: 'POST',
+			body: JSON.stringify({ replay_suppressed: replaySuppressed })
+		}),
+	streamWatcherEvents: (
+		id: number,
+		onMessage: (data: string) => void | Promise<void>,
+		onError?: (error: unknown) => void
+	) =>
+		openAuthenticatedEventStream(
+			`/watchers/${id}/events`,
+			{ onMessage, onError },
+			{ reconnect: true }
+		),
+	streamDeployLog: (
+		id: number,
+		logId: number,
+		onMessage: (data: string) => void | Promise<void>,
+		onError?: (error: unknown) => void
+	) =>
 		openAuthenticatedEventStream(`/watchers/${id}/deploys/${logId}/stream`, { onMessage, onError }),
 	// Services (flat)
 	listServices: () => request<ServiceWithWatcher[]>('/services'),
 	getService: (id: number) => request<{ service: Service; watcher: Watcher }>(`/services/${id}`),
-	startService: (id: number) => request<{ message: string }>(`/services/${id}/start`, { method: 'POST' }),
-	stopService: (id: number) => request<{ message: string }>(`/services/${id}/stop`, { method: 'POST' }),
-	restartService: (id: number) => request<{ message: string }>(`/services/${id}/restart`, { method: 'POST' }),
-	serviceHealth: (id: number) => request<{ status: string; http_status: number; error: string }>(`/services/${id}/health`),
-	healthHistory: (id: number, limit = 50) => request<HealthEvent[]>(`/services/${id}/health/history?limit=${limit}`),
-	serviceLogs: (id: number, lines = 100, type = 'out') => request<{ lines: string[] }>(`/services/${id}/logs?lines=${lines}&type=${type}`),
+	startService: (id: number) =>
+		request<{ message: string }>(`/services/${id}/start`, { method: 'POST' }),
+	stopService: (id: number) =>
+		request<{ message: string }>(`/services/${id}/stop`, { method: 'POST' }),
+	restartService: (id: number) =>
+		request<{ message: string }>(`/services/${id}/restart`, { method: 'POST' }),
+	serviceHealth: (id: number) =>
+		request<{ status: string; http_status: number; error: string }>(`/services/${id}/health`),
+	healthHistory: (id: number, limit = 50) =>
+		request<HealthEvent[]>(`/services/${id}/health/history?limit=${limit}`),
+	serviceLogs: (id: number, lines = 100, type = 'out') =>
+		request<{ lines: string[] }>(`/services/${id}/logs?lines=${lines}&type=${type}`),
 	serviceDeploys: (id: number, page = 1, pageSize = 10) =>
-		request<PaginatedResponse<DeployLog>>(`/services/${id}/deploys?page=${page}&pageSize=${pageSize}`),
-	syncServiceEnv: (id: number, envContent: string) => request<{ message: string }>(`/services/${id}/env`, { method: 'PUT', body: JSON.stringify({ env_content: envContent }) }),
+		request<PaginatedResponse<DeployLog>>(
+			`/services/${id}/deploys?page=${page}&pageSize=${pageSize}`
+		),
+	syncServiceEnv: (id: number, envContent: string) =>
+		request<{ message: string }>(`/services/${id}/env`, {
+			method: 'PUT',
+			body: JSON.stringify({ env_content: envContent })
+		}),
 
 	// Services (nested under watcher)
-	createService: (watcherId: number, data: ServiceWritePayload) => request<Service>(`/watchers/${watcherId}/services`, { method: 'POST', body: JSON.stringify(data) }),
+	createService: (watcherId: number, data: ServiceWritePayload) =>
+		request<Service>(`/watchers/${watcherId}/services`, {
+			method: 'POST',
+			body: JSON.stringify(data)
+		}),
 	updateService: (watcherId: number, serviceId: number, data: ServiceWritePayload) =>
-		request<Service>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'PUT', body: JSON.stringify(data) }),
-	deleteService: (watcherId: number, serviceId: number) => request<{ message: string }>(`/watchers/${watcherId}/services/${serviceId}`, { method: 'DELETE' }),
+		request<Service>(`/watchers/${watcherId}/services/${serviceId}`, {
+			method: 'PUT',
+			body: JSON.stringify(data)
+		}),
+	deleteService: (watcherId: number, serviceId: number) =>
+		request<{ message: string }>(`/watchers/${watcherId}/services/${serviceId}`, {
+			method: 'DELETE'
+		}),
 
 	// GitHub Integration
 	inspectRepo: (repoUrl: string, releaseRef = 'latest', githubToken = '') =>
 		request<InspectRepoResponse>('/github/inspect', {
 			method: 'POST',
-			body: JSON.stringify({ repo_url: repoUrl, release_ref: releaseRef, github_token: githubToken })
+			body: JSON.stringify({
+				repo_url: repoUrl,
+				release_ref: releaseRef,
+				github_token: githubToken
+			})
 		}),
 
 	// Agent Self-Management
 	selfVersion: () => request<SelfVersionResponse>('/self/version'),
 	selfConfig: () => request<SelfConfigResponse>('/self/config'),
-	updateSelfConfig: (data: UpdateSelfConfigRequest) => request<{ message: string; notes: string[]; config: SelfConfigResponse }>('/self/config', { method: 'PUT', body: JSON.stringify(data) }),
+	updateSelfConfig: (data: UpdateSelfConfigRequest) =>
+		request<{ message: string; notes: string[]; config: SelfConfigResponse }>('/self/config', {
+			method: 'PUT',
+			body: JSON.stringify(data)
+		}),
 	selfUpdateCheck: () => request<SelfUpdateCheckResponse>('/self/update-check'),
 	selfUpdate: () => request<{ message: string }>('/self/update', { method: 'POST' }),
-	selfRestart: () => request<{ message: string; service_name: string }>('/self/restart', { method: 'POST' }),
-	selfUninstall: () => request<{ script: string }>('/self/uninstall', { method: 'POST' })
+	selfRestart: () =>
+		request<{ message: string; service_name: string }>('/self/restart', { method: 'POST' }),
+	selfUninstall: () => request<{ script: string }>('/self/uninstall', { method: 'POST' }),
+
+	interceptWatcher: async (id: number, intercept: boolean) =>
+		request(`/watchers/${id}/intercept`, {
+			method: 'POST',
+			body: JSON.stringify({ intercept_next_release: intercept })
+		}),
+	approveRelease: async (id: number, version: string) =>
+		request(`/watchers/${id}/approve`, { method: 'POST', body: JSON.stringify({ version }) }),
+	getServiceConfigRevisions: async (id: number) =>
+		request<{ data: ServiceConfigRevision[] }>(`/services/${id}/revisions`),
+	updateServiceConfigRevision: async (id: number, target: string, envContent: string) =>
+		request(`/services/${id}/revisions/${encodeURIComponent(target)}`, {
+			method: 'PUT',
+			body: JSON.stringify({ env_content: envContent })
+		}),
+	deleteServiceConfigRevision: async (id: number, target: string) =>
+		request(`/services/${id}/revisions/${encodeURIComponent(target)}`, { method: 'DELETE' }),
+	getServiceSnapshotEnv: async (id: number, version: string) =>
+		request<{ env_content: string }>(
+			`/services/${id}/snapshots/${encodeURIComponent(version)}/env`
+		),
+
+	discardRelease: async (id: number) =>
+		request<{ message: string }>(`/watchers/${id}/discard`, { method: 'POST' }),
+	getWatcherCandidate: async (id: number, target?: string) => {
+		const q = target ? `?target=${encodeURIComponent(target)}` : '';
+		return request<WatcherCandidateResponse>(`/watchers/${id}/candidate${q}`);
+	},
+	updateWatcherCandidate: async (
+		id: number,
+		targetVersion: string,
+		services: { service_id: number; env_content: string }[]
+	) =>
+		request<{ message: string }>(`/watchers/${id}/candidate`, {
+			method: 'PUT',
+			body: JSON.stringify({
+				target_version: targetVersion,
+				services
+			})
+		})
 };

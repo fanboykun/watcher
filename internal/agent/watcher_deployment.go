@@ -11,7 +11,10 @@ import (
 
 // deploy downloads one target artifact, invokes the deployer, and reports its GitHub status.
 func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta ServiceMeta, targetVersion, previousVersion string) error {
-	deployLogID, _ := r.state.SetDeploying(targetVersion, previousVersion)
+	deployLogID, err := r.state.SetDeploying(targetVersion, previousVersion)
+	if err != nil {
+		return fmt.Errorf("record deployment start: %w", err)
+	}
 
 	// ── GitHub Deployment API integration (optional) ──────────────
 	var ghDeploymentID int64
@@ -91,9 +94,19 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 		os.Remove(zipPath)
 	}()
 
-	if err := r.deployer.Deploy(ctx, targetVersion, zipPath, previousVersion); err != nil {
+	originalServices := append([]ServiceConfig(nil), r.wcfg.Services...)
+	candidates, err := r.prepareCandidateServices(targetVersion)
+	if err != nil {
 		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
 		return err
+	}
+	if err := r.deployer.Deploy(ctx, targetVersion, zipPath, previousVersion); err != nil {
+		r.wcfg.Services = originalServices
+		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
+		return err
+	}
+	if err := r.commitCandidateServices(candidates); err != nil {
+		return fmt.Errorf("release %s activated but candidate persistence failed: %w", targetVersion, err)
 	}
 
 	if err := r.state.WriteVersion(targetVersion); err != nil {

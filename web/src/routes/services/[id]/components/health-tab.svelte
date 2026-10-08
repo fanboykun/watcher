@@ -51,7 +51,7 @@
 		<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
 			<Heart class="mb-3 h-8 w-8 text-muted-foreground/40" />
 			<p class="text-sm text-muted-foreground">No health checks recorded</p>
-			<p class="mt-1 text-xs text-muted-foreground/60">Click "Health" to run a check</p>
+			<p class="mt-1 text-xs text-muted-foreground/60">Use "Check health" to run a check</p>
 		</Card.Content>
 	</Card.Root>
 {/if}
