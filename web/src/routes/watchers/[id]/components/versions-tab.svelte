@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as Card from '$lib/components/ui/card';
-	import * as Table from '$lib/components/ui/table';
+	import { Badge } from '$lib/components/ui/badge';
 	import * as Button from '$lib/components/ui/button';
 	import { CheckCircle2, RotateCcw, Trash2, Server, Archive } from '@lucide/svelte';
 	import { page } from '$app/state';
@@ -22,100 +22,68 @@
 </script>
 
 {#if versions && versions.length > 0}
-	<Card.Root class="border-border bg-card">
-		<Table.Root>
-			<Table.Header>
-				<Table.Row class="border-border hover:bg-transparent">
-					<Table.Head>Version</Table.Head>
-					<Table.Head>Modified At</Table.Head>
-					<Table.Head>Size</Table.Head>
-					<Table.Head>Status</Table.Head>
-					<Table.Head class="text-right">Action</Table.Head>
-				</Table.Row>
-			</Table.Header>
-			<Table.Body>
-				{#each versions as v (v.version)}
-					<Table.Row class="border-border">
-						<Table.Cell class="font-mono text-sm font-medium">{v.version}</Table.Cell>
-						<Table.Cell class="text-muted-foreground">{formatDate(v.mod_time)}</Table.Cell>
-						<Table.Cell class="text-muted-foreground">
-							{v.size_bytes > 0 ? filesize(v.size_bytes) : v.size_human || '0 B'}
-						</Table.Cell>
-						<Table.Cell>
-							<div class="flex items-center gap-1.5">
-								{#if v.is_current}
-									<span
-										class="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400"
-									>
-										<CheckCircle2 class="h-3 w-3" />
-										Current
-									</span>
-								{:else}
-									<span
-										class="inline-flex items-center gap-1 rounded bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground"
-									>
-										Inactive
-									</span>
-								{/if}
-								{#if v.has_snapshot}
-									<span
-										class="inline-flex items-center gap-1 rounded bg-blue-500/15 px-2 py-0.5 text-xs font-medium text-blue-400"
-										title="Config snapshot available"
-									>
-										<Archive class="h-3 w-3" />
-										Snapshot
-									</span>
-								{/if}
+	<Card.Root>
+		<Card.Header
+			><Card.Title>Retained releases</Card.Title><Card.Description
+				>Inspect saved configuration or restore a release.</Card.Description
+			></Card.Header
+		>
+		<Card.Content class="divide-y divide-border">
+			{#each versions as v (v.version)}
+				<article class="space-y-4 py-4 first:pt-0 last:pb-0" aria-label={`Release ${v.version}`}>
+					<div class="section-toolbar">
+						<div class="min-w-0 space-y-1">
+							<div class="flex flex-wrap items-center gap-2">
+								<h3 class="font-mono text-sm font-semibold break-all">{v.version}</h3>
+								{#if v.is_current}<Badge
+										variant="secondary"
+										class="bg-emerald-500/15 text-emerald-400"><CheckCircle2 />Current</Badge
+									>{/if}
 							</div>
-						</Table.Cell>
-						<Table.Cell class="text-right">
-							<div class="flex items-center justify-end gap-2">
-								{#if v.has_snapshot}
-									<a
-										href={resolve('/watchers/[id]/versions/[version]', {
-											id: page.params.id!,
-											version: encodeURIComponent(v.version)
-										})}
-									>
-										<Button.Root
-											variant="outline"
-											size="sm"
-											class="h-8"
-											title="View Config Snapshot"
-										>
-											<Archive class="mr-1.5 h-3 w-3" />
-											Config
-										</Button.Root>
-									</a>
-								{/if}
-								{#if !v.is_current}
+							<p class="text-xs text-muted-foreground">
+								{formatDate(v.mod_time)} · {v.size_bytes > 0
+									? filesize(v.size_bytes)
+									: v.size_human || '0 B'}
+							</p>
+						</div>
+						<div class="flex flex-wrap items-center gap-2">
+							{#if v.has_snapshot}
+								<Button.Root
+									href={resolve('/watchers/[id]/versions/[version]', {
+										id: page.params.id!,
+										version: encodeURIComponent(v.version)
+									})}
+									variant="outline"
+									size="sm"
+									aria-label={`View configuration for ${v.version}`}
+									><Archive />View configuration</Button.Root
+								>
+							{:else}<span class="text-xs text-muted-foreground">No configuration snapshot</span
+								>{/if}
+							{#if !v.is_current}
+								<div class="flex flex-wrap gap-2 border-l border-border pl-2">
 									<Button.Root
 										variant="outline"
 										size="sm"
-										class="h-8"
 										disabled={busy}
+										aria-label={`Roll back to ${v.version}`}
 										onclick={() => onRollback(v.version)}
+										><RotateCcw class="text-amber-400" />Roll back</Button.Root
 									>
-										<RotateCcw class="mr-1.5 h-3 w-3" />
-										Rollback
-									</Button.Root>
 									<Button.Root
-										variant="default"
+										variant="destructive"
 										size="sm"
-										class="h-8 bg-red-500/10 text-red-500 hover:bg-red-500/20"
-										title="Delete Version"
 										disabled={busy}
-										onclick={() => onDeleteVersion(v.version)}
+										aria-label={`Delete version ${v.version}`}
+										onclick={() => onDeleteVersion(v.version)}><Trash2 />Delete version</Button.Root
 									>
-										<Trash2 class="h-3 w-3" />
-									</Button.Root>
-								{/if}
-							</div>
-						</Table.Cell>
-					</Table.Row>
-				{/each}
-			</Table.Body>
-		</Table.Root>
+								</div>
+							{/if}
+						</div>
+					</div>
+				</article>
+			{/each}
+		</Card.Content>
 	</Card.Root>
 {:else}
 	<Card.Root class="border-dashed border-border bg-card">
