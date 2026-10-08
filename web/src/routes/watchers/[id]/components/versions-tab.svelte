@@ -3,7 +3,7 @@
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
 	import { CheckCircle2, RotateCcw, Trash2, Server, Archive } from '@lucide/svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { filesize } from 'filesize';
 	import { formatDate } from '$lib/utils';
@@ -69,7 +69,7 @@
 						<Table.Cell class="text-right">
 							<div class="flex items-center justify-end gap-2">
 								{#if v.has_snapshot}
-									<a href={resolve(`/watchers/${$page.params.id}/versions/${v.version}`)}>
+									<a href={resolve('/watchers/[id]/versions/[version]', { id: page.params.id!, version: encodeURIComponent(v.version) })}>
 										<Button.Root
 											variant="outline"
 											size="sm"

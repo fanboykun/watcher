@@ -686,7 +686,7 @@ export const api = {
 	resumeWatcherUpdates: (id: number) =>
 		request<{ message: string }>(`/watchers/${id}/resume`, { method: 'POST' }),
 	deleteWatcherVersion: (id: number, version: string) =>
-		request<{ message: string }>(`/watchers/${id}/versions/${version}`, { method: 'DELETE' }),
+		request<{ message: string }>(`/watchers/${id}/versions/${encodeURIComponent(version)}`, { method: 'DELETE' }),
 	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') =>
 		request<{ data: PollEvent[]; total: number; page: number; pageSize: number }>(
 			`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`
@@ -795,23 +795,20 @@ export const api = {
 			method: 'POST',
 			body: JSON.stringify({ intercept_next_release: intercept })
 		}),
-	approveRelease: async (id: number) => request(`/watchers/${id}/approve`, { method: 'POST' }),
+	approveRelease: async (id: number, version: string) =>
+		request(`/watchers/${id}/approve`, { method: 'POST', body: JSON.stringify({ version }) }),
 	getServiceConfigRevisions: async (id: number) =>
 		request<{ data: ServiceConfigRevision[] }>(`/services/${id}/revisions`),
 	updateServiceConfigRevision: async (id: number, target: string, envContent: string) =>
-		request(`/services/${id}/revisions/${target}`, {
+		request(`/services/${id}/revisions/${encodeURIComponent(target)}`, {
 			method: 'PUT',
 			body: JSON.stringify({ env_content: envContent })
 		}),
 	deleteServiceConfigRevision: async (id: number, target: string) =>
-		request(`/services/${id}/revisions/${target}`, { method: 'DELETE' }),
+		request(`/services/${id}/revisions/${encodeURIComponent(target)}`, { method: 'DELETE' }),
 	getServiceSnapshotEnv: async (id: number, version: string) =>
-		request<{ env_content: string }>(`/services/${id}/snapshots/${version}/env`),
-	updateServiceSnapshotEnv: async (id: number, version: string, envContent: string) =>
-		request<{ message: string; env_content: string }>(`/services/${id}/snapshots/${version}/env`, {
-			method: 'PUT',
-			body: JSON.stringify({ env_content: envContent })
-		}),
+		request<{ env_content: string }>(`/services/${id}/snapshots/${encodeURIComponent(version)}/env`),
+
 	discardRelease: async (id: number) =>
 		request<{ message: string }>(`/watchers/${id}/discard`, { method: 'POST' }),
 	getWatcherCandidate: async (id: number, target?: string) => {

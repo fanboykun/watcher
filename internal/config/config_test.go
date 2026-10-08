@@ -259,3 +259,13 @@ func TestNormalizedWebBasePath(t *testing.T) {
 		})
 	}
 }
+
+func TestWebBasePathRejectsUnsafePrefixes(t *testing.T) {
+	for _, path := range []string{`//evil.example`, `/a/../b`, `/a/./b`, `/a//b`, `/a" onclick="alert(1)`, `/a\\b`, `/a%2Fb`, `/a?query`, `/a#fragment`, `/a<b`} {
+		t.Run(path, func(t *testing.T) {
+			if _, err := NormalizeWebBasePath(path); err == nil {
+				t.Fatalf("unsafe prefix accepted: %q", path)
+			}
+		})
+	}
+}

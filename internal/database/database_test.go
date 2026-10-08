@@ -234,3 +234,33 @@ func columnExists(t *testing.T, db *gorm.DB, table, column string) bool {
 
 	return false
 }
+
+func TestNewDBDeduplicatesLegacyConfigurationRevisions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := NewDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("DROP INDEX idx_service_revision_target").Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"old", "latest"} {
+		if err := db.Create(&ServiceConfigRevision{ServiceID: 1, TargetVersion: "next", EnvContent: content}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	reopened, err := NewDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revisions []ServiceConfigRevision
+	if err := reopened.Find(&revisions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(revisions) != 1 || revisions[0].EnvContent != "latest" {
+		t.Fatalf("migration lost latest revision: %+v", revisions)
+	}
+	if err := reopened.Create(&ServiceConfigRevision{ServiceID: 1, TargetVersion: "next", EnvContent: "duplicate"}).Error; err == nil {
+		t.Fatal("duplicate service/version revision accepted")
+	}
+}

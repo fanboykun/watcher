@@ -379,9 +379,11 @@
 		}
 	}
 
-	async function approveRelease() {
+	async function approveRelease(version?: string) {
 		try {
-			await api.approveRelease(id);
+			const target = version || watcher?.pending_version;
+			if (!target) return;
+			await api.approveRelease(id, target);
 			triggerMsg = 'Release approved! Deploying...';
 			watcher = await api.getWatcher(id);
 		} catch (e) {
@@ -542,7 +544,7 @@
 						variant="default"
 						size="sm"
 						class="bg-purple-600 text-white hover:bg-purple-700"
-						onclick={approveRelease}
+						onclick={() => approveRelease()}
 					>
 						Approve & Deploy
 					</Button.Root>

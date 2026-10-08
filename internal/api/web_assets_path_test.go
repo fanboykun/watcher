@@ -13,6 +13,7 @@ import (
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
+	"github.com/gin-gonic/gin"
 )
 
 func TestProcessIndexHTML(t *testing.T) {
@@ -345,5 +346,58 @@ func TestRouterDynamicRuntimeWebAssetsPath(t *testing.T) {
 	}
 	if !strings.Contains(recProxy.Body.String(), `base: "/proxied"`) {
 		t.Fatalf("expected base /proxied from X-Forwarded-Prefix, got:\n%s", recProxy.Body.String())
+	}
+}
+
+func TestSubpathRoutingKeepsAPIAndHTMLBoundaries(t *testing.T) {
+	r, _, _, _ := candidateAPIFixture(t)
+	for _, path := range []string{"/api/missing", "/watcher/api/missing"} {
+		rec := authRequest(r, http.MethodGet, path, "", "watcher")
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "<!doctype") {
+			t.Fatalf("unknown API served SPA: %s %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	rec := authRequest(r, http.MethodGet, "/watcher/index.html", "", "watcher")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `base: "/watcher"`) {
+		t.Fatal("direct index.html bypassed runtime prefix")
+	}
+	rec = authRequest(r, http.MethodGet, "/watcher/api/status", "", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("prefixed API bypassed auth: %d", rec.Code)
+	}
+}
+
+func TestForwardedPrefixCannotInjectHTML(t *testing.T) {
+	h := &Handler{}
+	for _, prefix := range []string{`//evil.example`, `/x" onload="alert(1)`, `/a/../b`, `/a%2fb`} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+		c.Request.Header.Set("X-Forwarded-Prefix", prefix)
+		if got := h.currentWebBasePath(c); got != "" {
+			t.Fatalf("unsafe proxy prefix accepted: %q", got)
+		}
+	}
+}
+
+func TestSelfConfigValidatesNewWebPrefixAndClearsAlias(t *testing.T) {
+	db, err := database.NewDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.AppConfig{LogLevel: "info", LogMaxSizeMB: 100, WebBasePath: "/alias"}
+	r := NewRouter(db, "nssm", t.TempDir(), "test", "", filepath.Join(t.TempDir(), ".env"), cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, nil, nil, nil, nil)
+	rec := authRequest(r, http.MethodPut, "/api/self/config", `{"web_assets_path":"/bad\"path"}`, "watcher")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unsafe updated prefix accepted: %d %s", rec.Code, rec.Body.String())
+	}
+	if cfg.NormalizedWebBasePath() != "/alias" {
+		t.Fatal("invalid update changed runtime config")
+	}
+	rec = authRequest(r, http.MethodPut, "/api/self/config", `{"web_assets_path":""}`, "watcher")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear: %d %s", rec.Code, rec.Body.String())
+	}
+	if cfg.NormalizedWebBasePath() != "" {
+		t.Fatal("alias prevented clearing base path")
 	}
 }

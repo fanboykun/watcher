@@ -9,7 +9,8 @@ const config = {
 			fallback: 'index.html' // SPA fallback for client-side routing
 		}),
 		paths: {
-			base: process.env.BASE_PATH || ''
+			// Go injects the dashboard prefix into the root-built SPA at runtime.
+			base: ''
 		}
 	},
 	vitePlugin: {

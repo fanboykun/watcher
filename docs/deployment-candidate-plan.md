@@ -16,8 +16,8 @@ We will revert the single `StagedEnvContent` fields and introduce a dedicated ta
    ```go
    type ServiceConfigRevision struct {
        ID            uint      `gorm:"primaryKey" json:"id"`
-       ServiceID     uint      `gorm:"not null;index" json:"service_id"`
-       TargetVersion string    `gorm:"not null;index" json:"target_version"` // e.g., "1.2.0-rc1" or "next"
+       ServiceID     uint      `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"service_id"`
+       TargetVersion string    `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"target_version"` // e.g., "1.2.0-rc1" or "next"
        EnvContent    string    `gorm:"type:text" json:"env_content"`
        CreatedAt     time.Time `json:"created_at"`
        UpdatedAt     time.Time `json:"updated_at"`
@@ -41,14 +41,17 @@ During orchestration (`internal/agent/watcher_deployment.go`), the agent will re
    - **Match 2**: If no exact match, check for `TargetVersion == "next"`.
    - **Match 3**: If neither exists, fallback to the current active `Service.EnvContent`.
 2. **Application & Cleanup**:
-   - If a revision is selected, update the live `Service.EnvContent` with the revision's content and write the `.env` file to disk immediately prior to taking the active configuration snapshot.
-   - If the `next` wildcard revision was consumed, it can be deleted or renamed to the locked version to prevent it from accidentally applying to subsequent releases.
+   - Resolve selected revisions in memory, validate artifacts and managed paths, and capture the target snapshot before stopping services. Draft preparation does not write live files or update active service rows.
+   - Write the selected environment after service shutdown and release activation. On failure, restore the previous live files before recovery; preserve drafts and any historical snapshot for a failed redeploy.
+   - After service start and health verification succeed, persist the selected contents and consume their revisions in one transaction. A draft edited during deployment remains staged. Exact-version revisions take precedence over `next`; unused drafts remain available.
 
 ---
 
 ### Phase 3: The Intercept Safety Net
 We maintain the **"Require Approval for Next Release"** workflow.
-- If a developer clicks "Intercept Next Release", the Watcher halts orchestration when it downloads a new release, going into a `pending_approval` state.
+- If a developer clicks "Intercept Next Release", the Watcher halts orchestration when it detects a new release, going into a `pending_approval` state.
+- `POST /api/watchers/:id/approve` requires `{"version":"<pending version>"}`. Approval applies only to that version and survives retries; a changed target requires fresh approval. The one-shot interception flag clears only after successful deployment or explicit discard.
+- `auto_deploy=false` requires approval for every new target. The default is automatic deployment.
 - This gives the developer an indefinite window to visit the Deployment Candidates UI, ensure the configuration is correct for that specific version, and manually click "Approve & Deploy".
 
 ---
@@ -76,3 +79,12 @@ Provide a dedicated view for managing releases and configurations safely.
    - Users can define environment changes for the "Next deployment, whatever version it ends up being."
 3. **Approval Flow**:
    - If the Watcher is in `pending_approval`, show a prominent banner with the intercepted version, a button to jump to its specific Candidate Configuration, and an "Approve & Deploy" button.
+
+
+### Historical snapshots
+
+`GET /api/services/:id/snapshots/:version/env` inspects a trusted historical snapshot using the same path and service naming rules as rollback. Historical inspection is read-only: draft saves never alter rollback snapshots. A missing snapshot is reported as missing, rather than replaced with current environment content.
+
+### Reverse proxy subpaths
+
+Build the SPA at the root; the Go server injects `WEB_ASSETS_PATH` (or its `WEB_BASE_PATH` alias) into the bootstrap HTML at runtime. A valid `X-Forwarded-Prefix` is used when neither setting supplies a prefix. Proxies may preserve the prefix or strip it before forwarding. Prefixes use slash-separated letters, digits, dots, underscores, hyphens, or tildes; empty and dot traversal segments are rejected. API and SSE URLs and client links use the same runtime prefix. Existing browser tabs should reload after changing the prefix.

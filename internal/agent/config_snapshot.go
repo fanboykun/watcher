@@ -301,3 +301,57 @@ func restoreSnapshotTree(sourceDir, targetDir string) error {
 		return writeManagedFile(targetDir, relativePath, string(content))
 	})
 }
+
+// ReadServiceSnapshotEnv reads a historical environment through the same naming
+// and path validation used by snapshot capture and rollback reconciliation.
+func ReadServiceSnapshotEnv(wcfg *WatcherConfig, version string, serviceIndex int) (string, error) {
+	if wcfg == nil || serviceIndex < 0 || serviceIndex >= len(wcfg.Services) {
+		return "", errors.New("invalid snapshot service")
+	}
+	configSnapshotMu.Lock()
+	defer configSnapshotMu.Unlock()
+	if _, err := loadConfigSnapshotManifest(wcfg.InstallDir, version); err != nil {
+		return "", err
+	}
+	svc := wcfg.Services[serviceIndex]
+	root := filepath.Join(ConfigSnapshotPath(wcfg.InstallDir, version), "services", snapshotServiceName(svc, serviceIndex), "env")
+	return readSnapshotManagedFile(root, svc.EnvFile)
+}
+
+// preserveConfigSnapshot retains historical configuration across failed
+// redeploys, and removes incomplete snapshots for failed new releases.
+func preserveConfigSnapshot(installDir, version string) (func(error) error, error) {
+	configSnapshotMu.Lock()
+	defer configSnapshotMu.Unlock()
+	target := ConfigSnapshotPath(installDir, version)
+	backup := ""
+	if _, err := os.Stat(target); err == nil {
+		backup, err = os.MkdirTemp(filepath.Dir(target), ".snapshot-backup-")
+		if err != nil {
+			return nil, err
+		}
+		if err := copyDir(target, backup); err != nil {
+			os.RemoveAll(backup)
+			return nil, fmt.Errorf("preserve config snapshot: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	return func(cause error) error {
+		configSnapshotMu.Lock()
+		defer configSnapshotMu.Unlock()
+		if cause != nil {
+			if err := os.RemoveAll(target); err != nil {
+				return errors.Join(cause, err)
+			}
+			if backup != "" {
+				if err := os.Rename(backup, target); err != nil {
+					return errors.Join(cause, fmt.Errorf("restore config snapshot: %w", err))
+				}
+			}
+		} else if backup != "" {
+			_ = os.RemoveAll(backup)
+		}
+		return cause
+	}, nil
+}

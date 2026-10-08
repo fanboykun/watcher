@@ -56,7 +56,7 @@ func (h *Handler) SelfConfig(c *gin.Context) {
 		WebhookAutoPauseAfterFailures:     h.appCfg.WebhookAutoPauseAfter,
 		WebhookEventRetentionDays:         h.appCfg.WebhookEventRetentionDays,
 		WebhookDeliveryRetentionDays:      h.appCfg.WebhookDeliveryRetentionDays,
-		WebAssetsPath:                     h.appCfg.WebAssetsPath,
+		WebAssetsPath:                     h.appCfg.NormalizedWebBasePath(),
 		EnvPath:                           h.envPath,
 	})
 }
@@ -102,10 +102,7 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 	if req.LogCompress != nil {
 		next.LogCompress = *req.LogCompress
 	}
-	if err := next.Validate(); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
-		return
-	}
+
 	if req.NssmPath != nil {
 		next.NssmPath = strings.TrimSpace(*req.NssmPath)
 	}
@@ -160,6 +157,11 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 	}
 	if req.WebAssetsPath != nil {
 		next.WebAssetsPath = strings.TrimSpace(*req.WebAssetsPath)
+		next.WebBasePath = ""
+	}
+	if err := next.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
 	}
 	if err := h.validateWebhookDefaultsDependency(&next); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
@@ -179,6 +181,7 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 		"WEBHOOK_EVENT_RETENTION_DAYS":      strconv.Itoa(next.WebhookEventRetentionDays),
 		"WEBHOOK_DELIVERY_RETENTION_DAYS":   strconv.Itoa(next.WebhookDeliveryRetentionDays),
 		"WEB_ASSETS_PATH":                   next.WebAssetsPath,
+		"WEB_BASE_PATH":                     next.WebBasePath,
 		"LOG_DIR":                           next.LogDir,
 		"LOG_LEVEL":                         next.LogLevel,
 		"LOG_MAX_SIZE_MB":                   strconv.Itoa(next.LogMaxSizeMB),
@@ -240,7 +243,7 @@ func (h *Handler) UpdateSelfConfig(c *gin.Context) {
 			WebhookAutoPauseAfterFailures:     next.WebhookAutoPauseAfter,
 			WebhookEventRetentionDays:         next.WebhookEventRetentionDays,
 			WebhookDeliveryRetentionDays:      next.WebhookDeliveryRetentionDays,
-			WebAssetsPath:                     next.WebAssetsPath,
+			WebAssetsPath:                     next.NormalizedWebBasePath(),
 			EnvPath:                           h.envPath,
 		},
 	})

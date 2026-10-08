@@ -174,7 +174,7 @@
 	<!-- Header -->
 	<div class="flex items-center gap-4">
 		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-		<a href={'/services'}>
+		<a href={resolve('/services')}>
 			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
 				<ArrowLeft class="h-4 w-4" />
 			</Button.Root>
@@ -186,14 +186,14 @@
 			{#if watcher}
 				<p class="text-sm text-muted-foreground">
 					Watcher: <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-					<a href={`/watchers/${watcher.id}`} class="hover:underline">{watcher.name}</a>
+					<a href={resolve(`/watchers/${watcher.id}`)} class="hover:underline">{watcher.name}</a>
 				</p>
 			{/if}
 		</div>
 		{#if service}
 			<div class="flex items-center gap-2">
 				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-				<a href={`/services/${id}/edit`}>
+				<a href={resolve(`/services/${id}/edit`)}>
 					<Button.Root variant="outline" size="sm">
 						<Pencil class="mr-1.5 h-4 w-4" /> Edit
 					</Button.Root>

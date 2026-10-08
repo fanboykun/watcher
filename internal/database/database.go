@@ -23,6 +23,13 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	// Earlier candidate builds allowed duplicates. Keep the latest saved revision
+	// before installing the service/target uniqueness constraint.
+	if db.Migrator().HasTable(&ServiceConfigRevision{}) {
+		if err := db.Exec("DELETE FROM service_config_revisions WHERE id NOT IN (SELECT MAX(id) FROM service_config_revisions GROUP BY service_id, target_version)").Error; err != nil {
+			return nil, fmt.Errorf("deduplicate configuration revisions: %w", err)
+		}
+	}
 	if err := db.AutoMigrate(
 		&AuthCredential{},
 		&Watcher{},

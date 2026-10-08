@@ -64,7 +64,7 @@ func (d *Deployer) lWarn(msg string, args ...any) {
 }
 
 // Deploy executes the validated release deployment and compensation pipeline.
-func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion string) error {
+func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion string) (deployErr error) {
 	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(version))
 	currentDir := filepath.Join(d.wcfg.InstallDir, "current")
 	rollbackVersion := d.resolveRollbackVersion(version, previousVersion)
@@ -83,6 +83,16 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 	if err := d.prepareRelease(tempReleaseDir); err != nil {
 		return fmt.Errorf("prepare release: %w", err)
 	}
+	envFiles, err := d.prepareDeploymentEnv()
+	if err != nil {
+		return fmt.Errorf("prepare environment: %w", err)
+	}
+	// Keep the trusted snapshot for a redeployed version until it succeeds.
+	restoreSnapshot, err := preserveConfigSnapshot(d.wcfg.InstallDir, version)
+	if err != nil {
+		return err
+	}
+	defer func() { deployErr = restoreSnapshot(deployErr) }()
 	if err := d.captureConfigSnapshot(version, SnapshotSourceDeployment); err != nil {
 		return fmt.Errorf("capture config snapshot: %w", err)
 	}
@@ -107,9 +117,14 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 		return d.recoverStoppedServices(ctx, stoppedServices, failure)
 	}
 
+	if err := applyDeploymentEnv(envFiles); err != nil {
+		failure := restoreDeploymentEnv(envFiles, fmt.Errorf("write deployment environment: %w", err))
+		return d.recoverActivatedDeployment(ctx, version, currentDir, rollbackVersion, failure, promotion)
+	}
+
 	d.l("starting services")
 	if err := d.startServices(ctx, currentDir, "deploy"); err != nil {
-		return d.recoverActivatedDeployment(ctx, version, currentDir, rollbackVersion, err, promotion)
+		return d.recoverActivatedDeployment(ctx, version, currentDir, rollbackVersion, restoreDeploymentEnv(envFiles, err), promotion)
 	}
 
 	if d.wcfg.HealthCheck.Enabled {
@@ -123,7 +138,7 @@ func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion
 			}
 			if err := d.healthCheck(ctx, svc.WindowsServiceName, url); err != nil {
 				return d.recoverActivatedDeployment(ctx, version, currentDir, rollbackVersion,
-					fmt.Errorf("health check failed for %s: %w", svc.WindowsServiceName, err), promotion)
+					restoreDeploymentEnv(envFiles, fmt.Errorf("health check failed for %s: %w", svc.WindowsServiceName, err)), promotion)
 			}
 		}
 	}

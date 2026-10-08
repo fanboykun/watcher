@@ -7,8 +7,6 @@ import (
 	"regexp"
 	"strings"
 
-	"sync"
-
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/webhook"
@@ -21,6 +19,8 @@ import (
 func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, log *agent.Logger, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// Keep encoded slashes in version tags inside their route parameter.
+	r.UseRawPath = true
 	r.Use(gin.Recovery())
 
 	h := NewHandler(db, nssmPath, logDir, version, githubToken, envPath, appCfg, log, events, checkTrigger, syncTrigger, webhookService, webhookTrigger)
@@ -59,7 +59,6 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 		services.PUT("/:id/revisions/:target", h.UpdateServiceConfigRevision)
 		services.DELETE("/:id/revisions/:target", h.DeleteServiceConfigRevision)
 		services.GET("/:id/snapshots/:version/env", h.GetServiceSnapshotEnv)
-		services.PUT("/:id/snapshots/:version/env", h.UpdateServiceSnapshotEnv)
 		services.GET("/:id/health", h.GetServiceHealth)
 		services.GET("/:id/health/history", h.GetHealthHistory)
 		services.GET("/:id/logs", h.GetServiceLogs)
@@ -131,7 +130,7 @@ func processIndexHTML(content []byte, basePath string) []byte {
 	s := string(content)
 
 	// Replace SvelteKit base and assets configuration
-	s = reSvelteKitBase.ReplaceAllString(s, fmt.Sprintf(`base: %q, assets: %q`, basePath, basePath))
+	s = reSvelteKitBase.ReplaceAllStringFunc(s, func(string) string { return fmt.Sprintf(`base: %q, assets: %q`, basePath, basePath) })
 
 	// Replace root-relative asset paths for SvelteKit assets and imports
 	s = strings.ReplaceAll(s, `href="/_app/`, fmt.Sprintf(`href="%s/_app/`, basePath))
@@ -152,11 +151,8 @@ func (h *Handler) currentWebBasePath(c *gin.Context) string {
 		}
 	}
 	if c != nil {
-		if p := strings.TrimSpace(c.GetHeader("X-Forwarded-Prefix")); p != "" {
-			if !strings.HasPrefix(p, "/") {
-				p = "/" + p
-			}
-			return strings.TrimRight(p, "/")
+		if p, err := config.NormalizeWebBasePath(c.GetHeader("X-Forwarded-Prefix")); err == nil {
+			return p
 		}
 	}
 	return ""
@@ -174,29 +170,6 @@ func setupSPA(r *gin.Engine, h *Handler) {
 
 	rawIndex, _ := fs.ReadFile(spaFS, "index.html")
 
-	var (
-		indexCacheMu sync.RWMutex
-		indexCache   = make(map[string][]byte)
-	)
-
-	getIndexContent := func(basePath string) []byte {
-		if rawIndex == nil {
-			return nil
-		}
-		indexCacheMu.RLock()
-		cached, ok := indexCache[basePath]
-		indexCacheMu.RUnlock()
-		if ok {
-			return cached
-		}
-
-		transformed := processIndexHTML(rawIndex, basePath)
-		indexCacheMu.Lock()
-		indexCache[basePath] = transformed
-		indexCacheMu.Unlock()
-		return transformed
-	}
-
 	// Try to serve static files; fall back to index.html for SPA routes
 	r.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
@@ -212,14 +185,26 @@ func setupSPA(r *gin.Engine, h *Handler) {
 		// strip the base path prefix and re-route to registered API routes.
 		if basePath != "" && (strings.HasPrefix(path, basePath+"/api/") || path == basePath+"/api") {
 			c.Request.URL.Path = strings.TrimPrefix(path, basePath)
+			if c.Request.URL.RawPath != "" {
+				c.Request.URL.RawPath = strings.TrimPrefix(c.Request.URL.RawPath, basePath)
+			}
 			r.HandleContext(c)
+			return
+		}
+
+		if path == "/api" || strings.HasPrefix(path, "/api/") {
+			c.JSON(http.StatusNotFound, ErrorResponse{Error: "API endpoint not found"})
+			return
+		}
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.String(http.StatusNotFound, "not found")
 			return
 		}
 
 		// When requested with base path prefix, try serving relative asset
 		if basePath != "" && strings.HasPrefix(path, basePath+"/") {
 			relPath := strings.TrimPrefix(path, basePath+"/")
-			if f, err := fs.ReadFile(spaFS, relPath); err == nil {
+			if f, err := fs.ReadFile(spaFS, relPath); err == nil && relPath != "index.html" {
 				c.Data(http.StatusOK, contentType(relPath), f)
 				return
 			}
@@ -227,14 +212,14 @@ func setupSPA(r *gin.Engine, h *Handler) {
 
 		// Try resolving as static asset from root (e.g. /_app/..., /watcher.ico)
 		if len(path) > 1 {
-			if f, err := fs.ReadFile(spaFS, path[1:]); err == nil {
+			if f, err := fs.ReadFile(spaFS, path[1:]); err == nil && path != "/index.html" {
 				c.Data(http.StatusOK, contentType(path), f)
 				return
 			}
 		}
 
 		// SPA fallback: serve index.html for client-side routing
-		indexContent := getIndexContent(basePath)
+		indexContent := processIndexHTML(rawIndex, basePath)
 		if indexContent != nil {
 			c.Data(http.StatusOK, "text/html; charset=utf-8", indexContent)
 			return

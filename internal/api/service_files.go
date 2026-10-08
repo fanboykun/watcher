@@ -1,7 +1,10 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -108,33 +111,17 @@ func (h *Handler) UpdateServiceConfigRevision(c *gin.Context) {
 	}
 
 	var req struct {
-		EnvContent string `json:"env_content" binding:"required"`
+		EnvContent *string `json:"env_content" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
-
-	var revision database.ServiceConfigRevision
-	err = h.db.Where("service_id = ? AND target_version = ?", svc.ID, targetVersion).First(&revision).Error
-	if err != nil {
-		// Create new
-		revision = database.ServiceConfigRevision{
-			ServiceID:     svc.ID,
-			TargetVersion: targetVersion,
-			EnvContent:    req.EnvContent,
-		}
-		if err := h.db.Create(&revision).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
-			return
-		}
-	} else {
-		// Update existing
-		if err := h.db.Model(&revision).Update("env_content", req.EnvContent).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
-			return
-		}
+	if err := saveServiceConfigRevision(h.db, svc.ID, targetVersion, *req.EnvContent); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
 	}
+
 	c.JSON(http.StatusOK, MessageResponse{Message: "Configuration candidate saved successfully"})
 }
 
@@ -169,154 +156,38 @@ func (h *Handler) GetServiceSnapshotEnv(c *gin.Context) {
 	}
 
 	var watcher database.Watcher
-	if err := h.db.Preload("Services").First(&watcher, svc.WatcherID).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to load watcher"})
+	if err := h.db.Preload("Services", func(tx *gorm.DB) *gorm.DB { return tx.Order("id ASC") }).First(&watcher, svc.WatcherID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
-
+	wcfg := agent.WatcherConfigFromDB(&watcher)
 	serviceIndex := -1
-	for i, s := range watcher.Services {
-		if s.ID == svc.ID {
+	for i := range wcfg.Services {
+		if wcfg.Services[i].ID == svc.ID {
 			serviceIndex = i
 			break
 		}
 	}
-	if serviceIndex == -1 {
+	if serviceIndex < 0 {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "Service not found in watcher"})
 		return
 	}
-
-	wcfg := agent.WatcherConfigFromDB(&watcher)
-	svcCfg := wcfg.Services[serviceIndex]
-
-	snapshotRoot := agent.ConfigSnapshotPath(wcfg.InstallDir, version)
-
-	safeName := svcCfg.WindowsServiceName
-	if safeName == "" {
-		safeName = svcCfg.IISSiteName
-	}
-	if safeName == "" {
-		safeName = svcCfg.IISAppPool
-	}
-
-	var b strings.Builder
-	for _, r := range safeName {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-		default:
-			fmt.Fprintf(&b, "%%%X", r)
-		}
-	}
-	finalSafeName := b.String()
-	if finalSafeName == "" || finalSafeName == "." || finalSafeName == ".." {
-		finalSafeName = fmt.Sprintf("service-%d", serviceIndex+1)
-	}
-
-	envFilePath := filepath.Join(snapshotRoot, "services", finalSafeName, "env", svcCfg.EnvFile)
-
-	fileContent, err := os.ReadFile(envFilePath)
+	content, err := agent.ReadServiceSnapshotEnv(wcfg, version, serviceIndex)
 	if err != nil {
-		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, ErrorResponse{Error: "Environment snapshot not found for this version"})
-			return
+		status := http.StatusInternalServerError
+		if os.IsNotExist(err) || errors.Is(err, agent.ErrConfigSnapshotNotFound) {
+			status = http.StatusNotFound
 		}
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		c.JSON(status, ErrorResponse{Error: err.Error()})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"env_content": string(fileContent)})
+	c.JSON(http.StatusOK, gin.H{"env_content": content})
 }
 
-// UpdateServiceSnapshotEnv updates the environment snapshot for a specific version.
-func (h *Handler) UpdateServiceSnapshotEnv(c *gin.Context) {
-	svc, err := h.findServiceByID(c)
-	if err != nil {
-		return
-	}
-
-	version := c.Param("version")
-	if version == "" {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Version is required"})
-		return
-	}
-
-	var req struct {
-		EnvContent string `json:"env_content"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
-		return
-	}
-
-	var watcher database.Watcher
-	if err := h.db.Preload("Services").First(&watcher, svc.WatcherID).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to load watcher"})
-		return
-	}
-
-	serviceIndex := -1
-	for i, s := range watcher.Services {
-		if s.ID == svc.ID {
-			serviceIndex = i
-			break
-		}
-	}
-	if serviceIndex == -1 {
-		c.JSON(http.StatusNotFound, ErrorResponse{Error: "Service not found in watcher"})
-		return
-	}
-
-	wcfg := agent.WatcherConfigFromDB(&watcher)
-	svcCfg := wcfg.Services[serviceIndex]
-
-	snapshotRoot := agent.ConfigSnapshotPath(wcfg.InstallDir, version)
-
-	safeName := svcCfg.WindowsServiceName
-	if safeName == "" {
-		safeName = svcCfg.IISSiteName
-	}
-	if safeName == "" {
-		safeName = svcCfg.IISAppPool
-	}
-
-	var b strings.Builder
-	for _, r := range safeName {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-		default:
-			fmt.Fprintf(&b, "%%%X", r)
-		}
-	}
-	finalSafeName := b.String()
-	if finalSafeName == "" || finalSafeName == "." || finalSafeName == ".." {
-		finalSafeName = fmt.Sprintf("service-%d", serviceIndex+1)
-	}
-
-	envFilePath := filepath.Join(snapshotRoot, "services", finalSafeName, "env", svcCfg.EnvFile)
-	if err := os.MkdirAll(filepath.Dir(envFilePath), 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
-		return
-	}
-
-	if err := os.WriteFile(envFilePath, []byte(req.EnvContent), 0600); err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
-		return
-	}
-
-	// Also sync to ServiceConfigRevision so candidate deployment logic matches
-	var rev database.ServiceConfigRevision
-	if err := h.db.Where("service_id = ? AND target_version = ?", svc.ID, version).First(&rev).Error; err != nil {
-		rev = database.ServiceConfigRevision{
-			ServiceID:     svc.ID,
-			TargetVersion: version,
-			EnvContent:    req.EnvContent,
-		}
-		_ = h.db.Create(&rev).Error
-	} else {
-		_ = h.db.Model(&rev).Update("env_content", req.EnvContent).Error
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Environment snapshot updated successfully", "env_content": req.EnvContent})
+func saveServiceConfigRevision(db *gorm.DB, serviceID uint, target, content string) error {
+	revision := database.ServiceConfigRevision{ServiceID: serviceID, TargetVersion: target, EnvContent: content}
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "service_id"}, {Name: "target_version"}},
+		DoUpdates: clause.AssignmentColumns([]string{"env_content", "updated_at"}),
+	}).Create(&revision).Error
 }

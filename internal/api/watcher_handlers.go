@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"errors"
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (h *Handler) ListWatchers(c *gin.Context) {
@@ -139,7 +139,16 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 	}
 
 	// Create watcher
-	if err := h.db.Create(&watcher).Error; err != nil {
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&watcher).Error; err != nil {
+			return err
+		}
+		// GORM substitutes the true default for a zero bool during Create.
+		if !autoDeploy {
+			return tx.Model(&watcher).UpdateColumn("auto_deploy", false).Error
+		}
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -382,7 +391,7 @@ func (h *Handler) InterceptRelease(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
-	if err := h.db.Model(watcher).Update("intercept_next_release", req.Intercept).Error; err != nil {
+	if err := h.db.Model(watcher).UpdateColumn("intercept_next_release", req.Intercept).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -395,20 +404,23 @@ func (h *Handler) ApproveRelease(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	if watcher.Status != "pending_approval" {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "No release pending approval"})
+	var req struct {
+		Version string `json:"version" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
-
-	// Change status to let agent proceed and trigger check
-	if err := h.db.Model(watcher).Updates(map[string]interface{}{
-		"status":                 "approved",
-		"intercept_next_release": false,
-	}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	result := h.db.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", req.Version).
+		UpdateColumns(map[string]any{"status": "approved", "approved_version": req.Version})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: result.Error.Error()})
 		return
 	}
-	h.triggerSync()
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusConflict, ErrorResponse{Error: "The pending release changed; refresh before approving"})
+		return
+	}
 
 	select {
 	case h.checkTrigger <- watcher.ID:
@@ -444,24 +456,30 @@ func (h *Handler) DiscardRelease(c *gin.Context) {
 		updates["max_ignored_version"] = discardedVersion
 	}
 
-	if err := h.db.Model(watcher).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	updates["approved_version"] = ""
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", discardedVersion).UpdateColumns(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if discardedVersion != "" {
+			if err := tx.Where("service_id IN (SELECT id FROM services WHERE watcher_id = ?) AND target_version = ?", watcher.ID, discardedVersion).Delete(&database.ServiceConfigRevision{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&database.PollEvent{WatcherID: watcher.ID, CheckedAt: time.Now().UTC(), Status: "discarded", RemoteVersion: discardedVersion, Error: "Release candidate discarded by operator"}).Error
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, ErrorResponse{Error: err.Error()})
 		return
 	}
-
-	// Delete candidate revisions specifically staged for this discarded version
-	if discardedVersion != "" {
-		h.db.Where("service_id IN (SELECT id FROM services WHERE watcher_id = ?) AND target_version = ?", watcher.ID, discardedVersion).
-			Delete(&database.ServiceConfigRevision{})
-	}
-
-	h.db.Create(&database.PollEvent{
-		WatcherID:     watcher.ID,
-		CheckedAt:     time.Now().UTC(),
-		Status:        "discarded",
-		RemoteVersion: discardedVersion,
-		Error:         "Release candidate discarded by operator",
-	})
 
 	h.triggerSync()
 	c.JSON(http.StatusOK, MessageResponse{Message: fmt.Sprintf("Release candidate %s discarded", discardedVersion)})
@@ -489,6 +507,24 @@ func (h *Handler) GetWatcherCandidate(c *gin.Context) {
 		return
 	}
 
+	serviceIDs := make([]uint, 0, len(services))
+	for _, svc := range services {
+		serviceIDs = append(serviceIDs, svc.ID)
+	}
+	var revisions []database.ServiceConfigRevision
+	if len(serviceIDs) > 0 {
+		if err := h.db.Where("service_id IN ? AND target_version IN ?", serviceIDs, []string{target, "next"}).Find(&revisions).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+			return
+		}
+	}
+	revisionsByService := make(map[uint]database.ServiceConfigRevision)
+	for _, rev := range revisions {
+		previous, exists := revisionsByService[rev.ServiceID]
+		if !exists || previous.TargetVersion != target {
+			revisionsByService[rev.ServiceID] = rev
+		}
+	}
 	serviceInfos := make([]ServiceCandidateInfo, 0, len(services))
 	for _, svc := range services {
 		name := svc.WindowsServiceName
@@ -505,20 +541,10 @@ func (h *Handler) GetWatcherCandidate(c *gin.Context) {
 			name = fmt.Sprintf("Service %d", svc.ID)
 		}
 
-		var rev database.ServiceConfigRevision
-		hasCandidate := false
+		rev, hasCandidate := revisionsByService[svc.ID]
 		candidateEnv := svc.EnvContent
-
-		// Check for target revision first
-		if err := h.db.Where("service_id = ? AND target_version = ?", svc.ID, target).First(&rev).Error; err == nil {
+		if hasCandidate {
 			candidateEnv = rev.EnvContent
-			hasCandidate = true
-		} else if target != "next" {
-			// Fallback to "next" revision if specific target doesn't exist yet
-			if err := h.db.Where("service_id = ? AND target_version = ?", svc.ID, "next").First(&rev).Error; err == nil {
-				candidateEnv = rev.EnvContent
-				hasCandidate = true
-			}
 		}
 
 		serviceInfos = append(serviceInfos, ServiceCandidateInfo{
@@ -564,58 +590,25 @@ func (h *Handler) UpdateWatcherCandidate(c *gin.Context) {
 		}
 	}
 
-	for _, item := range req.Services {
-		var svc database.Service
-		if err := h.db.Where("id = ? AND watcher_id = ?", item.ServiceID, watcher.ID).First(&svc).Error; err != nil {
-			continue
-		}
-
-		var rev database.ServiceConfigRevision
-		if err := h.db.Where("service_id = ? AND target_version = ?", svc.ID, target).First(&rev).Error; err != nil {
-			rev = database.ServiceConfigRevision{
-				ServiceID:     svc.ID,
-				TargetVersion: target,
-				EnvContent:    item.EnvContent,
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range req.Services {
+			var svc database.Service
+			if err := tx.Where("id = ? AND watcher_id = ?", item.ServiceID, watcher.ID).First(&svc).Error; err != nil {
+				return err
 			}
-			_ = h.db.Create(&rev).Error
-		} else {
-			_ = h.db.Model(&rev).Update("env_content", item.EnvContent).Error
-		}
-
-		// If a snapshot directory already exists on disk for this version, sync it as well
-		if target != "next" && watcher.InstallDir != "" && svc.EnvFile != "" {
-			snapshotRoot := agent.ConfigSnapshotPath(watcher.InstallDir, target)
-			if fi, statErr := os.Stat(snapshotRoot); statErr == nil && fi.IsDir() {
-				safeName := svc.WindowsServiceName
-				if safeName == "" {
-					safeName = svc.IISSiteName
-				}
-				if safeName == "" {
-					safeName = svc.IISAppPool
-				}
-				if safeName == "" {
-					safeName = svc.BinaryName
-				}
-				var b strings.Builder
-				for _, r := range safeName {
-					switch {
-					case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
-						b.WriteRune(r)
-					default:
-						fmt.Fprintf(&b, "%%%X", r)
-					}
-				}
-				finalSafeName := b.String()
-				if finalSafeName != "" {
-					envFilePath := filepath.Join(snapshotRoot, "services", finalSafeName, "env", svc.EnvFile)
-					_ = os.MkdirAll(filepath.Dir(envFilePath), 0755)
-					_ = os.WriteFile(envFilePath, []byte(item.EnvContent), 0600)
-				}
+			if err := saveServiceConfigRevision(tx, svc.ID, target, item.EnvContent); err != nil {
+				return err
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, ErrorResponse{Error: "Could not save candidate configuration: " + err.Error()})
+		return
 	}
-
-	h.triggerSync()
 	c.JSON(http.StatusOK, MessageResponse{Message: "Candidate configuration saved successfully"})
 }
-

@@ -92,22 +92,12 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 		return nil
 	}
 
-	requireApproval := !r.wcfg.AutoDeploy || r.wcfg.InterceptNextRelease
-	if requireApproval {
-		var currentStatus, pendingVersion string
-		r.db.Model(&database.Watcher{}).Select("status", "pending_version").Where("id = ?", r.watcherID).Row().Scan(&currentStatus, &pendingVersion)
-
-		if currentStatus != "approved" {
-			if pendingVersion != targetVersion || currentStatus != "pending_approval" {
-				r.log.Info("holding new release candidate for manual approval", "version", targetVersion)
-				r.db.Model(&database.Watcher{}).Where("id = ?", r.watcherID).Updates(map[string]interface{}{
-					"status":          "pending_approval",
-					"pending_version": targetVersion,
-				})
-				r.state.RecordPollEvent("intercepted", targetVersion, "held as candidate for manual approval")
-			}
-			return nil
-		}
+	allowed, err := r.releaseApproved(targetVersion)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return nil
 	}
 
 	r.state.RecordPollEvent("new_release", targetVersion, "")
@@ -139,3 +129,30 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 
 // recordDeployFailure persists the target failure and any compensation result.
 // It returns true only when the deployer confirmed a successful version rollback.
+
+// releaseApproved reads live policy so approval and interception do not restart
+// (or race with cancellation of) an in-flight deployment. Approval is version-bound.
+func (r *RepoWatcher) releaseApproved(targetVersion string) (bool, error) {
+	var watcher database.Watcher
+	if err := r.db.Select("auto_deploy", "intercept_next_release", "pending_version", "approved_version", "status").First(&watcher, r.watcherID).Error; err != nil {
+		return false, fmt.Errorf("read deployment policy: %w", err)
+	}
+	if watcher.ApprovedVersion == targetVersion {
+		return true, nil
+	}
+	if watcher.AutoDeploy && !watcher.InterceptNextRelease && watcher.PendingVersion == "" && watcher.ApprovedVersion == "" {
+		return true, nil
+	}
+	if watcher.PendingVersion != targetVersion || watcher.Status != "pending_approval" {
+		result := r.db.Model(&database.Watcher{}).Where("id = ? AND approved_version = ? AND pending_version = ? AND status = ?", r.watcherID, watcher.ApprovedVersion, watcher.PendingVersion, watcher.Status).
+			UpdateColumns(map[string]any{"status": "pending_approval", "pending_version": targetVersion, "approved_version": ""})
+		if result.Error != nil {
+			return false, fmt.Errorf("hold release for approval: %w", result.Error)
+		}
+		if result.RowsAffected > 0 {
+			r.state.publish(EventStatusChanged, map[string]any{"status": "pending_approval", "pending_version": targetVersion})
+			r.state.RecordPollEvent("intercepted", targetVersion, "held as candidate for manual approval")
+		}
+	}
+	return false, nil
+}

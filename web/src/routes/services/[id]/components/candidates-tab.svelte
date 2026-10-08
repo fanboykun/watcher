@@ -46,6 +46,8 @@
 	let saving = $state(false);
 	let saved = $state(false);
 	let loadingContent = $state(false);
+	let loadedTarget = $state('');
+	let loadGeneration = 0;
 
 	const effectiveTarget = $derived(isCustom ? customTarget.trim() : selectedTarget);
 
@@ -69,6 +71,7 @@
 	}
 
 	async function selectTarget(target: string, custom = false) {
+		if (saving) return;
 		isCustom = custom;
 		selectedTarget = target;
 		if (custom) {
@@ -79,6 +82,9 @@
 	}
 
 	async function loadContentForTarget(target: string) {
+		const generation = ++loadGeneration;
+		loadedTarget = target;
+		loadingContent = false;
 		if (!target) {
 			editorContent = currentEnv;
 			contentSource = 'active';
@@ -86,7 +92,8 @@
 		}
 
 		// 1. Check if a candidate revision already exists in DB
-		const existingRev = revisions.find((r) => r.target_version === target);
+		const existingRev = revisions.find((r) => r.target_version === target)
+			?? revisions.find((r) => r.target_version === 'next');
 		if (existingRev) {
 			editorContent = existingRev.env_content;
 			contentSource = 'candidate';
@@ -98,13 +105,15 @@
 			loadingContent = true;
 			try {
 				const snapshot = await api.getServiceSnapshotEnv(serviceId, target);
+				if (generation !== loadGeneration) return;
 				editorContent = snapshot.env_content;
 				contentSource = 'snapshot';
 				return;
 			} catch {
+				if (generation !== loadGeneration) return;
 				// Snapshot missing, fallback to active
 			} finally {
-				loadingContent = false;
+				if (generation === loadGeneration) loadingContent = false;
 			}
 		}
 
@@ -115,21 +124,15 @@
 
 	async function saveRevision() {
 		const target = effectiveTarget;
-		if (!target) return;
+		if (!target || target !== loadedTarget || loadingContent) {
+			error = 'Load the selected target before saving';
+			return;
+		}
 		saving = true;
 		error = '';
 		saved = false;
 		try {
 			await api.updateServiceConfigRevision(serviceId, target, editorContent);
-
-			// If this is also an existing version on disk, update its snapshot file too
-			if (availableVersions.includes(target)) {
-				try {
-					await api.updateServiceSnapshotEnv(serviceId, target, editorContent);
-				} catch {
-					// Ignore snapshot write error if not created yet
-				}
-			}
 
 			await loadRevisions();
 			contentSource = 'candidate';
@@ -174,8 +177,8 @@
 				<div>
 					<Card.Title class="text-lg">Pre-configure Candidate Version</Card.Title>
 					<Card.Description>
-						Stage environment configurations for upcoming releases or modify configurations of
-						existing versions for safe rollbacks without altering the active running service.
+						Stage environment configurations for future deployments without altering the active
+						service or historical rollback snapshots.
 					</Card.Description>
 				</div>
 				{#if revisions.length > 0}

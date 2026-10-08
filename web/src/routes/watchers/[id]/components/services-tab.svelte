@@ -67,7 +67,7 @@
 					<Table.Row class="border-border">
 						<Table.Cell>
 							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-							<a href={`/services/${svc.id}`} class="font-medium hover:underline">
+							<a href={resolve(`/services/${svc.id}`)} class="font-medium hover:underline">
 								{svc.windows_service_name}
 							</a>
 							{#if svc.public_url}

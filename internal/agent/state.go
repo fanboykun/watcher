@@ -134,6 +134,7 @@ func (s *StateManager) SetHealthy(version string) error {
 			"last_error":             "",
 			"intercept_next_release": false,
 			"pending_version":        "",
+			"approved_version":       "",
 		}).Error
 	if err != nil {
 		return err

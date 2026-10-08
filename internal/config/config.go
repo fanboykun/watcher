@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -157,10 +158,8 @@ func (c *AppConfig) Validate() error {
 	if c.LogMaxAgeDays < 0 {
 		return fmt.Errorf("LOG_MAX_AGE_DAYS cannot be negative")
 	}
-	if basePath := c.NormalizedWebBasePath(); basePath != "" {
-		if strings.ContainsAny(basePath, " ?#\t\r\n") {
-			return fmt.Errorf("WEB_ASSETS_PATH must be a valid URL path prefix without query, fragment, or whitespace")
-		}
+	if _, err := NormalizeWebBasePath(c.webBasePath()); err != nil {
+		return err
 	}
 	return nil
 }
@@ -169,15 +168,34 @@ func (c *AppConfig) Validate() error {
 // It trims whitespace, ensures a single leading slash, removes trailing slashes,
 // and returns an empty string if set to "" or "/".
 func (c *AppConfig) NormalizedWebBasePath() string {
-	raw := strings.TrimSpace(c.WebAssetsPath)
-	if raw == "" {
-		raw = strings.TrimSpace(c.WebBasePath)
+	path, _ := NormalizeWebBasePath(c.webBasePath())
+	return path
+}
+
+func (c *AppConfig) webBasePath() string {
+	if strings.TrimSpace(c.WebAssetsPath) != "" {
+		return c.WebAssetsPath
 	}
+	return c.WebBasePath
+}
+
+var webPathSegment = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
+
+// NormalizeWebBasePath also validates proxy-supplied prefixes before embedding
+// them in HTML or using them to dispatch API requests.
+func NormalizeWebBasePath(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "/" {
-		return ""
+		return "", nil
 	}
 	if !strings.HasPrefix(raw, "/") {
 		raw = "/" + raw
 	}
-	return strings.TrimRight(raw, "/")
+	raw = strings.TrimRight(raw, "/")
+	for _, segment := range strings.Split(strings.TrimPrefix(raw, "/"), "/") {
+		if !webPathSegment.MatchString(segment) || segment == "." || segment == ".." {
+			return "", fmt.Errorf("WEB_ASSETS_PATH must be a URL path prefix with safe non-empty segments")
+		}
+	}
+	return raw, nil
 }

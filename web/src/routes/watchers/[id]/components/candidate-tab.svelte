@@ -52,7 +52,7 @@
 		onRefreshWatcher
 	}: {
 		watcher: Watcher;
-		onApprove?: () => Promise<void>;
+		onApprove?: (version: string) => Promise<void>;
 		onDiscard?: () => Promise<void>;
 		onRefreshWatcher?: () => Promise<void>;
 	} = $props();
@@ -63,6 +63,8 @@
 
 	let services = $state<EditableServiceCandidate[]>([]);
 	let loading = $state(true);
+	let loadedTarget = $state('');
+	let loadGeneration = 0;
 	let saving = $state(false);
 	let saveSuccess = $state('');
 	let error = $state('');
@@ -78,10 +80,13 @@
 
 	async function loadCandidateData(target: string) {
 		if (!target) return;
+		const generation = ++loadGeneration;
 		loading = true;
 		error = '';
 		try {
 			const res = await api.getWatcherCandidate(watcher.id, target);
+			if (generation !== loadGeneration) return;
+			loadedTarget = target;
 			services = res.services.map((s) => ({
 				serviceId: s.service_id,
 				serviceName: s.service_name,
@@ -93,17 +98,19 @@
 				viewMode: 'edit'
 			}));
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load candidate configuration';
+			if (generation === loadGeneration) error = e instanceof Error ? e.message : 'Failed to load candidate configuration';
 		} finally {
-			loading = false;
+			if (generation === loadGeneration) loading = false;
 		}
 	}
 
 	onMount(() => {
-		void loadCandidateData(effectiveTarget);
+		selectedTarget = watcher.pending_version || 'next';
+		void loadCandidateData(selectedTarget);
 	});
 
 	async function selectTarget(target: string, custom = false) {
+		if (saving || approving || discarding) return;
 		isCustom = custom;
 		selectedTarget = target;
 		if (custom) {
@@ -122,6 +129,10 @@
 	}
 
 	async function saveAllCandidates() {
+		if (loading || effectiveTarget !== loadedTarget) {
+			error = 'Load the selected target before saving';
+			return;
+		}
 		if (!effectiveTarget) {
 			error = 'Please specify a target version';
 			return;
@@ -166,6 +177,11 @@
 
 	async function handleApprove() {
 		if (!onApprove) return;
+		if (loading || loadedTarget !== watcher.pending_version || effectiveTarget !== watcher.pending_version) {
+			error = 'Select and load the pending release before approving';
+			return;
+		}
+		const version = watcher.pending_version;
 		approving = true;
 		error = '';
 		try {
@@ -180,7 +196,7 @@
 					}))
 				);
 			}
-			await onApprove();
+			await onApprove(version);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Approval failed';
 		} finally {
@@ -335,7 +351,7 @@
 						size="sm"
 						class="bg-purple-600 font-medium text-white hover:bg-purple-700"
 						onclick={handleApprove}
-						disabled={approving || discarding}
+						disabled={approving || discarding || saving || loading || effectiveTarget !== watcher.pending_version || loadedTarget !== watcher.pending_version}
 					>
 						{#if approving}
 							<RefreshCw class="mr-1.5 h-3.5 w-3.5 animate-spin" /> Deploying...
@@ -641,7 +657,7 @@
 									</p>
 								{:else}
 									<div class="max-h-[360px] space-y-1 overflow-y-auto">
-										{#each diffLines as line}
+										{#each diffLines as line (line.key)}
 											{#if line.status === 'added'}
 												<div
 													class="flex items-start gap-2 rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-300"
