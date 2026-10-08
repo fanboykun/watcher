@@ -214,7 +214,11 @@ body {
 	max-width: 100%;
 	overflow-x: auto;
 	justify-content: flex-start;
-	scrollbar-width: thin;
+	scrollbar-width: none;
+	overflow-y: hidden;
+}
+[data-slot='tabs-list']::-webkit-scrollbar {
+	display: none;
 }
 [data-slot='tabs-trigger'] {
 	flex: 0 0 auto;

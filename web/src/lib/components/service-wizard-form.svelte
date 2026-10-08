@@ -23,12 +23,14 @@
 	let {
 		title,
 		description,
+		showHeader = true,
 		submitLabel = 'Save Service',
 		initial = {},
 		submitting = false,
 		error = '',
 		onSubmit
 	}: {
+		showHeader?: boolean;
 		title: string;
 		description: string;
 		submitLabel?: string;
@@ -134,14 +136,16 @@
 </script>
 
 <div class="space-y-6">
-	<div>
-		<h1 class="text-2xl font-bold tracking-tight">{title}</h1>
-		<p class="mt-1 text-sm text-muted-foreground">{description}</p>
-	</div>
+	{#if showHeader}<div>
+			<h1 class="text-2xl font-bold tracking-tight">{title}</h1>
+			<p class="mt-1 text-sm text-muted-foreground">{description}</p>
+		</div>{/if}
 
 	<div class="flex flex-wrap gap-2">
 		{#each steps as step (step.id)}
-			<button
+			<Button.Root
+				variant="ghost"
+				size="sm"
 				type="button"
 				class={`rounded-full border px-3 py-1 text-sm transition ${
 					step.id === currentStep
@@ -153,7 +157,7 @@
 				onclick={() => (currentStep = step.id)}
 			>
 				{step.id}. {step.label}
-			</button>
+			</Button.Root>
 		{/each}
 	</div>
 
@@ -187,7 +191,13 @@
 							id="serviceName"
 							bind:value={serviceName}
 							placeholder={serviceType === 'iis' ? 'marketing-site' : 'my-app-web'}
+							aria-describedby="serviceName-help"
 						/>
+						<p id="serviceName-help" class="text-xs text-muted-foreground">
+							{serviceType === 'nssm'
+								? 'Windows service name registered with NSSM.'
+								: 'Identifier for this IIS service in Watcher.'}
+						</p>
 					</div>
 					<div class="space-y-2">
 						<Label for="healthCheckURL">Health Check URL</Label>
@@ -195,11 +205,24 @@
 							id="healthCheckURL"
 							bind:value={healthCheckURL}
 							placeholder="http://localhost:3000/health"
+							aria-describedby="healthCheckURL-help"
 						/>
+						<p id="healthCheckURL-help" class="text-xs text-muted-foreground">
+							Health endpoint reachable from the Watcher machine. Leave blank to use the watcher
+							health URL.
+						</p>
 					</div>
 					<div class="space-y-2">
 						<Label for="publicURL">Public URL</Label>
-						<Input id="publicURL" bind:value={publicURL} placeholder="https://app.example.com" />
+						<Input
+							id="publicURL"
+							bind:value={publicURL}
+							placeholder="https://app.example.com"
+							aria-describedby="publicURL-help"
+						/>
+						<p id="publicURL-help" class="text-xs text-muted-foreground">
+							Optional link for opening this application from the dashboard.
+						</p>
 					</div>
 				</div>
 			{:else if currentStep === 2}
@@ -207,7 +230,16 @@
 					<div class="grid gap-4 md:grid-cols-2">
 						<div class="space-y-2">
 							<Label for="binaryName">Binary Name</Label>
-							<Input id="binaryName" bind:value={binaryName} placeholder="my-app.exe" />
+							<Input
+								id="binaryName"
+								bind:value={binaryName}
+								placeholder="my-app.exe"
+								aria-describedby="binaryName-help"
+							/>
+							<p id="binaryName-help" class="text-xs text-muted-foreground">
+								Executable path relative to the extracted release. It must match the artifact
+								filename.
+							</p>
 						</div>
 						<div class="space-y-2">
 							<Label for="startArguments">Start Arguments</Label>
@@ -215,11 +247,24 @@
 								id="startArguments"
 								bind:value={startArguments}
 								placeholder="serve --port 8080"
+								aria-describedby="startArguments-help"
 							/>
+							<p id="startArguments-help" class="text-xs text-muted-foreground">
+								Command-line arguments passed to the executable when the service starts.
+							</p>
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="envFile">Env File</Label>
-							<Input id="envFile" bind:value={envFile} placeholder=".env.production" />
+							<Input
+								id="envFile"
+								bind:value={envFile}
+								placeholder=".env.production"
+								aria-describedby="envFile-help"
+							/>
+							<p id="envFile-help" class="text-xs text-muted-foreground">
+								Environment file path relative to the watcher installation directory. Leave blank if
+								unused.
+							</p>
 						</div>
 						<div class="space-y-2 md:col-span-2">
 							<Label for="envContent">Env Content</Label>
@@ -228,7 +273,11 @@
 								class="min-h-[220px] font-mono text-xs"
 								bind:value={envContent}
 								placeholder="KEY=VALUE&#10;API_URL=https://example.com"
+								aria-describedby="envContent-help"
 							/>
+							<p id="envContent-help" class="text-xs text-muted-foreground">
+								Content written to the environment file. The application must load this file itself.
+							</p>
 						</div>
 					</div>
 				{:else}
@@ -251,11 +300,27 @@
 						</div>
 						<div class="space-y-2">
 							<Label for="iisAppPool">IIS App Pool</Label>
-							<Input id="iisAppPool" bind:value={iisAppPool} placeholder="my-app" />
+							<Input
+								id="iisAppPool"
+								bind:value={iisAppPool}
+								placeholder="my-app"
+								aria-describedby="iisAppPool-help"
+							/>
+							<p id="iisAppPool-help" class="text-xs text-muted-foreground">
+								IIS application pool to configure or recycle for this application.
+							</p>
 						</div>
 						<div class="space-y-2">
 							<Label for="iisSiteName">IIS Site Name</Label>
-							<Input id="iisSiteName" bind:value={iisSiteName} placeholder="my-app" />
+							<Input
+								id="iisSiteName"
+								bind:value={iisSiteName}
+								placeholder="my-app"
+								aria-describedby="iisSiteName-help"
+							/>
+							<p id="iisSiteName-help" class="text-xs text-muted-foreground">
+								IIS website name on the Watcher machine.
+							</p>
 						</div>
 						<div
 							class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground md:col-span-2"
@@ -310,12 +375,19 @@
 												id={`config-path-${index}`}
 												bind:value={file.file_path}
 												placeholder="web.config"
+												aria-describedby={`config-path-help-${index}`}
 											/>
+											<p id={`config-path-help-${index}`} class="text-xs text-muted-foreground">
+												Relative file path inside the selected target directory, such as web.config.
+											</p>
 										</div>
 										<div class="space-y-2">
 											<Label for={`config-target-${index}`}>Target</Label>
 											<Select.Root type="single" bind:value={file.target}>
-												<Select.Trigger id={`config-target-${index}`}>
+												<Select.Trigger
+													id={`config-target-${index}`}
+													aria-describedby={`config-target-help-${index}`}
+												>
 													{file.target === 'release_dir' ? 'Release dir' : 'App dir'}
 												</Select.Trigger>
 												<Select.Content>
@@ -325,6 +397,10 @@
 													>
 												</Select.Content>
 											</Select.Root>
+											<p id={`config-target-help-${index}`} class="text-xs text-muted-foreground">
+												App dir writes to the installation root. Release dir writes inside each
+												deployed release.
+											</p>
 										</div>
 										<div class="space-y-2 md:col-span-2">
 											<Label for={`config-content-${index}`}>Content</Label>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -477,32 +478,31 @@
 					size="sm"
 					disabled={actionBusy}><Pencil /> Edit</Button.Root
 				>
-				<details class="relative">
-					<summary
-						class="cursor-pointer list-none rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted"
-						>More actions</summary
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger
+						class={Button.buttonVariants({ variant: 'outline', size: 'sm' })}
+						disabled={actionBusy}
+						>{#if pendingAction === 'intercept'}<RefreshCw
+								class="animate-spin"
+							/>Updating…{:else}More actions{/if}</DropdownMenu.Trigger
 					>
-					<div
-						class="absolute right-0 z-20 mt-2 grid w-56 max-w-[calc(100vw-2rem)] gap-1 rounded-lg border border-border bg-popover p-2 shadow-xl"
-					>
-						<Button.Root
-							variant="ghost"
-							size="sm"
-							class="justify-start"
+					<DropdownMenu.Content align="end" class="w-56">
+						<DropdownMenu.Item
 							disabled={actionBusy}
-							loading={pendingAction === 'intercept'}
-							onclick={() => runPending('intercept', toggleIntercept)}
-							><Zap /> Intercept next: {watcher.intercept_next_release ? 'On' : 'Off'}</Button.Root
+							onSelect={() => {
+								void runPending('intercept', toggleIntercept);
+							}}
+							><Zap />Intercept next: {watcher.intercept_next_release
+								? 'On'
+								: 'Off'}</DropdownMenu.Item
 						>
-						<Button.Root
-							variant="ghost"
-							size="sm"
-							class="justify-start text-amber-400"
+						<DropdownMenu.Item
+							class="text-amber-400"
 							disabled={actionBusy || watcher.status === 'pending_approval'}
-							onclick={triggerRedeploy}><RotateCcw /> Redeploy</Button.Root
+							onSelect={triggerRedeploy}><RotateCcw />Redeploy</DropdownMenu.Item
 						>
-					</div>
-				</details>
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
 			</div>
 		{/if}
 	</header>

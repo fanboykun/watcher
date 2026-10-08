@@ -386,7 +386,9 @@
 			<!-- Quick Target Selector Pills -->
 			<div class="mt-3 flex flex-wrap items-center gap-2">
 				{#if watcher.pending_version}
-					<button
+					<Button.Root
+						variant="ghost"
+						size="sm"
 						type="button"
 						class={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
 							!isCustom && activeTargetChoice === watcher.pending_version
@@ -400,35 +402,38 @@
 						<span class="py-0.2 rounded bg-black/20 px-1 text-[10px] tracking-wider uppercase">
 							Candidate
 						</span>
-					</button>
+					</Button.Root>
 				{/if}
 
-				<button
+				<Button.Root
+					variant="ghost"
+					size="sm"
 					type="button"
 					class={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition ${
 						!isCustom && activeTargetChoice === 'next'
-							? 'bg-primary text-primary-foreground shadow-sm'
+							? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
 							: 'border border-border bg-muted/40 text-muted-foreground hover:bg-muted'
 					}`}
 					onclick={() => selectTarget('next')}
 				>
 					<Layers class="h-3 w-3" />
-					next
-					<span class="text-[10px] text-muted-foreground/80">release</span>
-				</button>
+					Next release
+				</Button.Root>
 
-				<button
+				<Button.Root
+					variant="ghost"
+					size="sm"
 					type="button"
 					class={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition ${
 						isCustom
-							? 'bg-primary text-primary-foreground shadow-sm'
+							? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
 							: 'border border-border bg-muted/40 text-muted-foreground hover:bg-muted'
 					}`}
 					onclick={() => selectTarget(customTarget || 'custom', true)}
 				>
 					<Pencil class="h-3 w-3" />
 					Specific version
-				</button>
+				</Button.Root>
 
 				{#if isCustom}
 					<div class="flex items-center gap-1.5 pl-1">
@@ -503,7 +508,9 @@
 							<div class="flex flex-wrap items-center gap-1.5">
 								<!-- View Mode Switcher -->
 								<div class="inline-flex rounded-lg border border-border/80 bg-muted/40 p-0.5">
-									<button
+									<Button.Root
+										variant="ghost"
+										size="sm"
 										type="button"
 										class={`flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition ${
 											svc.viewMode === 'edit'
@@ -513,8 +520,10 @@
 										onclick={() => (svc.viewMode = 'edit')}
 									>
 										<Pencil class="h-3 w-3" /> Edit
-									</button>
-									<button
+									</Button.Root>
+									<Button.Root
+										variant="ghost"
+										size="sm"
 										type="button"
 										class={`flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition ${
 											svc.viewMode === 'side-by-side'
@@ -524,8 +533,10 @@
 										onclick={() => (svc.viewMode = 'side-by-side')}
 									>
 										<Split class="h-3 w-3" /> Side-by-Side
-									</button>
-									<button
+									</Button.Root>
+									<Button.Root
+										variant="ghost"
+										size="sm"
 										type="button"
 										class={`flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition ${
 											svc.viewMode === 'diff'
@@ -535,7 +546,7 @@
 										onclick={() => (svc.viewMode = 'diff')}
 									>
 										<Eye class="h-3 w-3" /> Diff
-									</button>
+									</Button.Root>
 								</div>
 
 								{#if svc.activeEnv && svc.candidateEnv !== svc.activeEnv}

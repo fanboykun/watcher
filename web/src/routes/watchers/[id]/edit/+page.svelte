@@ -1,4 +1,7 @@
 <script lang="ts">
+	import * as RadioGroup from '$lib/components/ui/radio-group';
+	import * as Tabs from '$lib/components/ui/tabs';
+	import RequestLoading from '$lib/components/request-loading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -10,14 +13,12 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Checkbox } from '$lib/components/ui/checkbox';
-	import { webhookDocsHref } from '$lib/webhooks';
 	import type { WebhookSelectionState } from '$lib/webhooks';
 	import {
 		ArrowLeft,
 		AlertCircle,
 		CheckCircle2,
 		BookOpenText,
-		ExternalLink,
 		Save,
 		Send,
 		Link as LinkIcon
@@ -30,6 +31,14 @@
 	let error = $state('');
 	let success = $state('');
 	let saving = $state(false);
+	let loading = $state(true);
+	let activeSection = $state(
+		page.url.hash === '#services'
+			? 'services'
+			: page.url.hash === '#webhooks'
+				? 'webhooks'
+				: 'source'
+	);
 	let sendingTest = $state(false);
 
 	let showConfirmDialog = $state(false);
@@ -68,12 +77,15 @@
 		void loadWatcher();
 	});
 
-	async function loadWatcher() {
+	async function loadWatcher(syncForm = true) {
+		error = '';
 		try {
 			watcher = await api.getWatcher(id);
-			syncEditForm();
+			if (syncForm) syncEditForm();
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load watcher';
+		} finally {
+			loading = false;
 		}
 	}
 
@@ -105,6 +117,7 @@
 	}
 
 	async function saveEdit() {
+		if (saving || sendingTest || confirming || !watcher) return;
 		saving = true;
 		error = '';
 		success = '';
@@ -148,6 +161,7 @@
 	}
 
 	async function sendWebhookTest() {
+		if (sendingTest || saving || confirming) return;
 		sendingTest = true;
 		error = '';
 		success = '';
@@ -169,6 +183,7 @@
 		actionClass?: string;
 		action: () => Promise<void> | void;
 	}) {
+		error = '';
 		confirmTitle = opts.title;
 		confirmDescription = opts.description;
 		confirmActionLabel = opts.actionLabel;
@@ -178,11 +193,12 @@
 	}
 
 	async function runConfirmAction() {
-		if (!confirmAction) return;
+		if (!confirmAction || confirming) return;
+		error = '';
 		confirming = true;
 		try {
 			await confirmAction();
-			showConfirmDialog = false;
+			if (!error) showConfirmDialog = false;
 		} finally {
 			confirming = false;
 		}
@@ -197,7 +213,7 @@
 			action: async () => {
 				try {
 					await api.deleteService(id, svcId);
-					await loadWatcher();
+					await loadWatcher(false);
 					success = 'Service deleted.';
 				} catch (err) {
 					error = err instanceof Error ? err.message : 'Delete failed';
@@ -208,32 +224,29 @@
 </script>
 
 <div class="space-y-6">
-	<div class="flex items-center gap-4">
-		<a href={resolve(`/watchers/${id}`)}>
-			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
-				<ArrowLeft class="h-4 w-4" />
-			</Button.Root>
-		</a>
-		<div class="flex-1">
-			<h1 class="text-2xl font-bold tracking-tight">
-				{watcher ? `Edit ${watcher.name}` : 'Edit Watcher'}
-			</h1>
-			{#if watcher}
-				<p class="font-mono text-sm text-muted-foreground">{watcher.service_name}</p>
-			{/if}
+	<header class="page-header">
+		<div class="page-identity">
+			<Button.Root
+				href={resolve(`/watchers/${id}`)}
+				variant="ghost"
+				size="icon"
+				aria-label="Back to watcher"><ArrowLeft /></Button.Root
+			>
+			<div class="flex-1">
+				<h1 class="text-2xl font-bold tracking-tight">
+					{watcher ? `Edit ${watcher.name}` : 'Edit Watcher'}
+				</h1>
+				{#if watcher && watcher.service_name !== watcher.name}
+					<p class="font-mono text-sm text-muted-foreground">{watcher.service_name}</p>
+				{/if}
+			</div>
 		</div>
-		<a href={resolve(`/watchers/${id}?tab=webhooks`)}>
-			<Button.Root variant="outline" size="sm">
-				<LinkIcon class="mr-2 h-4 w-4" /> Webhook History
-			</Button.Root>
-		</a>
-		<Button.Root size="sm" onclick={saveEdit} disabled={saving}>
-			<Save class="mr-2 h-4 w-4" />
-			{saving ? 'Saving...' : 'Save Changes'}
-		</Button.Root>
-	</div>
+		<Button.Root href={resolve(`/watchers/${id}?tab=webhooks`)} variant="outline" size="sm"
+			><LinkIcon />Webhook history</Button.Root
+		>
+	</header>
 
-	<RequestError message={error} />
+	{#if !showConfirmDialog}<RequestError message={error} />{/if}
 
 	{#if success}
 		<div
@@ -244,307 +257,379 @@
 		</div>
 	{/if}
 
-	{#if watcher}
-		<form
-			class="space-y-6"
-			onsubmit={(event) => {
-				event.preventDefault();
-				saveEdit();
-			}}
-		>
-			<Card.Root class="border-border bg-card">
-				<Card.Header>
-					<Card.Title>Watcher Settings</Card.Title>
-					<Card.Description>
-						Core polling, release, install, and GitHub deployment settings for this watcher.
-					</Card.Description>
-				</Card.Header>
-				<Card.Content class="space-y-4">
-					<div class="grid gap-4 sm:grid-cols-2">
-						<div class="space-y-2">
-							<Label>Name</Label>
-							<Input value={watcher.name} disabled />
-						</div>
-						<div class="space-y-2">
-							<Label>Service Name</Label>
-							<Input value={watcher.service_name} disabled />
-						</div>
-					</div>
-					<div class="space-y-2">
-						<Label for="editMetadataURL">Metadata URL</Label>
-						<Input id="editMetadataURL" bind:value={editMetadataURL} />
-					</div>
-					<div class="grid gap-4 sm:grid-cols-2">
-						<div class="space-y-2">
-							<Label for="editReleaseRef">Release Ref</Label>
-							<Input
-								id="editReleaseRef"
-								bind:value={editReleaseRef}
-								placeholder="latest or v1.2.3"
-							/>
-							<p class="text-xs text-muted-foreground">
-								Use <code>latest</code> to follow new releases, or pin this watcher to a specific release
-								tag.
-							</p>
-						</div>
-						<div class="space-y-2">
-							<Label for="editInstallDir">Install Directory</Label>
-							<Input id="editInstallDir" bind:value={editInstallDir} />
-						</div>
-					</div>
-					<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-						<div class="space-y-2">
-							<Label for="editInterval">Check Interval (s)</Label>
-							<Input id="editInterval" type="number" min="10" bind:value={editInterval} />
-						</div>
-						<div class="space-y-2">
-							<Label for="editHcURL">Health Check URL</Label>
-							<Input id="editHcURL" bind:value={editHcURL} />
-						</div>
-						<div class="space-y-2">
-							<Label for="editMaxKeptVersions">Max Kept Versions</Label>
-							<Input
-								id="editMaxKeptVersions"
-								type="number"
-								min="1"
-								max="10"
-								bind:value={editMaxKeptVersions}
-							/>
-						</div>
-						<div class="space-y-2">
-							<Label for="editDeploymentEnvironment">Deployment Environment</Label>
-							<Input
-								id="editDeploymentEnvironment"
-								bind:value={editDeploymentEnvironment}
-								placeholder="production"
-							/>
-						</div>
-					</div>
-					<div class="flex items-center gap-2 py-1">
-						<Checkbox id="editHcEnabled" bind:checked={editHcEnabled} />
-						<Label for="editHcEnabled">Enable health checks</Label>
-					</div>
-					<div class="space-y-2">
-						<Label for="editGitHubToken">GitHub Access Token Override</Label>
-						<Input
-							id="editGitHubToken"
-							type="password"
-							bind:value={editGitHubToken}
-							placeholder="Paste new token to replace override"
-							disabled={editUseGlobalToken}
-						/>
-						<div class="mt-2 flex items-center gap-2">
-							<Checkbox id="editUseGlobalToken" bind:checked={editUseGlobalToken} />
-							<Label for="editUseGlobalToken">Use global `GITHUB_TOKEN`</Label>
-						</div>
-						<p class="mt-1 text-xs text-muted-foreground">
-							Current: {watcher.has_github_token
-								? watcher.github_token_masked || 'set'
-								: 'using global token'}
-						</p>
-					</div>
-
-					<div class="space-y-2 rounded-lg border border-border/70 bg-muted/20 p-4">
-						<Label class="text-sm font-medium">Deployment Policy</Label>
-						<div class="mt-2 space-y-3">
-							<label class="flex cursor-pointer items-start gap-3">
-								<input
-									type="radio"
-									name="editAutoDeploy"
-									class="mt-1"
-									checked={editAutoDeploy}
-									onchange={() => (editAutoDeploy = true)}
-								/>
-								<div>
-									<p class="text-sm font-medium">Automatic Deployment</p>
-									<p class="text-xs text-muted-foreground">
-										Automatically pull and deploy new releases as soon as they are detected.
+	{#if loading}<RequestLoading label="Loading watcher settings…" />{:else if watcher}
+		<Tabs.Root bind:value={activeSection}>
+			<Tabs.List
+				><Tabs.Trigger value="source">Source</Tabs.Trigger><Tabs.Trigger value="deployment"
+					>Deployment</Tabs.Trigger
+				><Tabs.Trigger value="health">Health checks</Tabs.Trigger><Tabs.Trigger value="webhooks"
+					>Webhooks</Tabs.Trigger
+				><Tabs.Trigger value="services">Services</Tabs.Trigger></Tabs.List
+			>
+			<form
+				id="watcher-settings"
+				onsubmit={(event) => {
+					event.preventDefault();
+					void saveEdit();
+				}}
+			>
+				<fieldset disabled={saving || sendingTest || confirming}>
+					<Tabs.Content value="source"
+						><Card.Root
+							><Card.Header
+								><Card.Title>Release source</Card.Title><Card.Description
+									>Choose the repository or metadata feed and release to follow.</Card.Description
+								></Card.Header
+							><Card.Content class="space-y-4"
+								><div class="space-y-2">
+									<Label for="editMetadataURL">Metadata URL</Label>
+									<Input
+										id="editMetadataURL"
+										bind:value={editMetadataURL}
+										aria-describedby="editMetadataURL-help"
+									/>
+									<p id="editMetadataURL-help" class="text-xs text-muted-foreground">
+										GitHub repository URL or release metadata URL that Watcher checks for new
+										versions.
 									</p>
 								</div>
-							</label>
-							<label class="flex cursor-pointer items-start gap-3">
-								<input
-									type="radio"
-									name="editAutoDeploy"
-									class="mt-1"
-									checked={!editAutoDeploy}
-									onchange={() => (editAutoDeploy = false)}
-								/>
-								<div>
-									<p class="text-sm font-medium">
-										Manual Approval Required (Release First, Deploy Later)
-									</p>
+								<div class="space-y-2">
+									<Label for="editReleaseRef">Release Ref</Label>
+									<Input
+										id="editReleaseRef"
+										bind:value={editReleaseRef}
+										placeholder="latest or v1.2.3"
+									/>
 									<p class="text-xs text-muted-foreground">
-										Hold new versions as Release Candidates. Operators can prepare and preview
-										environment changes before approving deployment.
+										Use <code>latest</code> to follow new releases, or pin this watcher to a specific
+										release tag.
 									</p>
-								</div>
-							</label>
-						</div>
-					</div>
-				</Card.Content>
-			</Card.Root>
-
-			<Card.Root class="border-border bg-card" id="webhooks">
-				<Card.Header>
-					<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-						<div>
-							<Card.Title>Webhook Settings</Card.Title>
-							<Card.Description>
-								Configure this watcher's endpoint, signing-secret override, and event subscriptions.
-							</Card.Description>
-							<div class="mt-3 flex flex-wrap gap-2">
-								<a href={resolve('/docs/webhooks')}>
-									<Button.Root type="button" variant="outline" size="sm">
-										<BookOpenText class="mr-2 h-4 w-4" />
-										Integration Guide
-									</Button.Root>
-								</a>
-								<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-								<a href={webhookDocsHref} target="_blank" rel="noopener noreferrer">
-									<Button.Root type="button" variant="outline" size="sm">
-										<ExternalLink class="mr-2 h-4 w-4" />
-										Repo Docs
-									</Button.Root>
-								</a>
-							</div>
-						</div>
-						<Button.Root
-							type="button"
-							variant="outline"
-							size="sm"
-							onclick={sendWebhookTest}
-							disabled={sendingTest}
-						>
-							<Send class="mr-2 h-4 w-4" />
-							{sendingTest ? 'Sending...' : 'Send Test Webhook'}
-						</Button.Root>
-					</div>
-				</Card.Header>
-				<Card.Content class="space-y-4">
-					<div
-						class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground"
+								</div></Card.Content
+							></Card.Root
+						></Tabs.Content
 					>
-						Use this form only for watcher-specific webhook configuration. Delivery history, replay,
-						and pause recovery live in the webhook hub and the watcher webhook tab.
-					</div>
-					<div class="flex items-center gap-2">
-						<Checkbox id="editWebhookEnabled" bind:checked={editWebhookEnabled} />
-						<Label for="editWebhookEnabled">Enable webhook delivery for this watcher</Label>
-					</div>
-					<div class="grid gap-4 sm:grid-cols-2">
-						<div class="space-y-2">
-							<Label for="editWebhookURL">Webhook URL</Label>
-							<Input
-								id="editWebhookURL"
-								bind:value={editWebhookURL}
-								placeholder="https://example.com/hooks/watcher"
-							/>
-							<p class="text-xs text-muted-foreground">
-								Leave empty to inherit the global default URL.
-							</p>
-						</div>
-						<div class="space-y-2">
-							<Label for="editWebhookSigningSecret">Webhook Signing Secret Override</Label>
-							<Input
-								id="editWebhookSigningSecret"
-								type="password"
-								bind:value={editWebhookSigningSecret}
-								placeholder="Paste new base64 or whsec_... secret to replace override"
-								disabled={editUseGlobalWebhookToken}
-							/>
-							<div class="mt-2 flex items-center gap-2">
-								<Checkbox id="editUseGlobalWebhookToken" bind:checked={editUseGlobalWebhookToken} />
-								<Label for="editUseGlobalWebhookToken">Use global default signing secret</Label>
-							</div>
-							<p class="mt-1 text-xs text-muted-foreground">
-								Current:
-								{watcher.has_webhook_signing_secret
-									? watcher.webhook_signing_secret_masked || 'set'
-									: 'using global webhook signing secret'}
-							</p>
-						</div>
-					</div>
-					<div class="space-y-3 rounded-lg border border-border/70 p-4">
-						<div class="flex items-start justify-between gap-3">
-							<div>
-								<h4 class="font-medium">Event Subscriptions</h4>
-								<p class="text-sm text-muted-foreground">
-									Choose which business events this watcher should emit.
-								</p>
-							</div>
-							<a href={resolve('/docs/webhooks')}>
-								<Button.Root type="button" variant="outline" size="sm">
-									<BookOpenText class="mr-2 h-4 w-4" />
-									Guide
-								</Button.Root>
-							</a>
-						</div>
-						<div class="grid gap-3 md:grid-cols-2">
-							<label class="flex items-center gap-2 text-sm">
-								<Checkbox bind:checked={webhookSelections.notify_version_found} />
-								<span>Version Found</span>
-							</label>
-							<label class="flex items-center gap-2 text-sm">
-								<Checkbox bind:checked={webhookSelections.notify_deployment_succeeded} />
-								<span>Deployment Succeeded</span>
-							</label>
-							<label class="flex items-center gap-2 text-sm">
-								<Checkbox bind:checked={webhookSelections.notify_deployment_failed} />
-								<span>Deployment Failed</span>
-							</label>
-							<label class="flex items-center gap-2 text-sm">
-								<Checkbox bind:checked={webhookSelections.notify_rollback_succeeded} />
-								<span>Rollback Succeeded</span>
-							</label>
-							<label class="flex items-center gap-2 text-sm">
-								<Checkbox bind:checked={webhookSelections.notify_rollback_failed} />
-								<span>Rollback Failed</span>
-							</label>
-							<label class="flex items-center gap-2 text-sm">
-								<Checkbox bind:checked={webhookSelections.notify_service_health_changed} />
-								<span>Service Health Changed</span>
-							</label>
-						</div>
-					</div>
-				</Card.Content>
-			</Card.Root>
+					<Tabs.Content value="deployment"
+						><Card.Root
+							><Card.Header
+								><Card.Title>Deployment</Card.Title><Card.Description
+									>Control polling, deployment policy and GitHub credentials.</Card.Description
+								></Card.Header
+							><Card.Content class="space-y-4"
+								><div class="grid gap-4 sm:grid-cols-2">
+									<div class="space-y-2">
+										<Label for="editInstallDir">Install Directory</Label>
+										<Input
+											id="editInstallDir"
+											bind:value={editInstallDir}
+											aria-describedby="editInstallDir-help"
+										/>
+										<p id="editInstallDir-help" class="text-xs text-muted-foreground">
+											Deployment root on the Watcher machine. Release folders and the current
+											release live here.
+										</p>
+									</div>
+									<div class="space-y-2">
+										<Label for="editInterval">Check Interval (s)</Label>
+										<Input
+											id="editInterval"
+											type="number"
+											min="10"
+											bind:value={editInterval}
+											aria-describedby="editInterval-help"
+										/>
+										<p id="editInterval-help" class="text-xs text-muted-foreground">
+											Seconds between release checks. Minimum: 10 seconds.
+										</p>
+									</div>
+									<div class="space-y-2">
+										<Label for="editMaxKeptVersions">Max Kept Versions</Label>
+										<Input
+											id="editMaxKeptVersions"
+											type="number"
+											min="1"
+											max="10"
+											bind:value={editMaxKeptVersions}
+											aria-describedby="editMaxKeptVersions-help"
+										/>
+										<p id="editMaxKeptVersions-help" class="text-xs text-muted-foreground">
+											Number of release versions to retain for rollback. Older versions are cleaned
+											up after deployment.
+										</p>
+									</div>
+									<div class="space-y-2">
+										<Label for="editDeploymentEnvironment">Deployment Environment</Label>
+										<Input
+											id="editDeploymentEnvironment"
+											bind:value={editDeploymentEnvironment}
+											placeholder="production"
+											aria-describedby="editDeploymentEnvironment-help"
+										/>
+										<p id="editDeploymentEnvironment-help" class="text-xs text-muted-foreground">
+											GitHub environment for this watcher. Leave blank to inherit the global
+											environment.
+										</p>
+									</div>
+								</div>
+								<div class="space-y-2 rounded-lg border border-border/70 bg-muted/20 p-4">
+									<Label class="text-sm font-medium">Deployment Policy</Label>
+									<RadioGroup.Root
+										value={editAutoDeploy ? 'automatic' : 'manual'}
+										onValueChange={(value) => {
+											editAutoDeploy = value === 'automatic';
+										}}
+										aria-label="Deployment policy"
+										class="mt-2"
+									>
+										<Label for="deploy-automatic" class="flex cursor-pointer items-start gap-3"
+											><RadioGroup.Item id="deploy-automatic" value="automatic" class="mt-1" />
+											<div>
+												<p class="text-sm font-medium">Automatic deployment</p>
+												<p class="text-xs text-muted-foreground">
+													Deploy new releases when detected.
+												</p>
+											</div></Label
+										>
+										<Label for="deploy-manual" class="flex cursor-pointer items-start gap-3"
+											><RadioGroup.Item id="deploy-manual" value="manual" class="mt-1" />
+											<div>
+												<p class="text-sm font-medium">Manual approval</p>
+												<p class="text-xs text-muted-foreground">
+													Review release candidates before deploying.
+												</p>
+											</div></Label
+										>
+									</RadioGroup.Root>
+								</div>
+								<div class="space-y-2">
+									<Label for="editGitHubToken">GitHub Access Token Override</Label>
+									<Input
+										id="editGitHubToken"
+										type="password"
+										bind:value={editGitHubToken}
+										placeholder="Paste new token to replace override"
+										disabled={editUseGlobalToken}
+										aria-describedby="editGitHubToken-help"
+									/>
+									<p id="editGitHubToken-help" class="text-xs text-muted-foreground">
+										Leave blank to keep the saved override. Select Use global GitHub token to remove
+										the override.
+									</p>
+									<div class="mt-2 flex items-center gap-2">
+										<Checkbox id="editUseGlobalToken" bind:checked={editUseGlobalToken} />
+										<Label for="editUseGlobalToken">Use global GitHub token</Label>
+									</div>
+									<p class="mt-1 text-xs text-muted-foreground">
+										Current: {watcher.has_github_token
+											? watcher.github_token_masked || 'set'
+											: 'using global token'}
+									</p>
+								</div></Card.Content
+							></Card.Root
+						></Tabs.Content
+					>
+					<Tabs.Content value="health"
+						><Card.Root
+							><Card.Header
+								><Card.Title>Health checks</Card.Title><Card.Description
+									>Services can override this watcher-level health URL.</Card.Description
+								></Card.Header
+							><Card.Content class="space-y-4"
+								><div class="flex flex-wrap items-center gap-2 py-1">
+									<Checkbox
+										id="editHcEnabled"
+										bind:checked={editHcEnabled}
+										aria-describedby="editHcEnabled-help"
+									/>
 
-			<div class="flex justify-end">
-				<Button.Root type="submit" disabled={saving}>
-					<Save class="mr-2 h-4 w-4" />
-					{saving ? 'Saving...' : 'Save Changes'}
-				</Button.Root>
-			</div>
-		</form>
-
-		<Card.Root class="border-border bg-card" id="services">
-			<Card.Header>
-				<Card.Title>Service Settings</Card.Title>
-				<Card.Description>
-					Add, edit, or remove the managed services tied to this watcher.
-				</Card.Description>
-			</Card.Header>
-			<Card.Content>
-				<ServicesTab
-					{watcher}
-					createHref={resolve(`/watchers/${id}/services/new`)}
-					editHrefBase="/services"
-					onDeleteService={deleteService}
-				/>
-			</Card.Content>
-		</Card.Root>
+									<Label for="editHcEnabled">Enable health checks</Label>
+									<p id="editHcEnabled-help" class="w-full text-xs text-muted-foreground">
+										Check service health after deployment. A failed check triggers rollback.
+									</p>
+								</div>
+								<div class="space-y-2">
+									<Label for="editHcURL">Health Check URL</Label>
+									<Input id="editHcURL" bind:value={editHcURL} aria-describedby="editHcURL-help" />
+									<p id="editHcURL-help" class="text-xs text-muted-foreground">
+										Default health endpoint for services in this watcher. A service-specific URL
+										takes precedence.
+									</p>
+								</div></Card.Content
+							></Card.Root
+						></Tabs.Content
+					>
+					<Tabs.Content value="webhooks"
+						><Card.Root class="border-border bg-card" id="webhooks">
+							<Card.Header>
+								<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+									<div>
+										<Card.Title>Webhook Settings</Card.Title>
+										<Card.Description>
+											Configure this watcher's endpoint, signing-secret override, and event
+											subscriptions.
+										</Card.Description>
+										<div class="mt-3 flex flex-wrap gap-2">
+											<Button.Root href={resolve('/docs/webhooks')} variant="outline" size="sm"
+												>Integration guide</Button.Root
+											>
+										</div>
+									</div>
+									<Button.Root
+										type="button"
+										variant="outline"
+										size="sm"
+										onclick={sendWebhookTest}
+										disabled={sendingTest || saving || confirming}
+									>
+										<Send class="mr-2 h-4 w-4" />
+										{sendingTest ? 'Sending...' : 'Send Test Webhook'}
+									</Button.Root>
+								</div>
+							</Card.Header>
+							<Card.Content class="space-y-4">
+								<div
+									class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground"
+								>
+									Use this form only for watcher-specific webhook configuration. Delivery history,
+									replay, and pause recovery live in the webhook hub and the watcher webhook tab.
+								</div>
+								<div class="flex items-center gap-2">
+									<Checkbox id="editWebhookEnabled" bind:checked={editWebhookEnabled} />
+									<Label for="editWebhookEnabled">Enable webhook delivery for this watcher</Label>
+								</div>
+								<div class="grid gap-4 sm:grid-cols-2">
+									<div class="space-y-2">
+										<Label for="editWebhookURL">Webhook URL</Label>
+										<Input
+											id="editWebhookURL"
+											bind:value={editWebhookURL}
+											placeholder="https://example.com/hooks/watcher"
+										/>
+										<p class="text-xs text-muted-foreground">
+											Leave empty to inherit the global default URL.
+										</p>
+									</div>
+									<div class="space-y-2">
+										<Label for="editWebhookSigningSecret">Webhook Signing Secret Override</Label>
+										<Input
+											id="editWebhookSigningSecret"
+											type="password"
+											bind:value={editWebhookSigningSecret}
+											placeholder="Paste new base64 or whsec_... secret to replace override"
+											disabled={editUseGlobalWebhookToken}
+										/>
+										<div class="mt-2 flex items-center gap-2">
+											<Checkbox
+												id="editUseGlobalWebhookToken"
+												bind:checked={editUseGlobalWebhookToken}
+											/>
+											<Label for="editUseGlobalWebhookToken"
+												>Use global default signing secret</Label
+											>
+										</div>
+										<p class="mt-1 text-xs text-muted-foreground">
+											Current:
+											{watcher.has_webhook_signing_secret
+												? watcher.webhook_signing_secret_masked || 'set'
+												: 'using global webhook signing secret'}
+										</p>
+									</div>
+								</div>
+								<div class="space-y-3 rounded-lg border border-border/70 p-4">
+									<div class="flex items-start justify-between gap-3">
+										<div>
+											<h4 class="font-medium">Event Subscriptions</h4>
+											<p class="text-sm text-muted-foreground">
+												Choose which business events this watcher should emit.
+											</p>
+										</div>
+									</div>
+									<div class="grid gap-3 md:grid-cols-2">
+										<label class="flex items-center gap-2 text-sm">
+											<Checkbox bind:checked={webhookSelections.notify_version_found} />
+											<span>Version Found</span>
+										</label>
+										<label class="flex items-center gap-2 text-sm">
+											<Checkbox bind:checked={webhookSelections.notify_deployment_succeeded} />
+											<span>Deployment Succeeded</span>
+										</label>
+										<label class="flex items-center gap-2 text-sm">
+											<Checkbox bind:checked={webhookSelections.notify_deployment_failed} />
+											<span>Deployment Failed</span>
+										</label>
+										<label class="flex items-center gap-2 text-sm">
+											<Checkbox bind:checked={webhookSelections.notify_rollback_succeeded} />
+											<span>Rollback Succeeded</span>
+										</label>
+										<label class="flex items-center gap-2 text-sm">
+											<Checkbox bind:checked={webhookSelections.notify_rollback_failed} />
+											<span>Rollback Failed</span>
+										</label>
+										<label class="flex items-center gap-2 text-sm">
+											<Checkbox bind:checked={webhookSelections.notify_service_health_changed} />
+											<span>Service Health Changed</span>
+										</label>
+									</div>
+								</div>
+							</Card.Content>
+						</Card.Root></Tabs.Content
+					>
+				</fieldset>
+			</form>
+			<Tabs.Content value="services"
+				><Card.Root class="border-border bg-card" id="services">
+					<Card.Header>
+						<Card.Title>Service Settings</Card.Title>
+						<Card.Description>
+							Add, edit, or remove the managed services tied to this watcher.
+						</Card.Description>
+					</Card.Header>
+					<Card.Content>
+						<ServicesTab
+							{watcher}
+							createHref={resolve(`/watchers/${id}/services/new`)}
+							editHrefBase="/services"
+							onDeleteService={deleteService}
+						/>
+					</Card.Content>
+				</Card.Root></Tabs.Content
+			>
+		</Tabs.Root>
+		<div
+			class="section-toolbar sticky bottom-3 rounded-lg border border-border bg-background p-4 shadow-lg"
+		>
+			<p class="text-sm text-muted-foreground">
+				Saves source, deployment, health and webhook settings together. Service changes are saved
+				separately.
+			</p>
+			<Button.Root
+				type="submit"
+				form="watcher-settings"
+				loading={saving}
+				disabled={saving || sendingTest || confirming}><Save />Save changes</Button.Root
+			>
+		</div>
 	{/if}
 </div>
 
-<Dialog.Root bind:open={showConfirmDialog}>
-	<Dialog.Content class="sm:max-w-115">
+<Dialog.Root
+	bind:open={showConfirmDialog}
+	onOpenChange={(open) => {
+		if (confirming && !open) showConfirmDialog = true;
+	}}
+>
+	<Dialog.Content class="sm:max-w-115" showCloseButton={!confirming}>
 		<Dialog.Header>
 			<Dialog.Title>{confirmTitle}</Dialog.Title>
 			<Dialog.Description>{confirmDescription}</Dialog.Description>
 		</Dialog.Header>
+		<RequestError message={error} />
 		<Dialog.Footer>
-			<Button.Root variant="outline" type="button" onclick={() => (showConfirmDialog = false)}>
+			<Button.Root
+				variant="outline"
+				type="button"
+				disabled={confirming}
+				onclick={() => (showConfirmDialog = false)}
+			>
 				Cancel
 			</Button.Root>
 			<Button.Root

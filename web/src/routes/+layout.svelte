@@ -227,6 +227,13 @@
 					<h1 class="text-sm font-semibold">Watcher</h1>
 					<p class="text-[11px] text-muted-foreground">Deploy Agent</p>
 				</div>
+				<Button.Root
+					variant="ghost"
+					size="icon"
+					class="ml-auto lg:hidden"
+					aria-label="Close navigation"
+					onclick={() => (mobileOpen = false)}><X class="h-5 w-5" /></Button.Root
+				>
 			</div>
 
 			<nav
@@ -280,23 +287,6 @@
 			</div>
 		</aside>
 
-		<!-- Mobile toggle -->
-		<Button.Root
-			variant="ghost"
-			size="icon"
-			class="fixed top-3 left-3 z-50 border border-border bg-card shadow-sm lg:hidden"
-			aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
-			aria-expanded={mobileOpen}
-			aria-controls="main-navigation"
-			onclick={() => (mobileOpen = !mobileOpen)}
-		>
-			{#if mobileOpen}
-				<X class="h-5 w-5" />
-			{:else}
-				<Menu class="h-5 w-5" />
-			{/if}
-		</Button.Root>
-
 		<!-- Mobile overlay -->
 		{#if mobileOpen}
 			<button
@@ -308,7 +298,33 @@
 
 		<!-- Main content -->
 		<main id="main-content" class="min-w-0 flex-1 lg:ml-64">
-			<div class="mx-auto w-full max-w-6xl min-w-0 px-4 pt-20 pb-6 sm:px-6 lg:p-6">
+			<header
+				aria-label="Watcher mobile header"
+				class="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background px-4 shadow-sm sm:px-6 lg:hidden"
+			>
+				<Button.Root
+					href={resolve('/')}
+					variant="ghost"
+					class="gap-2.5 px-0 hover:bg-transparent"
+					aria-label="Watcher dashboard"
+				>
+					<img
+						src={asset('/watcher.svg')}
+						alt=""
+						class="h-8 w-8 rounded-lg bg-primary p-1.5 invert"
+					/>
+					<span class="text-sm font-semibold">Watcher</span>
+				</Button.Root>
+				<Button.Root
+					variant="outline"
+					size="icon"
+					aria-label="Open navigation"
+					aria-expanded={mobileOpen}
+					aria-controls="main-navigation"
+					onclick={() => (mobileOpen = true)}><Menu class="h-5 w-5" /></Button.Root
+				>
+			</header>
+			<div class="mx-auto w-full max-w-6xl min-w-0 px-4 py-6 sm:px-6 lg:p-6">
 				{#if showSelfUpdateBanner && selfUpdateInfo?.update_available}
 					<div
 						class="mb-4 flex flex-col gap-3 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-50 md:flex-row md:items-center md:justify-between"
