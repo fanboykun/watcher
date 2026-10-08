@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -373,13 +374,7 @@
 			</Dialog.Header>
 
 			<div class="flex-1 overflow-y-auto px-6 py-5">
-				{#if error}
-					<div
-						class="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400"
-					>
-						{error}
-					</div>
-				{/if}
+				<RequestError message={error} />
 
 				{#if createStep === 1}
 					<div class="space-y-4">

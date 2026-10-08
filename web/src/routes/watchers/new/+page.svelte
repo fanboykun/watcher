@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import {
@@ -478,14 +479,7 @@
 		{/each}
 	</div>
 
-	{#if error}
-		<div
-			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
-		>
-			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
-			<span>{error}</span>
-		</div>
-	{/if}
+	<RequestError message={error} />
 
 	<Card.Root class="border-border bg-card">
 		<Card.Content class="space-y-5 p-6">

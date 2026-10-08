@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { api, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
@@ -35,13 +36,14 @@
 	}
 
 	function openDeleteWatcherDialog(id: number, name: string) {
+		error = '';
 		deleteWatcherID = id;
 		deleteWatcherName = name;
 		showDeleteDialog = true;
 	}
 
 	async function confirmDeleteWatcher() {
-		if (!deleteWatcherID) return;
+		if (!deleteWatcherID || deleting) return;
 		deleting = true;
 		try {
 			await api.deleteWatcher(deleteWatcherID);
@@ -62,7 +64,6 @@
 			setTimeout(() => (triggerMsg = ''), 3000);
 		} catch (e) {
 			triggerError = e instanceof Error ? e.message : 'Trigger failed';
-			setTimeout(() => (triggerError = ''), 5000);
 		}
 	}
 </script>
@@ -80,14 +81,7 @@
 		</a>
 	</div>
 
-	{#if error}
-		<div
-			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
-		>
-			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
-			<span>{error}</span>
-		</div>
-	{/if}
+	<RequestError message={error} onRetry={load} />
 
 	{#if triggerMsg}
 		<div
@@ -98,14 +92,7 @@
 		</div>
 	{/if}
 
-	{#if triggerError}
-		<div
-			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
-		>
-			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
-			<span>{triggerError}</span>
-		</div>
-	{/if}
+	<RequestError message={triggerError} />
 
 	{#if loading}
 		<RequestLoading label="Loading watchers…" />
@@ -188,14 +175,20 @@
 </div>
 
 <!-- Delete Confirmation Dialog -->
-<Dialog.Root bind:open={showDeleteDialog}>
-	<Dialog.Content class="sm:max-w-[420px]">
+<Dialog.Root
+	bind:open={showDeleteDialog}
+	onOpenChange={(open) => {
+		if (deleting && !open) showDeleteDialog = true;
+	}}
+>
+	<Dialog.Content class="sm:max-w-[420px]" showCloseButton={!deleting}>
 		<Dialog.Header>
 			<Dialog.Title>Delete Watcher</Dialog.Title>
 			<Dialog.Description>
 				This will delete watcher <span class="font-medium">{deleteWatcherName}</span> and all linked services.
 			</Dialog.Description>
 		</Dialog.Header>
+		{#if error}<p role="alert" class="text-sm text-red-400">{error}</p>{/if}
 		<Dialog.Footer>
 			<Button.Root
 				variant="outline"
@@ -208,6 +201,7 @@
 			<Button.Root
 				type="button"
 				class="bg-red-600 text-white hover:bg-red-700"
+				loading={deleting}
 				onclick={confirmDeleteWatcher}
 				disabled={deleting}
 			>

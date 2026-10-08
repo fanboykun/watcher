@@ -9,11 +9,13 @@
 	import { formatDate } from '$lib/utils';
 
 	let {
+		busy = false,
 		versions,
 		onRollback,
 		onDeleteVersion
 	}: {
 		versions: import('$lib/api').ReleaseInfo[];
+		busy?: boolean;
 		onRollback: (version: string) => void;
 		onDeleteVersion: (version: string) => void;
 	} = $props();
@@ -69,7 +71,12 @@
 						<Table.Cell class="text-right">
 							<div class="flex items-center justify-end gap-2">
 								{#if v.has_snapshot}
-									<a href={resolve('/watchers/[id]/versions/[version]', { id: page.params.id!, version: encodeURIComponent(v.version) })}>
+									<a
+										href={resolve('/watchers/[id]/versions/[version]', {
+											id: page.params.id!,
+											version: encodeURIComponent(v.version)
+										})}
+									>
 										<Button.Root
 											variant="outline"
 											size="sm"
@@ -86,6 +93,7 @@
 										variant="outline"
 										size="sm"
 										class="h-8"
+										disabled={busy}
 										onclick={() => onRollback(v.version)}
 									>
 										<RotateCcw class="mr-1.5 h-3 w-3" />
@@ -96,6 +104,7 @@
 										size="sm"
 										class="h-8 bg-red-500/10 text-red-500 hover:bg-red-500/20"
 										title="Delete Version"
+										disabled={busy}
 										onclick={() => onDeleteVersion(v.version)}
 									>
 										<Trash2 class="h-3 w-3" />

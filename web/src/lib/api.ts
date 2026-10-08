@@ -34,7 +34,11 @@ export class APIRequestError extends Error {
 	}
 }
 
-function errorMessageFromResponse(status: number, statusText: string, body: unknown): string {
+export function errorMessageFromResponse(
+	status: number,
+	statusText: string,
+	body: unknown
+): string {
 	const detail =
 		body && typeof body === 'object'
 			? typeof (body as { error?: unknown }).error === 'string'
@@ -45,19 +49,24 @@ function errorMessageFromResponse(status: number, statusText: string, body: unkn
 			: typeof body === 'string'
 				? body.trim()
 				: '';
-	const genericServerError =
-		!detail ||
-		/^\s*</.test(detail) ||
-		/^(internal server error|server error|http \d+)$/i.test(detail || statusText);
-
-	if (status >= 500 && genericServerError) {
-		return `The Watcher API could not complete this request (HTTP ${status}). Check the agent logs and try again.`;
-	}
-	if (detail) return detail;
-	if (status === 401) return 'Your dashboard session is not authorized. Sign in again and retry.';
-	if (status === 403) return 'You are not allowed to perform this operation.';
-	if (status === 404) return 'The requested resource no longer exists or could not be found.';
-	return statusText || `Request failed with HTTP ${status}.`;
+	const usable =
+		detail &&
+		!/^\s*</.test(detail) &&
+		!/^(internal server error|server error|http \d+)$/i.test(detail);
+	const guidance: Record<number, string> = {
+		401: 'Your dashboard session expired or is no longer authorized. Sign in again, then retry.',
+		403: 'This request was refused. Check the credentials and permissions for this operation.',
+		404: 'This item could not be found. Refresh the page to check whether it still exists.',
+		409: 'The current state changed or another operation is running. Refresh the details before trying again.',
+		422: 'Check the entered values and submit again.',
+		429: 'Too many requests. Wait before trying again.'
+	};
+	if (usable) return guidance[status] ? `${detail} ${guidance[status]}` : detail;
+	if (guidance[status]) return guidance[status];
+	if (status === 400) return 'Check the entered values and try again.';
+	if (status >= 500)
+		return 'Watcher could not complete this request. Try again; if it keeps failing, inspect the agent logs.';
+	return statusText || `Request failed (HTTP ${status}).`;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -65,13 +74,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 	let res: Response;
 	try {
 		res = await fetch(`${API_BASE}${normalizedPath}`, {
-			headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers },
-			...options
+			...options,
+			headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers }
 		});
 	} catch (error) {
 		if (error instanceof Error && error.name === 'AbortError') throw error;
 		throw new APIRequestError(
-			'Could not reach the Watcher API. Check that the agent service is running and retry.',
+			'The dashboard could not reach Watcher. Check your connection and that the agent service is running. For a deployment action, refresh its history before retrying: the request may already have been accepted.',
 			0,
 			error
 		);
@@ -90,7 +99,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 		}
 		throw new APIRequestError(message, res.status, body);
 	}
-	return res.json();
+	if (res.status === 204) return undefined as T;
+	try {
+		return await res.json();
+	} catch {
+		throw new APIRequestError(
+			'Watcher returned an unreadable response. Refresh the details to confirm the result before repeating the action.',
+			res.status
+		);
+	}
 }
 
 export interface AuthenticatedEventStream {
@@ -686,7 +703,9 @@ export const api = {
 	resumeWatcherUpdates: (id: number) =>
 		request<{ message: string }>(`/watchers/${id}/resume`, { method: 'POST' }),
 	deleteWatcherVersion: (id: number, version: string) =>
-		request<{ message: string }>(`/watchers/${id}/versions/${encodeURIComponent(version)}`, { method: 'DELETE' }),
+		request<{ message: string }>(`/watchers/${id}/versions/${encodeURIComponent(version)}`, {
+			method: 'DELETE'
+		}),
 	watcherPolls: (id: number, page = 1, pageSize = 10, status = 'all') =>
 		request<{ data: PollEvent[]; total: number; page: number; pageSize: number }>(
 			`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`
@@ -807,7 +826,9 @@ export const api = {
 	deleteServiceConfigRevision: async (id: number, target: string) =>
 		request(`/services/${id}/revisions/${encodeURIComponent(target)}`, { method: 'DELETE' }),
 	getServiceSnapshotEnv: async (id: number, version: string) =>
-		request<{ env_content: string }>(`/services/${id}/snapshots/${encodeURIComponent(version)}/env`),
+		request<{ env_content: string }>(
+			`/services/${id}/snapshots/${encodeURIComponent(version)}/env`
+		),
 
 	discardRelease: async (id: number) =>
 		request<{ message: string }>(`/watchers/${id}/discard`, { method: 'POST' }),

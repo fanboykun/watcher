@@ -1,6 +1,8 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import type { ServiceConfigRevision } from '$lib/api';
 	import { api } from '$lib/api';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -45,6 +47,8 @@
 	let contentSource = $state<'active' | 'snapshot' | 'candidate'>('active');
 	let saving = $state(false);
 	let saved = $state(false);
+	let deletingTarget = $state('');
+	let confirmingDelete = $state('');
 	let loadingContent = $state(false);
 	let loadedTarget = $state('');
 	let loadGeneration = 0;
@@ -71,7 +75,7 @@
 	}
 
 	async function selectTarget(target: string, custom = false) {
-		if (saving) return;
+		if (saving || deletingTarget) return;
 		isCustom = custom;
 		selectedTarget = target;
 		if (custom) {
@@ -92,8 +96,9 @@
 		}
 
 		// 1. Check if a candidate revision already exists in DB
-		const existingRev = revisions.find((r) => r.target_version === target)
-			?? revisions.find((r) => r.target_version === 'next');
+		const existingRev =
+			revisions.find((r) => r.target_version === target) ??
+			revisions.find((r) => r.target_version === 'next');
 		if (existingRev) {
 			editorContent = existingRev.env_content;
 			contentSource = 'candidate';
@@ -148,14 +153,20 @@
 	}
 
 	async function deleteRevision(target: string) {
+		if (deletingTarget) return;
+		deletingTarget = target;
+		error = '';
 		try {
 			await api.deleteServiceConfigRevision(serviceId, target);
 			await loadRevisions();
 			if (effectiveTarget === target) {
 				await loadContentForTarget(effectiveTarget);
 			}
+			confirmingDelete = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete config candidate';
+		} finally {
+			deletingTarget = '';
 		}
 	}
 
@@ -169,17 +180,16 @@
 	});
 </script>
 
-<div class="space-y-6">
+<fieldset disabled={saving || Boolean(deletingTarget)} class="min-w-0 space-y-4">
 	<!-- Editor Card -->
 	<Card.Root class="border-border bg-card">
 		<Card.Header class="pb-3">
 			<div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
 				<div>
-					<Card.Title class="text-lg">Pre-configure Candidate Version</Card.Title>
-					<Card.Description>
-						Stage environment configurations for future deployments without altering the active
-						service or historical rollback snapshots.
-					</Card.Description>
+					<Card.Title class="text-lg">Candidate configuration</Card.Title>
+					<Card.Description
+						>Changes apply at deployment; saved snapshots stay unchanged.</Card.Description
+					>
 				</div>
 				{#if revisions.length > 0}
 					<span
@@ -206,7 +216,7 @@
 						onclick={() => selectTarget('next')}
 					>
 						<Sparkles class="h-3.5 w-3.5" />
-						Next Deployment (next)
+						Next deployment
 						{#if revisions.some((r) => r.target_version === 'next')}
 							<span class="ml-1 h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
 						{/if}
@@ -284,7 +294,7 @@
 			<!-- Environment Editor -->
 			<div class="space-y-2">
 				<div class="flex flex-wrap items-center justify-between gap-2">
-					<div class="flex items-center gap-2">
+					<div class="flex flex-wrap items-center gap-2">
 						<p class="text-sm font-medium">
 							Environment Variables for <code class="font-mono font-bold text-primary"
 								>{effectiveTarget || 'unspecified'}</code
@@ -311,7 +321,7 @@
 						{/if}
 					</div>
 
-					<div class="flex items-center gap-2">
+					<div class="flex flex-wrap items-center gap-2">
 						{#if editorContent !== currentEnv}
 							<Button.Root
 								variant="ghost"
@@ -350,7 +360,7 @@
 			</div>
 
 			<!-- Action buttons -->
-			<div class="flex items-center gap-2">
+			<div class="flex flex-wrap items-center gap-2">
 				<Button.Root
 					variant="default"
 					size="sm"
@@ -380,14 +390,7 @@
 		</Card.Content>
 	</Card.Root>
 
-	{#if error}
-		<div
-			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
-		>
-			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
-			<span>{error}</span>
-		</div>
-	{/if}
+	<RequestError message={error} />
 
 	<!-- Staged Candidates List -->
 	<div class="space-y-3">
@@ -408,8 +411,8 @@
 				{#each revisions as rev (rev.target_version)}
 					<Card.Root class="border-border bg-card">
 						<Card.Header class="pb-2">
-							<div class="flex items-center justify-between">
-								<div class="flex items-center gap-2">
+							<div class="section-toolbar">
+								<div class="flex flex-wrap items-center gap-2">
 									<Card.Title class="font-mono text-base font-bold text-primary">
 										{rev.target_version}
 									</Card.Title>
@@ -434,7 +437,7 @@
 									{/if}
 								</div>
 
-								<div class="flex items-center gap-2">
+								<div class="flex flex-wrap items-center gap-2">
 									<Button.Root
 										variant="outline"
 										size="sm"
@@ -451,13 +454,16 @@
 											}
 										}}
 									>
-										Edit in Creator
+										Edit candidate
 									</Button.Root>
 									<Button.Root
 										variant="ghost"
 										size="icon"
 										class="h-7 w-7 text-red-400 hover:text-red-300"
-										onclick={() => deleteRevision(rev.target_version)}
+										onclick={() => {
+											error = '';
+											confirmingDelete = rev.target_version;
+										}}
 										title="Delete this candidate revision"
 									>
 										<Trash2 class="h-3.5 w-3.5" />
@@ -480,4 +486,33 @@
 			</div>
 		{/if}
 	</div>
-</div>
+</fieldset>
+
+<Dialog.Root
+	open={Boolean(confirmingDelete)}
+	onOpenChange={(open) => {
+		if (!open && !deletingTarget) confirmingDelete = '';
+	}}
+>
+	<Dialog.Content showCloseButton={!deletingTarget}>
+		<Dialog.Header
+			><Dialog.Title>Delete candidate?</Dialog.Title><Dialog.Description
+				>The staged configuration for {confirmingDelete} will be removed. Active configuration and release
+				snapshots stay unchanged.</Dialog.Description
+			></Dialog.Header
+		>
+		{#if error}<p role="alert" class="text-sm text-red-400">{error}</p>{/if}
+		<Dialog.Footer
+			><Button.Root
+				variant="outline"
+				disabled={Boolean(deletingTarget)}
+				onclick={() => (confirmingDelete = '')}>Cancel</Button.Root
+			><Button.Root
+				variant="destructive"
+				disabled={Boolean(deletingTarget)}
+				loading={Boolean(deletingTarget)}
+				onclick={() => deleteRevision(confirmingDelete)}>Delete candidate</Button.Root
+			></Dialog.Footer
+		>
+	</Dialog.Content>
+</Dialog.Root>

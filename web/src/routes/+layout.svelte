@@ -210,7 +210,7 @@
 		</form>
 	</div>
 {:else}
-	<div class="dark flex min-h-screen bg-background text-foreground">
+	<div class="dark flex min-h-dvh w-full bg-background text-foreground">
 		<!-- Sidebar -->
 		<aside
 			class="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card transition-transform duration-200 lg:translate-x-0 {mobileOpen
@@ -229,11 +229,16 @@
 				</div>
 			</div>
 
-			<nav class="flex-1 space-y-1 p-3">
+			<nav
+				id="main-navigation"
+				aria-label="Main navigation"
+				class="min-h-0 flex-1 space-y-1 overflow-y-auto p-3"
+			>
 				{#each navItems as item (item.href)}
 					<a
 						href={resolve(item.href)}
 						onclick={() => (mobileOpen = false)}
+						aria-current={isActive(item.href) ? 'page' : undefined}
 						class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors {isActive(
 							item.href
 						)
@@ -279,7 +284,10 @@
 		<Button.Root
 			variant="ghost"
 			size="icon"
-			class="fixed top-4 left-4 z-50 lg:hidden"
+			class="fixed top-3 left-3 z-50 border border-border bg-card shadow-sm lg:hidden"
+			aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
+			aria-expanded={mobileOpen}
+			aria-controls="main-navigation"
 			onclick={() => (mobileOpen = !mobileOpen)}
 		>
 			{#if mobileOpen}
@@ -299,8 +307,8 @@
 		{/if}
 
 		<!-- Main content -->
-		<main class="flex-1 lg:ml-64">
-			<div class="mx-auto max-w-6xl p-4 lg:p-6">
+		<main id="main-content" class="min-w-0 flex-1 lg:ml-64">
+			<div class="mx-auto w-full max-w-6xl min-w-0 px-4 pt-20 pb-6 sm:px-6 lg:p-6">
 				{#if showSelfUpdateBanner && selfUpdateInfo?.update_available}
 					<div
 						class="mb-4 flex flex-col gap-3 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-50 md:flex-row md:items-center md:justify-between"

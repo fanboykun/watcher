@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
@@ -61,27 +62,15 @@
 <div class="space-y-6">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 		<div>
-			<div class="inline-flex items-center gap-2 text-sm text-muted-foreground">
-				<WebhookIcon class="h-4 w-4" />
-				Webhook operations
-			</div>
 			<h1 class="mt-2 text-2xl font-bold tracking-tight">Webhooks</h1>
 			<p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-				Configured watcher webhooks grouped by service. Full event and payload documentation lives
-				in the repo docs.
+				Delivery settings grouped by service.
 			</p>
 			<div class="mt-3 flex flex-wrap gap-2">
 				<a href={resolve('/docs/webhooks')}>
 					<Button.Root size="sm" variant="outline">
 						<BookOpenText class="mr-2 h-4 w-4" />
 						Integration Guide
-					</Button.Root>
-				</a>
-				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-				<a href={webhookDocsHref} target="_blank" rel="noopener noreferrer">
-					<Button.Root size="sm" variant="outline">
-						<ExternalLink class="mr-2 h-4 w-4" />
-						Repo Docs
 					</Button.Root>
 				</a>
 			</div>
@@ -92,14 +81,7 @@
 		</Button.Root>
 	</div>
 
-	{#if error}
-		<div
-			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
-		>
-			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
-			<span>{error}</span>
-		</div>
-	{/if}
+	<RequestError message={error} />
 
 	{#if loading}
 		<RequestLoading label="Loading webhook configuration…" />

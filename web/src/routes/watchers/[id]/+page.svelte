@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import {
@@ -40,6 +41,17 @@
 
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
+	let pendingAction = $state('');
+	async function runPending(name: string, action: () => Promise<void>) {
+		if (pendingAction) return;
+		pendingAction = name;
+		error = '';
+		try {
+			await action();
+		} finally {
+			pendingAction = '';
+		}
+	}
 	let watcher = $state<Watcher | null>(null);
 	let deploys = $state<DeployLog[]>([]);
 	let polls = $state<import('$lib/api').PollEvent[]>([]);
@@ -56,12 +68,16 @@
 	let pollStatus = $state('all');
 	let pollTotal = $state(0);
 	let error = $state('');
+	let dataError = $state('');
 	let loading = $state(true);
 	let triggerMsg = $state('');
 
 	let showRollbackDialog = $state(false);
 	let showConfirmDialog = $state(false);
 	let confirming = $state(false);
+	const actionBusy = $derived(
+		Boolean(pendingAction) || confirming || watcher?.status === 'deploying'
+	);
 	let rollbackTargetVersion = $state('');
 	let rollbackReportGitHub = $state(true);
 	let confirmTitle = $state('');
@@ -83,21 +99,43 @@
 			polls = res.data;
 			pollTotal = res.total;
 		} catch (err) {
-			// ignore logs
+			dataError = `Polling history could not be loaded. ${err instanceof Error ? err.message : 'Try again.'}`;
 		}
 	};
 
 	const loadDeploys = async () => {
-		const res = await api.watcherDeploys(id, deployPage, deployPageSize);
-		deploys = res.data;
-		deployTotal = res.total;
+		try {
+			const res = await api.watcherDeploys(id, deployPage, deployPageSize);
+			deploys = res.data;
+			deployTotal = res.total;
+		} catch (e) {
+			dataError = `Deployment history could not be loaded. ${e instanceof Error ? e.message : 'Try again.'}`;
+		}
 	};
 
 	const loadWebhookDeliveries = async () => {
-		const res = await api.watcherWebhookDeliveries(id, deliveryPage, deliveryPageSize);
-		webhookDeliveries = Array.isArray(res.data) ? res.data : [];
-		deliveryTotal = res.total;
+		try {
+			const res = await api.watcherWebhookDeliveries(id, deliveryPage, deliveryPageSize);
+			webhookDeliveries = Array.isArray(res.data) ? res.data : [];
+			deliveryTotal = res.total;
+		} catch (e) {
+			dataError = `Webhook history could not be loaded. ${e instanceof Error ? e.message : 'Try again.'}`;
+		}
 	};
+
+	async function refreshDetails() {
+		dataError = '';
+		const results = await Promise.allSettled([
+			loadDeploys(),
+			api.watcherVersions(id).then((v) => (versions = v)),
+			loadPolls(),
+			loadWebhookDeliveries()
+		]);
+		const failed = results.find((result) => result.status === 'rejected');
+		if (failed?.status === 'rejected') {
+			dataError = `Some history could not be loaded. ${failed.reason instanceof Error ? failed.reason.message : 'Try again.'}`;
+		}
+	}
 
 	function scheduleRefresh(includeVersions = false, includePolls = false) {
 		if (refreshTimer) return;
@@ -109,12 +147,7 @@
 					loadDeploys()
 				];
 				if (includeVersions) {
-					tasks.push(
-						api
-							.watcherVersions(id)
-							.then((v) => (versions = v))
-							.catch(() => [])
-					);
+					tasks.push(api.watcherVersions(id).then((v) => (versions = v)));
 				}
 				if (includePolls || activeTab === 'polling') {
 					tasks.push(loadPolls());
@@ -123,8 +156,8 @@
 					tasks.push(loadWebhookDeliveries());
 				}
 				await Promise.all(tasks);
-			} catch {
-				// ignore transient stream refresh errors
+			} catch (e) {
+				dataError = `Some details could not be refreshed. ${e instanceof Error ? e.message : 'Try again.'}`;
 			}
 		}, 200);
 	}
@@ -134,25 +167,7 @@
 			try {
 				watcher = await api.getWatcher(id);
 
-				void Promise.allSettled([
-					api.watcherDeploys(id, deployPage, deployPageSize).then((res) => {
-						deploys = res.data;
-						deployTotal = res.total;
-					}),
-					api.watcherVersions(id).then((v) => {
-						versions = v;
-					}),
-					loadPolls(),
-					loadWebhookDeliveries()
-				]).then((results) => {
-					if (results[0]?.status === 'rejected') {
-						deploys = [];
-						deployTotal = 0;
-					}
-					if (results[1]?.status === 'rejected') {
-						versions = [];
-					}
-				});
+				await refreshDetails();
 			} catch (e) {
 				error = e instanceof Error ? e.message : 'Failed to load watcher';
 			} finally {
@@ -211,6 +226,7 @@
 		actionClass?: string;
 		action: () => Promise<void> | void;
 	}) {
+		error = '';
 		confirmTitle = opts.title;
 		confirmDescription = opts.description;
 		confirmActionLabel = opts.actionLabel;
@@ -220,11 +236,12 @@
 	}
 
 	async function runConfirmAction() {
-		if (!confirmAction) return;
+		if (!confirmAction || confirming) return;
+		error = '';
 		confirming = true;
 		try {
 			await confirmAction();
-			showConfirmDialog = false;
+			if (!error) showConfirmDialog = false;
 		} finally {
 			confirming = false;
 		}
@@ -253,7 +270,7 @@
 			triggerMsg = res.message;
 			setTimeout(() => (triggerMsg = ''), 3000);
 		} catch (e) {
-			triggerMsg = e instanceof Error ? e.message : 'Trigger failed';
+			error = e instanceof Error ? e.message : 'Poll could not be requested';
 		}
 	}
 
@@ -305,9 +322,9 @@
 
 	async function rollback(version: string, reportGithub = true) {
 		try {
-			showRollbackDialog = false;
 			triggerMsg = `Starting rollback to ${version}...`;
 			const res = await api.rollbackWatcher(id, version, reportGithub);
+			showRollbackDialog = false;
 			const fallback = resolve(`/watchers/${id}/logs/${res.deploy_log_id}`);
 			if (res.log_url && /^https?:\/\//i.test(res.log_url)) {
 				window.location.href = res.log_url;
@@ -328,7 +345,7 @@
 			action: async () => {
 				try {
 					await api.deleteWatcherVersion(id, version);
-					versions = await api.watcherVersions(id).catch(() => []);
+					versions = await api.watcherVersions(id);
 				} catch (e) {
 					error = e instanceof Error ? e.message : `Delete ${version} failed`;
 				}
@@ -360,9 +377,9 @@
 		try {
 			const res = await api.resumeWatcherWebhook(id, replaySuppressed);
 			triggerMsg = res.message;
-			watcher = await api.getWatcher(id);
-			await loadWebhookDeliveries();
+			scheduleRefresh();
 		} catch (e) {
+			if (replaySuppressed) throw e;
 			error = e instanceof Error ? e.message : 'Failed to resume webhook delivery';
 		}
 	}
@@ -380,15 +397,12 @@
 	}
 
 	async function approveRelease(version?: string) {
-		try {
-			const target = version || watcher?.pending_version;
-			if (!target) return;
-			await api.approveRelease(id, target);
-			triggerMsg = 'Release approved! Deploying...';
-			watcher = await api.getWatcher(id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to approve release';
-		}
+		// The candidate editor owns approval errors and keeps its review state.
+		const target = version || watcher?.pending_version;
+		if (!target) return;
+		await api.approveRelease(id, target);
+		triggerMsg = 'Release approved! Deploying...';
+		scheduleRefresh();
 	}
 
 	async function discardRelease() {
@@ -418,79 +432,87 @@
 </script>
 
 <div class="space-y-6">
-	<!-- Header -->
-	<div class="flex items-center gap-4">
-		<a href={resolve('/watchers')}>
-			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
-				<ArrowLeft class="h-4 w-4" />
-			</Button.Root>
-		</a>
-		<div class="flex-1">
-			<h1 class="text-2xl font-bold tracking-tight">{watcher?.name ?? 'Loading...'}</h1>
-			{#if watcher}
-				<p class="font-mono text-sm text-muted-foreground">{watcher.service_name}</p>
-			{/if}
+	<header class="page-header">
+		<div class="page-identity">
+			<Button.Root
+				href={resolve('/watchers')}
+				variant="ghost"
+				size="icon"
+				aria-label="Back to watchers"><ArrowLeft /></Button.Root
+			>
+			<div class="min-w-0">
+				<h1 class="text-2xl font-semibold tracking-tight">{watcher?.name || 'Watcher'}</h1>
+				{#if watcher && watcher.service_name !== watcher.name}<p
+						class="text-sm text-muted-foreground"
+					>
+						{watcher.service_name}
+					</p>{/if}
+			</div>
+			{#if watcher}<span
+					class="shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium capitalize {statusColor(
+						watcher.status
+					)}">{watcher.status.replaceAll('_', ' ')}</span
+				>{/if}
 		</div>
 		{#if watcher}
-			<span
-				class="inline-flex items-center rounded-full border px-3 py-1 text-sm font-medium capitalize {statusColor(
-					watcher.status
-				)}"
-			>
-				{watcher.status}
-			</span>
-			<a href={resolve(`/watchers/${id}/edit`)}>
-				<Button.Root variant="outline" size="sm">
-					<Pencil class="mr-2 h-4 w-4" /> Edit Settings
-				</Button.Root>
-			</a>
-
-			{#if watcher.paused}
-				<Button.Root variant="outline" size="sm" onclick={togglePause}>
-					<Play class="mr-2 h-4 w-4" /> Resume
-				</Button.Root>
-			{:else}
-				<Button.Root variant="outline" size="sm" onclick={togglePause}>
-					<Pause class="mr-2 h-4 w-4" /> Pause
-				</Button.Root>
-			{/if}
-
-			{#if watcher.intercept_next_release}
+			<div class="page-actions">
 				<Button.Root
 					variant="outline"
 					size="sm"
-					class="border-orange-500/30 text-orange-500"
-					onclick={toggleIntercept}
+					disabled={actionBusy}
+					loading={pendingAction === 'pause'}
+					onclick={() => runPending('pause', togglePause)}
+					>{#if watcher.paused}<Play /> Resume{:else}<Pause /> Pause{/if}</Button.Root
 				>
-					Intercept Next (On)
-				</Button.Root>
-			{:else}
-				<Button.Root variant="outline" size="sm" onclick={toggleIntercept}>
-					Intercept Next
-				</Button.Root>
-			{/if}
-			<Button.Root variant="outline" size="sm" onclick={triggerCheck} disabled={watcher.paused}>
-				<RefreshCw class="mr-2 h-4 w-4" /> Poll Now
-			</Button.Root>
-			<Button.Root
-				variant="outline"
-				size="sm"
-				class="border-orange-500/30 text-orange-500 hover:bg-orange-500/10 hover:text-orange-600"
-				onclick={triggerRedeploy}
-			>
-				<RotateCcw class="mr-2 h-4 w-4" /> Redeploy
-			</Button.Root>
+				<Button.Root
+					variant="outline"
+					size="sm"
+					disabled={actionBusy || watcher.paused}
+					loading={pendingAction === 'poll'}
+					onclick={() => runPending('poll', triggerCheck)}><RefreshCw /> Poll now</Button.Root
+				>
+				<Button.Root
+					href={resolve(`/watchers/${id}/edit`)}
+					variant="outline"
+					size="sm"
+					disabled={actionBusy}><Pencil /> Edit</Button.Root
+				>
+				<details class="relative">
+					<summary
+						class="cursor-pointer list-none rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted"
+						>More actions</summary
+					>
+					<div
+						class="absolute right-0 z-20 mt-2 grid w-56 max-w-[calc(100vw-2rem)] gap-1 rounded-lg border border-border bg-popover p-2 shadow-xl"
+					>
+						<Button.Root
+							variant="ghost"
+							size="sm"
+							class="justify-start"
+							disabled={actionBusy}
+							loading={pendingAction === 'intercept'}
+							onclick={() => runPending('intercept', toggleIntercept)}
+							><Zap /> Intercept next: {watcher.intercept_next_release ? 'On' : 'Off'}</Button.Root
+						>
+						<Button.Root
+							variant="ghost"
+							size="sm"
+							class="justify-start text-amber-400"
+							disabled={actionBusy || watcher.status === 'pending_approval'}
+							onclick={triggerRedeploy}><RotateCcw /> Redeploy</Button.Root
+						>
+					</div>
+				</details>
+			</div>
 		{/if}
-	</div>
+	</header>
 
-	{#if error}
-		<div
-			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
-		>
-			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
-			<span>{error}</span>
-		</div>
-	{/if}
+	{#if !showConfirmDialog && !showRollbackDialog}<RequestError message={error} />{/if}
+	<RequestError
+		message={dataError}
+		title="Details could not be refreshed"
+		onRetry={refreshDetails}
+	/>
 
 	{#if triggerMsg}
 		<div
@@ -504,57 +526,33 @@
 	{#if loading}
 		<RequestLoading label="Loading watcher details…" />
 	{:else if watcher}
-		{#if watcher.status === 'pending_approval'}
-			<div
-				class="mb-4 flex flex-col gap-3 rounded-lg border border-purple-500/30 bg-purple-500/10 p-4 text-sm text-purple-400 sm:flex-row sm:items-center sm:justify-between"
-			>
-				<div class="flex items-center gap-2">
-					<Zap class="h-4 w-4 shrink-0 text-purple-400" />
-					<span>
-						<strong>Release Candidate Intercepted!</strong>
-						Version <code>{watcher.pending_version}</code> is pending manual approval. You can preview,
-						edit, and verify its configuration before deploying.
-					</span>
+		{#if watcher.status === 'pending_approval' && activeTab !== 'candidates'}
+			<div class="section-toolbar rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+				<div class="min-w-0">
+					<p class="text-sm font-medium">
+						Release <span class="font-mono">{watcher.pending_version}</span> awaits approval
+					</p>
+					<p class="mt-1 text-xs text-muted-foreground">
+						Review its configuration before deploying.
+					</p>
 				</div>
-				<div class="flex flex-wrap items-center gap-2">
-					<Button.Root
-						variant="outline"
-						size="sm"
-						class="border-purple-500/40 text-purple-300 hover:bg-purple-500/20"
-						onclick={() => {
-							activeTab = 'candidates';
-							goto(resolve(`/watchers/[id]?tab=candidates`, { id: String(id) }), {
-								replaceState: true,
-								keepFocus: true,
-								noScroll: true
-							}).catch(() => {});
-						}}
-					>
-						Review in Candidates Tab
-					</Button.Root>
-					<Button.Root
-						variant="outline"
-						size="sm"
-						class="border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
-						onclick={discardRelease}
-					>
-						Discard
-					</Button.Root>
-					<Button.Root
-						variant="default"
-						size="sm"
-						class="bg-purple-600 text-white hover:bg-purple-700"
-						onclick={() => approveRelease()}
-					>
-						Approve & Deploy
-					</Button.Root>
-				</div>
+				<Button.Root
+					size="sm"
+					disabled={actionBusy}
+					onclick={() => {
+						activeTab = 'candidates';
+						return goto(resolve(`/watchers/[id]?tab=candidates`, { id: String(id) }), {
+							replaceState: true,
+							noScroll: true
+						});
+					}}>Review candidate</Button.Root
+				>
 			</div>
 		{/if}
 
 		{#if hasActiveRollbackPin(watcher)}
 			<div
-				class="mb-4 flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500"
+				class="section-toolbar mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500"
 			>
 				<div class="flex items-center gap-2">
 					<AlertCircle class="h-4 w-4" />
@@ -569,7 +567,9 @@
 					variant="outline"
 					size="sm"
 					class="border-amber-500/30 hover:bg-amber-500/20"
-					onclick={resumeAutoDeploy}
+					disabled={actionBusy}
+					loading={pendingAction === 'resume'}
+					onclick={() => runPending('resume', resumeAutoDeploy)}
 				>
 					Resume Updates
 				</Button.Root>
@@ -597,9 +597,9 @@
 						<span class="ml-1.5 flex h-2 w-2 rounded-full bg-purple-500"></span>
 					{/if}
 				</Tabs.Trigger>
-				<Tabs.Trigger value="deploys">Deploy History ({deployTotal})</Tabs.Trigger>
+				<Tabs.Trigger value="deploys">Deploys ({deployTotal})</Tabs.Trigger>
 				<Tabs.Trigger value="versions">Versions ({versions.length})</Tabs.Trigger>
-				<Tabs.Trigger value="polling">Polling History</Tabs.Trigger>
+				<Tabs.Trigger value="polling">Polls</Tabs.Trigger>
 				<Tabs.Trigger value="webhooks">Webhooks ({deliveryTotal})</Tabs.Trigger>
 			</Tabs.List>
 
@@ -618,7 +618,8 @@
 			<Tabs.Content value="candidates" class="mt-4">
 				<CandidateTab
 					{watcher}
-					onApprove={approveRelease}
+					busy={actionBusy}
+					onApprove={(version) => runPending('approve', () => approveRelease(version))}
 					onDiscard={discardRelease}
 					onRefreshWatcher={async () => {
 						watcher = await api.getWatcher(id);
@@ -646,7 +647,12 @@
 			</Tabs.Content>
 
 			<Tabs.Content value="versions" class="mt-4">
-				<VersionsTab {versions} onRollback={openRollbackDialog} onDeleteVersion={deleteVersion} />
+				<VersionsTab
+					busy={actionBusy}
+					{versions}
+					onRollback={openRollbackDialog}
+					onDeleteVersion={deleteVersion}
+				/>
 			</Tabs.Content>
 
 			<Tabs.Content value="polling" class="mt-4">
@@ -684,9 +690,10 @@
 						deliveryPage = 1;
 						await loadWebhookDeliveries();
 					}}
-					onSendTest={sendWebhookTest}
-					onResume={() => resumeWebhook(false)}
-					onResumeReplay={() => resumeWebhook(true)}
+					busy={actionBusy}
+					onSendTest={() => runPending('webhook-test', sendWebhookTest)}
+					onResume={() => runPending('webhook-resume', () => resumeWebhook(false))}
+					onResumeReplay={() => runPending('webhook-replay', () => resumeWebhook(true))}
 				/>
 			</Tabs.Content>
 		</Tabs.Root>
@@ -695,7 +702,9 @@
 
 <!-- Rollback Dialog -->
 <RollbackDialog
-	onRollback={rollback}
+	errorMessage={error}
+	onRollback={(version, report) => runPending('rollback', () => rollback(version, report))}
+	pending={pendingAction === 'rollback'}
 	bind:open={showRollbackDialog}
 	{rollbackTargetVersion}
 	bind:rollbackReportGitHub
@@ -703,6 +712,7 @@
 
 <!-- Confirm Action Dialog -->
 <ConfirmationDialog
+	errorMessage={error}
 	bind:open={showConfirmDialog}
 	bind:confirmTitle
 	bind:confirmDescription

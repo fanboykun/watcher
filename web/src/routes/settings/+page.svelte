@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import {
@@ -193,7 +194,10 @@
 		}
 	}
 
+	let isRestarting = $state(false);
 	async function restartWatcherService() {
+		if (isRestarting) return;
+		isRestarting = true;
 		error = '';
 		success = '';
 		try {
@@ -202,6 +206,8 @@
 			showRestartDialog = false;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to restart watcher service';
+		} finally {
+			isRestarting = false;
 		}
 	}
 
@@ -275,11 +281,7 @@
 		</div>
 	{/if}
 
-	{#if error}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			{error}
-		</div>
-	{/if}
+	{#if !showRestartDialog && !showUpdateDialog}<RequestError message={error} />{/if}
 
 	<Card.Root class="bg-card">
 		<Card.Header>
@@ -448,7 +450,10 @@
 				</div>
 
 				<div class="flex gap-2">
-					<Button.Root onclick={saveAgentConfig} disabled={isSavingConfig}>
+					<Button.Root
+						onclick={saveAgentConfig}
+						disabled={isSavingConfig || isRestarting || isUpdating}
+					>
 						{isSavingConfig ? 'Saving...' : 'Save Deploy Agent Config'}
 					</Button.Root>
 					<Button.Root variant="outline" onclick={() => (showRestartDialog = true)}>
@@ -606,7 +611,10 @@
 				</div>
 
 				<div class="flex gap-2">
-					<Button.Root onclick={saveAgentConfig} disabled={isSavingConfig}>
+					<Button.Root
+						onclick={saveAgentConfig}
+						disabled={isSavingConfig || isRestarting || isUpdating}
+					>
 						{isSavingConfig ? 'Saving...' : 'Save Webhook Defaults'}
 					</Button.Root>
 				</div>
@@ -736,31 +744,53 @@
 	</Card.Root>
 </div>
 
-<Dialog.Root bind:open={showRestartDialog}>
-	<Dialog.Content class="sm:max-w-115">
+<Dialog.Root
+	bind:open={showRestartDialog}
+	onOpenChange={(open) => {
+		if (isRestarting && !open) showRestartDialog = true;
+	}}
+>
+	<Dialog.Content class="sm:max-w-115" showCloseButton={!isRestarting}>
 		<Dialog.Header>
 			<Dialog.Title>Restart Watcher Service</Dialog.Title>
 			<Dialog.Description>
 				Restart watcher service now? This may temporarily disconnect the dashboard.
 			</Dialog.Description>
 		</Dialog.Header>
+		{#if error}<p role="alert" class="text-sm text-red-400">{error}</p>{/if}
 		<Dialog.Footer>
-			<Button.Root variant="outline" type="button" onclick={() => (showRestartDialog = false)}>
+			<Button.Root
+				variant="outline"
+				type="button"
+				disabled={isRestarting}
+				onclick={() => (showRestartDialog = false)}
+			>
 				Cancel
 			</Button.Root>
-			<Button.Root type="button" onclick={restartWatcherService}>Restart</Button.Root>
+			<Button.Root
+				type="button"
+				disabled={isRestarting}
+				loading={isRestarting}
+				onclick={restartWatcherService}>Restart</Button.Root
+			>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
 
-<Dialog.Root bind:open={showUpdateDialog}>
-	<Dialog.Content class="sm:max-w-115">
+<Dialog.Root
+	bind:open={showUpdateDialog}
+	onOpenChange={(open) => {
+		if (isUpdating && !open) showUpdateDialog = true;
+	}}
+>
+	<Dialog.Content class="sm:max-w-115" showCloseButton={!isUpdating}>
 		<Dialog.Header>
 			<Dialog.Title>Update Watcher</Dialog.Title>
 			<Dialog.Description>
 				Update Watcher now? The service will be restarted automatically.
 			</Dialog.Description>
 		</Dialog.Header>
+		{#if error}<p role="alert" class="text-sm text-red-400">{error}</p>{/if}
 		<Dialog.Footer>
 			<Button.Root
 				variant="outline"

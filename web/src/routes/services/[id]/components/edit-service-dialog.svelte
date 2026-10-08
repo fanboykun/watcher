@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import {
 		isIISService,
 		iisAppKindLabel,
@@ -136,11 +137,7 @@
 				<Dialog.Description>Update how this watcher manages this service</Dialog.Description>
 			</Dialog.Header>
 			<div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-				{#if error}
-					<div class="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
-						{error}
-					</div>
-				{/if}
+				<RequestError message={error} />
 
 				<div class="grid gap-4 md:grid-cols-2">
 					<div class="space-y-2">

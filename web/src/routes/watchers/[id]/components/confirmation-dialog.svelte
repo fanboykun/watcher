@@ -6,6 +6,7 @@
 
 	interface Props {
 		open: boolean;
+		errorMessage?: string;
 		confirmTitle: string;
 		confirmDescription: string;
 		confirming: boolean;
@@ -16,6 +17,7 @@
 
 	let {
 		open = $bindable(),
+		errorMessage = '',
 		confirmTitle = $bindable(),
 		confirmDescription = $bindable(),
 		confirming = $bindable(),
@@ -25,12 +27,18 @@
 	}: Props = $props();
 </script>
 
-<Dialog.Root bind:open>
-	<Dialog.Content class="sm:max-w-115">
+<Dialog.Root
+	bind:open
+	onOpenChange={(value) => {
+		if (confirming && !value) open = true;
+	}}
+>
+	<Dialog.Content class="sm:max-w-115" showCloseButton={!confirming}>
 		<Dialog.Header>
 			<Dialog.Title>{confirmTitle}</Dialog.Title>
 			<Dialog.Description>{confirmDescription}</Dialog.Description>
 		</Dialog.Header>
+		{#if errorMessage}<p role="alert" class="text-sm text-red-400">{errorMessage}</p>{/if}
 		<Dialog.Footer>
 			<Button.Root
 				variant="outline"
@@ -43,6 +51,7 @@
 			<Button.Root
 				type="button"
 				class={confirmActionClass}
+				loading={confirming}
 				onclick={onConfirm}
 				disabled={confirming}
 			>

@@ -1,5 +1,7 @@
-<!-- eslint-disable svelte/no-navigation-without-resolve --><!-- Callers supply resolved app paths or external URLs. -->
+<!-- eslint-disable svelte/no-navigation-without-resolve -->
+<!-- Callers supply resolved app paths or external URLs. -->
 <script lang="ts" module>
+	/* eslint-disable svelte/no-navigation-without-resolve -- callers provide resolved paths or external URLs */
 	import { cn, type WithElementRef } from '$lib/utils.js';
 	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from 'svelte/elements';
 	import { type VariantProps, tv } from 'tailwind-variants';
@@ -46,6 +48,7 @@
 		WithElementRef<HTMLAnchorAttributes> & {
 			variant?: ButtonVariant;
 			size?: ButtonSize;
+			loading?: boolean;
 		};
 </script>
 
@@ -58,33 +61,64 @@
 		href = undefined,
 		type = 'button',
 		disabled,
+		loading = false,
+		onclick,
 		children,
 		...restProps
 	}: ButtonProps = $props();
+	let pending = $state(false);
+	const busy = $derived(loading || pending);
+	const unavailable = $derived(disabled || busy);
+
+	async function handleClick(event: MouseEvent) {
+		if (unavailable) {
+			event.preventDefault();
+			return;
+		}
+		if (!onclick) return;
+		pending = true;
+		try {
+			await onclick(event as never);
+		} finally {
+			pending = false;
+		}
+	}
 </script>
 
 {#if href}
 	<a
 		bind:this={ref}
 		data-slot="button"
-		class={cn(buttonVariants({ variant, size }), className)}
-		href={disabled ? undefined : href}
-		aria-disabled={disabled}
-		role={disabled ? 'link' : undefined}
-		tabindex={disabled ? -1 : undefined}
+		class={cn(buttonVariants({ variant, size }), busy && '[&>svg]:hidden', className)}
+		href={unavailable ? undefined : href}
+		aria-disabled={unavailable}
+		role={unavailable ? 'link' : undefined}
+		tabindex={unavailable ? -1 : undefined}
 		{...restProps}
+		onclick={handleClick}
+		aria-busy={busy}
 	>
+		{#if busy}<span
+				aria-hidden="true"
+				class="size-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
+			></span>{/if}
 		{@render children?.()}
 	</a>
 {:else}
 	<button
 		bind:this={ref}
 		data-slot="button"
-		class={cn(buttonVariants({ variant, size }), className)}
+		class={cn(buttonVariants({ variant, size }), busy && '[&>svg]:hidden', className)}
 		{type}
-		{disabled}
+		disabled={unavailable}
 		{...restProps}
+		onclick={handleClick}
+		aria-busy={busy}
 	>
+		{#if busy}<span
+				aria-hidden="true"
+				class="size-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
+			></span>{/if}
 		{@render children?.()}
 	</button>
 {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import {
 		api,
 		type Watcher,
@@ -47,11 +48,13 @@
 
 	let {
 		watcher,
+		busy = false,
 		onApprove,
 		onDiscard,
 		onRefreshWatcher
 	}: {
 		watcher: Watcher;
+		busy?: boolean;
 		onApprove?: (version: string) => Promise<void>;
 		onDiscard?: () => Promise<void>;
 		onRefreshWatcher?: () => Promise<void>;
@@ -98,7 +101,8 @@
 				viewMode: 'edit'
 			}));
 		} catch (e) {
-			if (generation === loadGeneration) error = e instanceof Error ? e.message : 'Failed to load candidate configuration';
+			if (generation === loadGeneration)
+				error = e instanceof Error ? e.message : 'Failed to load candidate configuration';
 		} finally {
 			if (generation === loadGeneration) loading = false;
 		}
@@ -177,7 +181,11 @@
 
 	async function handleApprove() {
 		if (!onApprove) return;
-		if (loading || loadedTarget !== watcher.pending_version || effectiveTarget !== watcher.pending_version) {
+		if (
+			loading ||
+			loadedTarget !== watcher.pending_version ||
+			effectiveTarget !== watcher.pending_version
+		) {
 			error = 'Select and load the pending release before approving';
 			return;
 		}
@@ -220,6 +228,7 @@
 	// Compute key-value differences between active and candidate env
 	function computeEnvDiff(active: string, candidate: string): DiffLine[] {
 		const parseEnvLines = (text: string) => {
+			// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local parsing result, not component state
 			const map = new Map<string, string>();
 			const order: string[] = [];
 			const lines = text.split('\n');
@@ -286,16 +295,9 @@
 	}
 </script>
 
-<div class="space-y-6">
+<fieldset disabled={busy || saving || approving || discarding} class="min-w-0 space-y-4">
 	<!-- Top Alert / Callouts -->
-	{#if error}
-		<div
-			class="flex items-center rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
-		>
-			<AlertCircle class="mr-2 h-4 w-4 shrink-0" />
-			<span>{error}</span>
-		</div>
-	{/if}
+	<RequestError message={error} />
 
 	{#if saveSuccess}
 		<div
@@ -306,84 +308,42 @@
 		</div>
 	{/if}
 
-	<!-- Release Candidate Staging Hub Banner -->
 	{#if watcher.status === 'pending_approval'}
-		<div
-			class="rounded-xl border border-purple-500/40 bg-purple-950/20 p-5 shadow-sm dark:bg-purple-950/30"
-		>
-			<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-				<div class="space-y-1">
-					<div class="flex items-center gap-2">
-						<span class="relative flex h-3 w-3">
-							<span
-								class="absolute inline-flex h-full w-full animate-ping rounded-full bg-purple-400 opacity-75"
-							></span>
-							<span class="relative inline-flex h-3 w-3 rounded-full bg-purple-500"></span>
-						</span>
-						<h3 class="text-base font-semibold text-purple-200">
-							Release Candidate Pending Approval
-						</h3>
-						<span
-							class="rounded bg-purple-500/20 px-2 py-0.5 font-mono text-xs font-semibold text-purple-300"
-						>
-							{watcher.pending_version}
-						</span>
-					</div>
-					<p class="text-xs text-purple-300/80">
-						This release was held to let you prepare configuration before deploying. Edit your
-						service variables below, then click "Approve & Deploy" when ready.
-					</p>
-				</div>
-
-				<div class="flex flex-wrap items-center gap-2">
-					<Button.Root
-						variant="outline"
-						size="sm"
-						class="border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
-						onclick={handleDiscard}
-						disabled={discarding || approving}
-					>
-						<Trash2 class="mr-1.5 h-3.5 w-3.5" />
-						{discarding ? 'Discarding...' : 'Discard Release'}
-					</Button.Root>
-					<Button.Root
-						variant="default"
-						size="sm"
-						class="bg-purple-600 font-medium text-white hover:bg-purple-700"
-						onclick={handleApprove}
-						disabled={approving || discarding || saving || loading || effectiveTarget !== watcher.pending_version || loadedTarget !== watcher.pending_version}
-					>
-						{#if approving}
-							<RefreshCw class="mr-1.5 h-3.5 w-3.5 animate-spin" /> Deploying...
-						{:else}
-							<Zap class="mr-1.5 h-3.5 w-3.5" /> Approve & Deploy Now
-						{/if}
-					</Button.Root>
-				</div>
+		<div class="section-toolbar rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+			<div class="min-w-0">
+				<p class="text-sm font-medium">
+					Review <span class="font-mono">{watcher.pending_version}</span>
+				</p>
+				<p class="mt-1 text-xs text-muted-foreground">
+					Approval saves your edits and restarts the services.
+				</p>
+			</div>
+			<div class="page-actions">
+				<Button.Root
+					variant="outline"
+					size="sm"
+					disabled={busy || discarding || approving || saving}
+					onclick={handleDiscard}>Discard</Button.Root
+				>
+				<Button.Root
+					size="sm"
+					disabled={busy ||
+						approving ||
+						discarding ||
+						saving ||
+						loading ||
+						effectiveTarget !== watcher.pending_version ||
+						loadedTarget !== watcher.pending_version}
+					loading={approving}
+					onclick={handleApprove}>Approve & deploy</Button.Root
+				>
 			</div>
 		</div>
 	{:else}
-		<div
-			class="flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-4 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between"
-		>
-			<div class="flex items-center gap-2">
-				<Sparkles class="h-4 w-4 shrink-0 text-amber-400" />
-				<div>
-					<span class="font-medium text-foreground">Release First, Deploy Later:</span>
-					Prepare upcoming environment changes across your services without touching active production.
-					{#if !watcher.auto_deploy}
-						<span class="font-medium text-emerald-400">
-							(Auto-Deploy is OFF — all new releases will hold here for review).
-						</span>
-					{:else}
-						<span>
-							(Auto-Deploy is ON — enable "Intercept Next" in header if you want the next release to
-							hold here).
-						</span>
-					{/if}
-				</div>
-			</div>
-		</div>
+		<p class="text-sm text-muted-foreground">
+			Stage configuration for the next deployment.{#if watcher.auto_deploy && !watcher.intercept_next_release}
+				Enable Intercept next to review before deploying.{/if}
+		</p>
 	{/if}
 
 	<!-- Version Selector and Actions Bar -->
@@ -391,9 +351,9 @@
 		<Card.Header class="pb-3">
 			<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<div>
-					<Card.Title class="text-base font-semibold">Target Version Staging</Card.Title>
+					<Card.Title class="text-base font-semibold">Candidate configuration</Card.Title>
 					<Card.Description class="text-xs">
-						Select the version tag you are staging configurations for.
+						Choose a release or the next deployment.
 					</Card.Description>
 				</div>
 
@@ -406,12 +366,18 @@
 						size="sm"
 						class="h-8"
 						onclick={saveAllCandidates}
-						disabled={saving || loading || !effectiveTarget}
+						disabled={busy ||
+							saving ||
+							approving ||
+							discarding ||
+							loading ||
+							!effectiveTarget ||
+							loadedTarget !== effectiveTarget}
 					>
 						{#if saving}
 							<RefreshCw class="mr-1.5 h-3.5 w-3.5 animate-spin" /> Saving...
 						{:else}
-							<Save class="mr-1.5 h-3.5 w-3.5" /> Save Candidate Changes
+							<Save class="mr-1.5 h-3.5 w-3.5" /> Save candidate
 						{/if}
 					</Button.Root>
 				</div>
@@ -448,7 +414,7 @@
 				>
 					<Layers class="h-3 w-3" />
 					next
-					<span class="text-[10px] text-muted-foreground/80">(Default upcoming)</span>
+					<span class="text-[10px] text-muted-foreground/80">release</span>
 				</button>
 
 				<button
@@ -461,7 +427,7 @@
 					onclick={() => selectTarget(customTarget || 'custom', true)}
 				>
 					<Pencil class="h-3 w-3" />
-					Custom Tag...
+					Specific version
 				</button>
 
 				{#if isCustom}
@@ -507,7 +473,7 @@
 					<Card.Header class="pb-3">
 						<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 							<div class="space-y-0.5">
-								<div class="flex items-center gap-2">
+								<div class="flex flex-wrap items-center gap-2">
 									<Card.Title class="text-base font-semibold">{svc.serviceName}</Card.Title>
 									<span
 										class="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground uppercase"
@@ -518,7 +484,7 @@
 										<span
 											class="rounded bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400"
 										>
-											Modified from active
+											Changed
 										</span>
 									{:else}
 										<span class="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
@@ -527,7 +493,7 @@
 									{/if}
 								</div>
 								<Card.Description class="text-xs">
-									Target version: <span class="font-mono font-medium text-foreground"
+									Target: <span class="font-mono font-medium text-foreground"
 										>{effectiveTarget}</span
 									>
 								</Card.Description>
@@ -603,7 +569,7 @@
 							<div class="space-y-1">
 								<Textarea
 									bind:value={svc.candidateEnv}
-									class="min-h-[240px] font-mono text-xs leading-relaxed text-blue-300"
+									class="min-h-[180px] font-mono text-xs leading-relaxed text-blue-300"
 									placeholder="KEY=VALUE"
 								/>
 							</div>
@@ -622,7 +588,7 @@
 									<Textarea
 										value={svc.activeEnv}
 										readonly
-										class="min-h-[260px] bg-muted/20 font-mono text-xs text-muted-foreground focus-visible:ring-0"
+										class="min-h-[200px] bg-muted/20 font-mono text-xs text-muted-foreground focus-visible:ring-0"
 										placeholder="Empty active environment"
 									/>
 								</div>
@@ -638,7 +604,7 @@
 									</div>
 									<Textarea
 										bind:value={svc.candidateEnv}
-										class="min-h-[260px] font-mono text-xs leading-relaxed text-blue-300"
+										class="min-h-[200px] font-mono text-xs leading-relaxed text-blue-300"
 										placeholder="KEY=VALUE"
 									/>
 								</div>
@@ -656,7 +622,7 @@
 										No differences between active environment and candidate configuration.
 									</p>
 								{:else}
-									<div class="max-h-[360px] space-y-1 overflow-y-auto">
+									<div class="max-h-[360px] space-y-1 overflow-auto break-all">
 										{#each diffLines as line (line.key)}
 											{#if line.status === 'added'}
 												<div
@@ -676,7 +642,7 @@
 												<div
 													class="flex flex-col gap-0.5 rounded bg-amber-500/15 px-2 py-1 text-amber-300"
 												>
-													<div class="flex items-center gap-2">
+													<div class="flex flex-wrap items-center gap-2">
 														<span class="font-bold text-amber-400 select-none">~</span>
 														<span class="font-semibold">{line.key}</span>
 													</div>
@@ -702,4 +668,4 @@
 			{/each}
 		</div>
 	{/if}
-</div>
+</fieldset>

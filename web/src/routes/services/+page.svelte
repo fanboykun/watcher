@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import {
 		api,
@@ -7,6 +8,7 @@
 		iisAppKindLabel,
 		type ServiceWithWatcher
 	} from '$lib/api';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
@@ -19,6 +21,10 @@
 	let loading = $state(true);
 	let actionMsg = $state('');
 	let actionError = $state('');
+	let pendingServiceID = $state<number | null>(null);
+	let serviceConfirmation = $state<{ id: number; name: string; action: 'stop' | 'restart' } | null>(
+		null
+	);
 
 	onMount(load);
 
@@ -34,7 +40,9 @@
 		}
 	}
 
-	async function serviceAction(fn: () => Promise<{ message: string }>) {
+	async function serviceAction(id: number, fn: () => Promise<{ message: string }>) {
+		if (pendingServiceID !== null) return;
+		pendingServiceID = id;
 		actionError = '';
 		try {
 			const res = await fn();
@@ -42,7 +50,8 @@
 			setTimeout(() => (actionMsg = ''), 3000);
 		} catch (e) {
 			actionError = e instanceof Error ? e.message : 'Action failed';
-			setTimeout(() => (actionError = ''), 5000);
+		} finally {
+			pendingServiceID = null;
 		}
 	}
 </script>
@@ -53,12 +62,7 @@
 		<p class="text-sm text-muted-foreground">All managed services across NSSM and IIS watchers</p>
 	</div>
 
-	{#if error}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			<AlertCircle class="mr-2 inline h-4 w-4" />
-			{error}
-		</div>
-	{/if}
+	<RequestError message={error} onRetry={load} />
 
 	{#if actionMsg}
 		<div class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400">
@@ -66,12 +70,7 @@
 		</div>
 	{/if}
 
-	{#if actionError}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			<AlertCircle class="mr-2 inline h-4 w-4" />
-			{actionError}
-		</div>
-	{/if}
+	<RequestError message={actionError} />
 
 	{#if loading}
 		<RequestLoading label="Loading services…" />
@@ -123,8 +122,9 @@
 										<Button.Root
 											variant="ghost"
 											size="icon"
+											disabled={pendingServiceID !== null}
 											class="h-8 w-8 text-emerald-400"
-											onclick={() => serviceAction(() => api.startService(svc.id))}
+											onclick={() => serviceAction(svc.id, () => api.startService(svc.id))}
 											title="Start"
 										>
 											<Play class="h-4 w-4" />
@@ -132,8 +132,16 @@
 										<Button.Root
 											variant="ghost"
 											size="icon"
+											disabled={pendingServiceID !== null}
 											class="h-8 w-8 text-red-400"
-											onclick={() => serviceAction(() => api.stopService(svc.id))}
+											onclick={() => {
+												actionError = '';
+												serviceConfirmation = {
+													id: svc.id,
+													name: svc.windows_service_name,
+													action: 'stop'
+												};
+											}}
 											title="Stop"
 										>
 											<Square class="h-4 w-4" />
@@ -141,8 +149,16 @@
 										<Button.Root
 											variant="ghost"
 											size="icon"
+											disabled={pendingServiceID !== null}
 											class="h-8 w-8 text-amber-400"
-											onclick={() => serviceAction(() => api.restartService(svc.id))}
+											onclick={() => {
+												actionError = '';
+												serviceConfirmation = {
+													id: svc.id,
+													name: svc.windows_service_name,
+													action: 'restart'
+												};
+											}}
 											title="Restart"
 										>
 											<RefreshCw class="h-4 w-4" />
@@ -151,9 +167,10 @@
 									<Button.Root
 										variant="ghost"
 										size="icon"
+										disabled={pendingServiceID !== null}
 										class="h-8 w-8 text-blue-400"
 										onclick={() =>
-											serviceAction(() =>
+											serviceAction(svc.id, () =>
 												api
 													.serviceHealth(svc.id)
 													.then((h) => ({ message: `${svc.windows_service_name}: ${h.status}` }))
@@ -179,3 +196,48 @@
 		</Card.Root>
 	{/if}
 </div>
+
+<Dialog.Root
+	open={serviceConfirmation !== null}
+	onOpenChange={(open) => {
+		if (!open && pendingServiceID === null) serviceConfirmation = null;
+	}}
+>
+	<Dialog.Content showCloseButton={pendingServiceID === null}>
+		<Dialog.Header
+			><Dialog.Title
+				>{serviceConfirmation?.action === 'stop'
+					? 'Stop service?'
+					: 'Restart service?'}</Dialog.Title
+			><Dialog.Description
+				>{serviceConfirmation?.name} will stop serving traffic{serviceConfirmation?.action ===
+				'restart'
+					? ' briefly while it restarts'
+					: ''}.</Dialog.Description
+			></Dialog.Header
+		>
+		{#if actionError}<p role="alert" class="text-sm text-red-400">{actionError}</p>{/if}
+		<Dialog.Footer
+			><Button.Root
+				variant="outline"
+				disabled={pendingServiceID !== null}
+				onclick={() => (serviceConfirmation = null)}>Cancel</Button.Root
+			><Button.Root
+				variant="destructive"
+				loading={pendingServiceID !== null}
+				disabled={pendingServiceID !== null}
+				onclick={async () => {
+					const selected = serviceConfirmation;
+					if (!selected) return;
+					await serviceAction(selected.id, () =>
+						selected.action === 'stop'
+							? api.stopService(selected.id)
+							: api.restartService(selected.id)
+					);
+					if (!actionError) serviceConfirmation = null;
+				}}
+				>{serviceConfirmation?.action === 'stop' ? 'Stop service' : 'Restart service'}</Button.Root
+			></Dialog.Footer
+		>
+	</Dialog.Content>
+</Dialog.Root>
