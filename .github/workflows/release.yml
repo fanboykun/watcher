@@ -304,26 +304,47 @@ jobs:
           EOF
           cat version.json
 
+      # ── Release notes from the tagged commit ────────────────────────────────
+      - name: Prepare release notes
+        env:
+          BUMP_TYPE: ${{ needs.tag.outputs.bump_type }}
+          ZIP_NAME: ${{ steps.zip.outputs.zip_name }}
+          FALLBACK_CHANGELOG: ${{ needs.tag.outputs.changelog }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          # Read the checked-out release tag, preserving Markdown and literal text.
+          description = subprocess.check_output(
+              ["git", "log", "-1", "--format=%b", "HEAD"], text=True
+          ).strip("\r\n")
+          changes = description if description.strip() else os.environ["FALLBACK_CHANGELOG"].strip("\r\n")
+          notes = fr"""## What's changed ({os.environ['BUMP_TYPE']} bump)
+
+          {changes}
+
+          ---
+
+          ## Installation
+
+          1. Download `{os.environ['ZIP_NAME']}`
+          2. Extract to `D:\apps\watcher\` on your Windows server
+          3. Double-click `install.bat` to launch the interactive CLI installer
+
+          See `INSTALL.md` inside the zip for the full guide.
+          """
+          Path("release-notes.md").write_text(notes, encoding="utf-8")
+          PY
+
       # ── Create GitHub Release ───────────────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag.outputs.new_tag }}
           name: "Watcher ${{ needs.tag.outputs.new_tag }}"
-          body: |
-            ## What's changed (${{ needs.tag.outputs.bump_type }} bump)
-
-            ${{ needs.tag.outputs.changelog }}
-
-            ---
-
-            ## Installation
-
-            1. Download `${{ steps.zip.outputs.zip_name }}`
-            2. Extract to `D:\apps\watcher\` on your Windows server
-            3. Double-click `install.bat` to launch the interactive CLI installer
-
-            See `INSTALL.md` inside the zip for the full guide.
+          body_path: release-notes.md
           files: |
             ${{ steps.zip.outputs.zip_name }}
             ${{ steps.zip.outputs.latest_zip_name }}
