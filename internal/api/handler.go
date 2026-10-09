@@ -13,6 +13,7 @@ import (
 )
 
 type Handler struct {
+	catalogFactory func(string, *agent.Logger) catalogClient
 	polling        *agent.PollingMonitor
 	db             *gorm.DB
 	nssmPath       string

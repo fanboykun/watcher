@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"errors"
 	"time"
 
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/fanboykun/watcher/internal/webhook"
 	"gorm.io/gorm"
 )
+
+var errDeploymentPolicyChanged = errors.New("deployment policy changed before activation")
 
 type DeployStatus string
 
@@ -21,6 +24,7 @@ const (
 // StateManager manages deploy state in the database.
 // Replaces the old file-based version.txt + state.json approach.
 type StateManager struct {
+	catalogID         uint
 	db                *gorm.DB
 	watcherID         uint
 	log               *Logger
@@ -70,14 +74,20 @@ func (s *StateManager) SetChecked() error {
 func (s *StateManager) SetDeploying(version, fromVersion string) (uint, error) {
 	now := time.Now().UTC()
 	// Update watcher state
-	err := s.db.Model(&database.Watcher{}).Where("id = ?", s.watcherID).
-		UpdateColumns(map[string]any{
-			"status":       string(StatusDeploying),
-			"last_checked": &now,
-			"last_error":   "",
-		}).Error
-	if err != nil {
-		return 0, err
+	query := s.db.Model(&database.Watcher{}).Where("id = ? AND pending_catalog_id = ?", s.watcherID, s.catalogID)
+	if s.catalogID != 0 {
+		query = query.Where("approved_version = ? AND pending_version = ?", version, version)
+	}
+	result := query.UpdateColumns(map[string]any{
+		"status":       string(StatusDeploying),
+		"last_checked": &now,
+		"last_error":   "",
+	})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return 0, errDeploymentPolicyChanged
 	}
 
 	// Reuse an existing open deploy log if present (e.g. manual redeploy queued from API),
@@ -91,7 +101,7 @@ func (s *StateManager) SetDeploying(version, fromVersion string) (uint, error) {
 			"started_at":   &now,
 			"error":        "",
 			"kind":         "deploy",
-			"reason":       "manual_redeploy",
+			"reason":       dlog.Reason,
 		}).Error; err != nil {
 			return 0, err
 		}
@@ -138,6 +148,7 @@ func (s *StateManager) SetHealthy(version string) error {
 			"last_error":             "",
 			"intercept_next_release": false,
 			"pending_version":        "",
+			"pending_catalog_id":     0,
 			"approved_version":       "",
 		}).Error
 	if err != nil {

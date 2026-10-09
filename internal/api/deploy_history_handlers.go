@@ -10,11 +10,17 @@ import (
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (h *Handler) RedeployWatcher(c *gin.Context) {
 	watcher, err := h.findWatcher(c)
 	if err != nil {
+		return
+	}
+
+	if watcher.PendingCatalogID != 0 {
+		catalogError(c, errCatalogConflict)
 		return
 	}
 
@@ -30,15 +36,6 @@ func (h *Handler) RedeployWatcher(c *gin.Context) {
 			"deploy_log_id": active.ID,
 			"log_url":       buildWatcherLogURL(apiBaseURL, watcher.ID, active.ID),
 		})
-		return
-	}
-
-	// Clear current_version and last_error to force the agent to see a mismatch
-	if err := h.db.Model(watcher).Select("current_version", "last_error").Updates(map[string]interface{}{
-		"current_version": "",
-		"last_error":      "",
-	}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
 
@@ -58,10 +55,28 @@ func (h *Handler) RedeployWatcher(c *gin.Context) {
 		StartedAt:   &now,
 		Logs:        "redeploy: queued manual redeploy request",
 	}
-	if err := h.db.Create(&dlog).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		var live database.Watcher
+		if err := tx.First(&live, watcher.ID).Error; err != nil {
+			return err
+		}
+		var active int64
+		if err := tx.Model(&database.DeployLog{}).Where("watcher_id = ? AND completed_at IS NULL", watcher.ID).Count(&active).Error; err != nil {
+			return err
+		}
+		if live.PendingCatalogID != 0 || active != 0 || live.Status == "deploying" {
+			return errCatalogConflict
+		}
+		// Reserve the attempt and force the next poll only after all operation guards pass.
+		if err := tx.Model(&live).UpdateColumns(map[string]any{"current_version": "", "last_error": ""}).Error; err != nil {
+			return err
+		}
+		return tx.Create(&dlog).Error
+	}); err != nil {
+		catalogError(c, err)
 		return
 	}
+
 	_ = h.db.Model(&dlog).Update("root_attempt_id", dlog.ID).Error
 	if h.events != nil {
 		h.events.Publish(watcher.ID, agent.WatcherEvent{

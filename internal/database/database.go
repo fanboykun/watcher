@@ -33,6 +33,7 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 	if err := db.AutoMigrate(
 		&AuthCredential{},
 		&Watcher{},
+		&CatalogArtifact{},
 		&Service{},
 		&ServiceConfigRevision{},
 		&ServiceConfigFile{},

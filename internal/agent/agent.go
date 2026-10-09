@@ -52,6 +52,7 @@ func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *Watche
 
 // Run starts the agent supervisor and blocks until its context is cancelled.
 func (a *Agent) Run(ctx context.Context) {
+	a.recoverCatalogDeployments()
 	a.prepareConfigSnapshots()
 	a.syncWatchers(ctx)
 
@@ -77,9 +78,11 @@ func (a *Agent) Run(ctx context.Context) {
 				case h.trigger <- trigger:
 				default:
 					a.log.WithTrace(trigger.Trace).Warn("poll trigger skipped: watcher queue is full", "watcher_id", trigger.WatcherID)
+					a.rejectCatalogTrigger(trigger, "watcher queue is full")
 				}
 			} else {
 				a.log.WithTrace(trigger.Trace).Warn("check trigger for unknown watcher", "watcher_id", trigger.WatcherID)
+				a.rejectCatalogTrigger(trigger, "watcher runtime is unavailable")
 			}
 		}
 	}
@@ -153,21 +156,27 @@ func (a *Agent) runWatcher(ctx context.Context, watcher *database.Watcher, trigg
 		"services", len(watcher.Services),
 	)
 
-	run := func(trace Trace) {
-		if watcher.Paused {
+	run := func(trace Trace, catalogID uint) {
+		if watcher.Paused && catalogID == 0 {
 			return
 		}
 		a.polling.checking(watcher.ID, generation, true)
 		if a.events != nil {
 			a.events.Publish(watcher.ID, WatcherEvent{Type: "poll_started", Data: map[string]any{"poll_id": trace.PollID}})
 		}
-		_ = rw.Run(WithTrace(ctx, trace))
+		if catalogID != 0 {
+			if err := rw.RunCatalog(WithTrace(ctx, trace), catalogID); err != nil {
+				log.WithTrace(trace).Error("catalog deployment failed", "error", err)
+			}
+		} else {
+			_ = rw.Run(WithTrace(ctx, trace))
+		}
 		a.polling.checking(watcher.ID, generation, false)
 		if a.events != nil {
 			a.events.Publish(watcher.ID, WatcherEvent{Type: "poll_completed", Data: map[string]any{"poll_id": trace.PollID}})
 		}
 	}
-	run(NewPollTrace("", "startup"))
+	run(NewPollTrace("", "startup"), 0)
 
 	ticker := newTicker(watcher.CheckIntervalSec)
 	defer ticker.Stop()
@@ -177,10 +186,33 @@ func (a *Agent) runWatcher(ctx context.Context, watcher *database.Watcher, trigg
 			log.Info("watcher stopping")
 			return
 		case <-ticker.C:
-			run(NewPollTrace("", "scheduled"))
+			run(NewPollTrace("", "scheduled"), 0)
 		case request := <-trigger:
 			log.WithTrace(request.Trace).Info("immediate check triggered via API")
-			run(request.Trace)
+			run(request.Trace, request.CatalogID)
 		}
+	}
+}
+
+// Reject a catalog request explicitly rather than leaving an open queued deployment.
+func (a *Agent) rejectCatalogTrigger(trigger CheckTrigger, reason string) {
+	if trigger.CatalogID == 0 {
+		return
+	}
+	state := NewStateManager(a.db, trigger.WatcherID, a.log.WithTrace(trigger.Trace), a.events, a.webhooks)
+	state.trace = trigger.Trace
+	_ = state.SetFailed(reason)
+	_ = a.db.Model(&database.Watcher{}).Where("id = ? AND pending_catalog_id = ?", trigger.WatcherID, trigger.CatalogID).UpdateColumn("approved_version", "").Error
+}
+
+// A process restart loses queued work; keep the staged candidate and require a retry.
+func (a *Agent) recoverCatalogDeployments() {
+	var watchers []database.Watcher
+	if err := a.db.Where("pending_catalog_id <> 0 AND status IN ?", []string{"approved", "deploying"}).Find(&watchers).Error; err != nil {
+		a.log.Error("catalog recovery failed", "error", err)
+		return
+	}
+	for _, watcher := range watchers {
+		a.rejectCatalogTrigger(CheckTrigger{WatcherID: watcher.ID, CatalogID: watcher.PendingCatalogID}, "catalog deployment interrupted by agent restart; inspect the service and retry")
 	}
 }

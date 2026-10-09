@@ -84,15 +84,17 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 		return fmt.Errorf("create downloads dir: %w", err)
 	}
 
-	zipPath := filepath.Join(downloadsDir, releaseStorageName(targetVersion)+".zip")
-	if err := gh.DownloadArtifact(ctx, svcMeta.ArtifactURL, zipPath, r.wcfg.DownloadRetries); err != nil {
-		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
-		return fmt.Errorf("download artifact: %w", err)
+	zipPath := r.cachedArtifact
+	if zipPath == "" {
+		zipPath = filepath.Join(downloadsDir, releaseStorageName(targetVersion)+".zip")
+		if err := gh.DownloadArtifact(ctx, svcMeta.ArtifactURL, zipPath, r.wcfg.DownloadRetries); err != nil {
+			r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
+			return fmt.Errorf("download artifact: %w", err)
+		}
+		defer os.Remove(zipPath)
+	} else {
+		r.state.AppendDeployLog("artifact: using staged catalog download")
 	}
-	defer func() {
-		r.log.Debug("removing zip", "path", zipPath)
-		os.Remove(zipPath)
-	}()
 
 	originalServices := append([]ServiceConfig(nil), r.wcfg.Services...)
 	candidates, err := r.prepareCandidateServices(targetVersion)

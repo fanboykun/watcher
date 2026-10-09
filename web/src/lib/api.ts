@@ -255,6 +255,7 @@ export interface InspectRepoResponse {
 }
 
 export interface Watcher {
+	pending_catalog_id: number;
 	polling_activity: 'active' | 'checking' | 'paused' | 'stopped' | 'unknown';
 	poll_started_at: string | null;
 	last_poll_status: string;
@@ -678,7 +679,61 @@ export const auth = {
 	hasPassword: () => getAuthPassword() !== ''
 };
 
+export interface CatalogAsset {
+	id: number;
+	name: string;
+	size: number;
+	digest: string;
+	browser_download_url: string;
+}
+export interface CatalogRelease {
+	id: number;
+	name: string;
+	tag_name: string;
+	body: string;
+	html_url: string;
+	draft: boolean;
+	prerelease: boolean;
+	published_at: string;
+	assets: CatalogAsset[];
+}
+export interface CatalogDownload {
+	id: number;
+	watcher_id: number;
+	release_id: number;
+	asset_id: number;
+	tag: string;
+	version: string;
+	asset_name: string;
+	sha256: string;
+	downloaded_at: string;
+}
+export interface ReleaseCatalogResponse {
+	repository: string;
+	releases: CatalogRelease[];
+	downloads: CatalogDownload[];
+	page: number;
+	has_next: boolean;
+}
+
 export const api = {
+	getReleaseCatalog: (id: number, page = 1, signal?: AbortSignal) =>
+		request<ReleaseCatalogResponse>(`/watchers/${id}/releases?page=${page}`, { signal }),
+	downloadCatalogRelease: (id: number, releaseId: number, assetId: number) =>
+		request<CatalogDownload>(`/watchers/${id}/releases/download`, {
+			method: 'POST',
+			body: JSON.stringify({ release_id: releaseId, asset_id: assetId })
+		}),
+	selectCatalogCandidate: (id: number, catalogId: number) =>
+		request<{ message: string; version: string; catalog_id: number }>(
+			`/watchers/${id}/releases/${catalogId}/candidate`,
+			{ method: 'POST' }
+		),
+	deployCatalogRelease: (id: number, catalogId: number) =>
+		request<{ message: string; deploy_log_id: number; version: string; catalog_id: number }>(
+			`/watchers/${id}/releases/${catalogId}/deploy`,
+			{ method: 'POST' }
+		),
 	// Auth
 	authBootstrap: () => request<AuthBootstrapResponse>('/auth/bootstrap'),
 	authLogin: (password: string) =>
@@ -733,13 +788,17 @@ export const api = {
 		),
 	watcherDeployLog: (id: number, logId: number) =>
 		request<DeployLog>(`/watchers/${id}/deploys/${logId}`),
+	watcherVersionCatalog: (id: number) =>
+		request<{ versions: ReleaseInfo[]; downloads: CatalogDownload[]; current_version: string }>(
+			`/watchers/${id}/versions`
+		),
 	watcherVersions: async (id: number) => {
 		const res = await request<{ versions: ReleaseInfo[]; current_version: string }>(
 			`/watchers/${id}/versions`
 		);
 		const current = (res.current_version || '').trim();
-		if (!current) return res.versions;
-		return res.versions.map((v) => ({
+		if (!current) return res.versions ?? [];
+		return (res.versions ?? []).map((v) => ({
 			...v,
 			is_current: v.version === current
 		}));

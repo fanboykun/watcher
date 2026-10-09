@@ -418,6 +418,14 @@ func (h *Handler) ApproveRelease(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
+	if watcher.PendingCatalogID != 0 {
+		if watcher.PendingVersion != req.Version {
+			c.JSON(http.StatusConflict, ErrorResponse{Error: "The selected candidate changed"})
+			return
+		}
+		h.queueCatalogDeploy(c, watcher, watcher.PendingCatalogID)
+		return
+	}
 	result := h.db.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", req.Version).
 		UpdateColumns(map[string]any{"status": "approved", "approved_version": req.Version})
 	if result.Error != nil {
@@ -461,6 +469,7 @@ func (h *Handler) DiscardRelease(c *gin.Context) {
 	}
 
 	updates["approved_version"] = ""
+	updates["pending_catalog_id"] = 0
 	err = h.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", discardedVersion).UpdateColumns(updates)
 		if result.Error != nil {
