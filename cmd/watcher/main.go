@@ -67,18 +67,19 @@ func main() {
 	defer cancel()
 
 	// Channel for API → Agent immediate check triggers
-	checkTrigger := make(chan uint, 10)
+	checkTrigger := make(chan agent.CheckTrigger, 10)
 
 	// Channel for API → Agent to trigger a config reload
 	syncTrigger := make(chan struct{}, 1)
 
 	// In-memory watcher event bus for UI real-time updates.
 	events := agent.NewWatcherEventBus()
+	polling := agent.NewPollingMonitor()
 	webhookTrigger := make(chan struct{}, 32)
 	webhookService := webhook.NewService(db, cfg, webhookTrigger)
 
 	// Start API server in background
-	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, *envPath, cfg, log.WithComponent("api"), events, checkTrigger, syncTrigger, webhookService, webhookTrigger)
+	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, *envPath, cfg, log.WithComponent("api"), events, checkTrigger, syncTrigger, webhookService, webhookTrigger, polling)
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.APIPort),
 		Handler: router,
@@ -94,7 +95,7 @@ func main() {
 	go webhook.NewDispatcher(db, cfg, log.WithComponent("webhook-dispatcher"), webhookService, webhookTrigger).Run(ctx)
 
 	// Start watcher agent (blocks until ctx cancelled)
-	a := agent.NewAgent(db, cfg, log, events, checkTrigger, syncTrigger, webhookService)
+	a := agent.NewAgent(db, cfg, log, events, checkTrigger, syncTrigger, webhookService, polling)
 	a.Run(ctx)
 
 	// Graceful shutdown of API server

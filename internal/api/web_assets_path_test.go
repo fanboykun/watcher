@@ -94,7 +94,7 @@ func TestRouterWithWebAssetsPath(t *testing.T) {
 	r := NewRouter(
 		db, "nssm", cfg.LogDir, "test", "", ".env", cfg,
 		agent.NewLoggerWithWriter("api", io.Discard, "error"),
-		nil, make(chan uint, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1),
+		nil, make(chan agent.CheckTrigger, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1),
 	)
 
 	t.Run("redirects base path without trailing slash", func(t *testing.T) {
@@ -214,7 +214,7 @@ func TestSelfConfigWebAssetsPath(t *testing.T) {
 	r := NewRouter(
 		db, "nssm", cfg.LogDir, "test", "", envFile, cfg,
 		agent.NewLoggerWithWriter("api", io.Discard, "error"),
-		nil, make(chan uint, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1),
+		nil, make(chan agent.CheckTrigger, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1),
 	)
 
 	// GET /api/self/config (authenticated)
@@ -277,7 +277,7 @@ func TestRouterDynamicRuntimeWebAssetsPath(t *testing.T) {
 	r := NewRouter(
 		db, "nssm", cfg.LogDir, "test", "", ".env", cfg,
 		agent.NewLoggerWithWriter("api", io.Discard, "error"),
-		nil, make(chan uint, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1),
+		nil, make(chan agent.CheckTrigger, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1),
 	)
 
 	// 1. Initial request to root serves standard index.html

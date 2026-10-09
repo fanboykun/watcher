@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ServiceStatus from '$lib/components/service-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import {
@@ -60,6 +61,9 @@
 		actionMsg = '';
 		try {
 			const res = await fn();
+			const status =
+				action === 'health' ? (await api.getService(id)).service : await api.serviceStatus(id);
+			services = services.map((svc) => (svc.id === id ? { ...svc, ...status } : svc));
 			actionMsg = `${services.find((service) => service.id === id)?.windows_service_name || 'Service'}: ${res.message}`;
 			setTimeout(() => (actionMsg = ''), 3000);
 		} catch (e) {
@@ -115,10 +119,12 @@
 					onSelect={() => {
 						void serviceAction(svc.id, 'health', () =>
 							api
-								.serviceHealth(svc.id)
-								.then((h) => ({ message: `${h.status}${h.error ? ` — ${h.error}` : ''}` }))
+								.serviceStatus(svc.id)
+								.then((h) => ({
+									message: `Runtime: ${h.last_service_status}; health: ${h.last_health_status}`
+								}))
 						);
-					}}><Heart />Check health</DropdownMenu.Item
+					}}><Heart />Check status</DropdownMenu.Item
 				>
 				{#if !isIISService(svc.service_type)}
 					<DropdownMenu.Item
@@ -185,6 +191,7 @@
 							</p>
 							{#if svc.health_check_url}<p class="break-all">Health: {svc.health_check_url}</p>{/if}
 						</div>
+						<ServiceStatus service={svc} />
 						{@render serviceControls(svc)}
 					</Card.Content></Card.Root
 				>
@@ -196,7 +203,9 @@
 					><Table.Row
 						><Table.Head>Service</Table.Head><Table.Head>Watcher</Table.Head><Table.Head
 							>Runtime</Table.Head
-						><Table.Head class="text-right">Actions</Table.Head></Table.Row
+						><Table.Head>Last known status</Table.Head><Table.Head class="text-right"
+							>Actions</Table.Head
+						></Table.Row
 					></Table.Header
 				>
 				<Table.Body>
@@ -226,6 +235,7 @@
 										Health: {svc.health_check_url}
 									</p>{/if}</Table.Cell
 							>
+							<Table.Cell><ServiceStatus service={svc} /></Table.Cell>
 							<Table.Cell
 								><div class="ml-auto max-w-80">
 									{@render serviceControls(svc, true)}

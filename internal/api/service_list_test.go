@@ -42,7 +42,7 @@ func TestServiceCollectionAPIsReturnEmptyArrays(t *testing.T) {
 		cfg,
 		agent.NewLoggerWithWriter("api", io.Discard, "error"),
 		nil,
-		make(chan uint, 1),
+		make(chan agent.CheckTrigger, 1),
 		make(chan struct{}, 1),
 		nil,
 		make(chan struct{}, 1),
@@ -88,7 +88,7 @@ func TestWatcherAPIsEmbedEmptyServiceArrays(t *testing.T) {
 		t.Fatalf("create watcher: %v", err)
 	}
 	cfg := &config.AppConfig{APIPort: "8080", LogDir: t.TempDir()}
-	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan uint, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
+	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan agent.CheckTrigger, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
 
 	for _, path := range []string{"/api/watchers", "/api/watchers/" + itoa(watcher.ID)} {
 		rec := authRequest(router, http.MethodGet, path, "", database.DefaultAuthPassword)
@@ -132,7 +132,7 @@ func TestServiceAPIsEmbedEmptyConfigFileArrays(t *testing.T) {
 		t.Fatalf("create service: %v", err)
 	}
 	cfg := &config.AppConfig{APIPort: "8080", LogDir: t.TempDir()}
-	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan uint, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
+	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan agent.CheckTrigger, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
 
 	paths := []string{
 		"/api/services",

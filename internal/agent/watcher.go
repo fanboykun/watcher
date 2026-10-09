@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
@@ -27,7 +28,7 @@ type RepoWatcher struct {
 // NewRepoWatcher creates a configured repo watcher.
 func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus, webhookService *webhook.Service) *RepoWatcher {
 	wcfg := WatcherConfigFromDB(dbWatcher)
-	componentLog := log.WithComponent(wcfg.Name)
+	componentLog := log.WithWatcher(dbWatcher.ID, wcfg.Name)
 	state := NewStateManager(db, dbWatcher.ID, componentLog, events, webhookService)
 	return &RepoWatcher{
 		wcfg:      wcfg,
@@ -43,6 +44,52 @@ func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.App
 
 // Run performs one check-and-deploy cycle for this repo.
 func (r *RepoWatcher) Run(ctx context.Context) error {
+	if r.wcfg.Paused {
+		return nil
+	}
+	trace := TraceFromContext(ctx)
+	if trace.PollID == "" {
+		trace = NewPollTrace(trace.RequestID, "scheduled")
+	}
+	ctx = WithTrace(ctx, trace)
+	// Bind a copy for this run; shared runtime helpers never retain a previous trace.
+	cycle := *r
+	cycle.log = r.log.WithTrace(trace)
+	state := *r.state
+	state.log, state.trace = cycle.log, trace
+	cycle.state = &state
+	if r.deployer != nil {
+		deployer := *r.deployer
+		deployer.log, deployer.logFn = cycle.log, cycle.state.AppendDeployLog
+		cycle.deployer = &deployer
+	}
+	started := time.Now()
+	cycle.log.Info("poll started")
+	err := cycle.runCycle(ctx)
+	if errors.Is(err, context.Canceled) {
+		cycle.log.Info("poll canceled", "duration_ms", time.Since(started).Milliseconds())
+	} else if err != nil {
+		cycle.log.Error("poll failed", "error", err, "duration_ms", time.Since(started).Milliseconds())
+		if !cycle.state.pollErrorRecorded {
+			cycle.state.RecordPollEvent("error", "", err.Error())
+		}
+	} else {
+		cycle.log.Info("poll completed", "duration_ms", time.Since(started).Milliseconds())
+	}
+	if !errors.Is(err, context.Canceled) {
+		status := cycle.state.pollStatus
+		if status == "" {
+			status = "completed"
+		}
+		now := time.Now().UTC()
+		if dbErr := r.db.Model(&database.Watcher{}).Where("id = ?", r.watcherID).UpdateColumns(map[string]any{"last_poll_status": status, "last_poll_error": cycle.state.pollError, "last_poll_id": trace.PollID, "last_poll_at": now}).Error; dbErr != nil {
+			cycle.log.Warn("failed to save latest poll result", "error", dbErr)
+		}
+	}
+	return err
+}
+
+func (r *RepoWatcher) runCycle(ctx context.Context) error {
 	if r.wcfg.Paused {
 		r.log.Debug("watcher is paused, skipping check")
 		return nil
@@ -97,6 +144,7 @@ func (r *RepoWatcher) Run(ctx context.Context) error {
 		return err
 	}
 	if !allowed {
+		r.state.pollStatus = "intercepted"
 		return nil
 	}
 

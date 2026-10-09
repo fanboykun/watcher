@@ -50,7 +50,7 @@ func TestSyncServiceEnvRefreshesActiveVersionSnapshot(t *testing.T) {
 	}
 
 	cfg := &config.AppConfig{APIPort: "8080", LogDir: t.TempDir()}
-	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan uint, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
+	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan agent.CheckTrigger, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
 	rec := authRequest(router, http.MethodPut, "/api/services/"+itoa(service.ID)+"/env", `{"env_content":"VALUE=new\n"}`, database.DefaultAuthPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -120,7 +120,7 @@ func TestServiceDetailShowsEnvironmentFromRolledBackSnapshot(t *testing.T) {
 	}
 
 	cfg := &config.AppConfig{APIPort: "8080", LogDir: t.TempDir()}
-	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan uint, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
+	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan agent.CheckTrigger, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
 	rec := authRequest(router, http.MethodGet, "/api/services/"+itoa(service.ID), "", database.DefaultAuthPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())

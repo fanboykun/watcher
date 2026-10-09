@@ -1,7 +1,9 @@
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
 <script lang="ts">
 	import RequestError from '$lib/components/request-error.svelte';
+	import { afterNavigate } from '$app/navigation';
 	import { onMount } from 'svelte';
+	import ServiceStatus from '$lib/components/service-status.svelte';
 	import { page } from '$app/state';
 	import {
 		api,
@@ -19,13 +21,13 @@
 	import * as Tabs from '$lib/components/ui/tabs';
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import {
 		ArrowLeft,
 		Play,
 		Square,
 		RefreshCw,
-		Heart,
-		AlertCircle,
+		ChevronDown,
 		ExternalLink,
 		TerminalSquare,
 		Pencil,
@@ -52,7 +54,13 @@
 	let loading = $state(true);
 	let actionMsg = $state('');
 	let logError = $state('');
+	let statusError = $state('');
+	let checkingStatus = $state(false);
 	let logsLoading = $state(false);
+	let healthLoading = $state(false);
+	let healthError = $state('');
+	let deploysLoading = $state(false);
+	let deploysError = $state('');
 	let logType = $state<'out' | 'err'>('out');
 	let logCount = $state(100);
 
@@ -74,44 +82,113 @@
 
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
-	const id = Number(page.params.id);
-
-	onMount(async () => {
-		try {
-			await refreshServiceDetail();
-			healthHistory = await api.healthHistory(id, 50);
-			await loadDeploys();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load service';
-		} finally {
-			loading = false;
-		}
-		loadLogs();
+	const id = $derived(Number(page.params.id));
+	let loadedID: number | null = null;
+	let mounted = false;
+	let detailGeneration = 0;
+	let statusRequest = 0;
+	let healthRequest = 0;
+	onMount(() => {
+		mounted = true;
+		loadCurrentService();
+		return () => {
+			mounted = false;
+			detailGeneration++;
+		};
+	});
+	afterNavigate(() => {
+		if (mounted) loadCurrentService();
 	});
 
+	function loadCurrentService() {
+		if (loadedID === id) return;
+		loadedID = id;
+		void loadDetail();
+	}
+
+	async function loadDetail() {
+		const generation = ++detailGeneration;
+		loading = true;
+		checkingStatus = false;
+		statusError = '';
+		healthHistory = [];
+		deploys = [];
+		deployTotal = 0;
+		logLines = [];
+		logsLoading = false;
+		error = '';
+		service = null;
+		watcher = null;
+		try {
+			await refreshServiceDetail();
+		} catch (e) {
+			if (generation === detailGeneration)
+				error = e instanceof Error ? e.message : 'Failed to load service';
+		} finally {
+			if (generation === detailGeneration) loading = false;
+		}
+		if (generation !== detailGeneration || !mounted || !service) return;
+		void refreshStatus();
+		void loadHealthHistory();
+		void loadDeploys();
+		void loadLogs();
+	}
+
+	async function loadHealthHistory() {
+		const generation = detailGeneration;
+		const request = ++healthRequest;
+		healthLoading = true;
+		healthError = '';
+		try {
+			const history = await api.healthHistory(id, 50);
+			if (generation === detailGeneration && request === healthRequest) healthHistory = history;
+		} catch (e) {
+			if (generation === detailGeneration && request === healthRequest)
+				healthError = e instanceof Error ? e.message : 'Failed to load health history';
+		} finally {
+			if (generation === detailGeneration && request === healthRequest) healthLoading = false;
+		}
+	}
+
 	async function loadDeploys() {
-		const res = await api.serviceDeploys(id, deployPage, deployPageSize);
-		deploys = res.data;
-		deployTotal = res.total;
+		const generation = detailGeneration;
+		deploysLoading = true;
+		deploysError = '';
+		try {
+			const res = await api.serviceDeploys(id, deployPage, deployPageSize);
+			if (generation !== detailGeneration) return;
+			deploys = res.data;
+			deployTotal = res.total;
+		} catch (e) {
+			if (generation === detailGeneration)
+				deploysError = e instanceof Error ? e.message : 'Failed to load deployments';
+		} finally {
+			if (generation === detailGeneration) deploysLoading = false;
+		}
 	}
 
 	async function loadLogs() {
 		if (logsLoading) return;
+		const generation = detailGeneration;
 		logsLoading = true;
 		logError = '';
 		try {
 			const res = await api.serviceLogs(id, logCount, logType);
-			logLines = res.lines ?? [];
+			if (generation === detailGeneration) logLines = res.lines ?? [];
 		} catch (e) {
+			if (generation !== detailGeneration) return;
 			logError = e instanceof Error ? e.message : 'Failed to load logs';
 			logLines = [];
 		} finally {
-			logsLoading = false;
+			if (generation === detailGeneration) logsLoading = false;
 		}
 	}
 
 	async function refreshServiceDetail() {
-		const detail = await api.getService(id);
+		const serviceID = id;
+		const generation = detailGeneration;
+		const detail = await api.getService(serviceID);
+		if (id !== serviceID || generation !== detailGeneration) return;
 		service = detail.service;
 		watcher = detail.watcher;
 		envContent = service?.env_content || '';
@@ -131,7 +208,10 @@
 			const res = await fn();
 			actionMsg = res.message;
 			setTimeout(() => (actionMsg = ''), 4000);
-			if (service) await refreshServiceDetail();
+			if (service) {
+				await refreshServiceDetail();
+				void refreshStatus(true);
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Action failed';
 		} finally {
@@ -173,8 +253,7 @@
 		try {
 			await api.deleteService(watcher.id, service.id);
 			showDeleteDialog = false;
-			// eslint-disable-next-line svelte/no-navigation-without-resolve -- anchor appended to a resolved route
-			await goto(`${resolve(`/watchers/${watcher.id}/edit`)}#services`);
+			await goto(resolve(`/watchers/${watcher.id}/edit#services`));
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete service';
 			setTimeout(() => (actionMsg = ''), 5000);
@@ -183,19 +262,32 @@
 		}
 	}
 
-	async function checkHealth() {
-		if (pendingAction) return;
-		pendingAction = 'health';
-		error = '';
+	async function refreshStatus(force = false) {
+		if ((checkingStatus && !force) || !service) return;
+		const request = ++statusRequest;
+		const serviceID = id;
+		const generation = detailGeneration;
+		checkingStatus = true;
+		statusError = '';
 		try {
-			const h = await api.serviceHealth(id);
-			actionMsg = `Health: ${h.status} (HTTP ${h.http_status})${h.error ? ' — ' + h.error : ''}`;
-			healthHistory = await api.healthHistory(id, 50);
-			setTimeout(() => (actionMsg = ''), 5000);
+			const status = await api.serviceStatus(serviceID);
+			if (generation !== detailGeneration || request !== statusRequest || !service) return;
+			service = {
+				...service,
+				last_service_status: status.last_service_status,
+				last_service_error: status.last_service_error,
+				last_service_checked_at: status.last_service_checked_at,
+				last_health_status: status.last_health_status,
+				last_health_http_status: status.last_health_http_status,
+				last_health_error: status.last_health_error,
+				last_health_checked_at: status.last_health_checked_at
+			};
+			void loadHealthHistory();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Health check failed';
+			if (generation === detailGeneration && request === statusRequest)
+				statusError = e instanceof Error ? e.message : 'Status check failed';
 		} finally {
-			pendingAction = '';
+			if (generation === detailGeneration && request === statusRequest) checkingStatus = false;
 		}
 	}
 </script>
@@ -221,62 +313,65 @@
 		</div>
 		{#if service}
 			<div class="page-actions">
-				{#if !isIISService(service.service_type)}
-					<Button.Root
-						variant="outline"
-						size="sm"
-						disabled={actionBusy}
-						loading={pendingAction === 'start'}
-						onclick={() => runAction('start', () => api.startService(id))}
-						><Play /> Start</Button.Root
-					>
-					<Button.Root
-						variant="outline"
-						size="sm"
-						disabled={actionBusy}
-						onclick={() => {
-							error = '';
-							confirmServiceAction = 'stop';
-						}}><Square /> Stop</Button.Root
-					>
-					<Button.Root
-						variant="outline"
-						size="sm"
-						disabled={actionBusy}
-						onclick={() => {
-							error = '';
-							confirmServiceAction = 'restart';
-						}}><RefreshCw /> Restart</Button.Root
-					>
-				{/if}
-				<Button.Root
-					variant="outline"
-					size="sm"
-					disabled={actionBusy}
-					loading={pendingAction === 'health'}
-					onclick={checkHealth}><Heart /> Check health</Button.Root
-				>
 				<Button.Root
 					href={resolve(`/services/${id}/edit`)}
 					variant="outline"
 					size="sm"
 					disabled={actionBusy}><Pencil /> Edit</Button.Root
 				>
-				<Button.Root
-					variant="ghost"
-					size="sm"
-					class="text-red-400"
-					disabled={actionBusy}
-					onclick={() => {
-						error = '';
-						showDeleteDialog = true;
-					}}><Trash2 /> Delete</Button.Root
-				>
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger
+						class={Button.buttonVariants({ variant: 'outline', size: 'sm' })}
+						disabled={actionBusy}
+						aria-busy={Boolean(pendingAction)}
+					>
+						{#if pendingAction}<RefreshCw class="animate-spin" />Working…{:else}Actions<ChevronDown
+							/>{/if}
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content
+						align="end"
+						class="w-44"
+						onCloseAutoFocus={(event) => {
+							if (confirmServiceAction || showDeleteDialog) event.preventDefault();
+						}}
+					>
+						{#if !isIISService(service.service_type)}
+							<DropdownMenu.Item
+								onSelect={() => {
+									void runAction('start', () => api.startService(id));
+								}}><Play />Start service</DropdownMenu.Item
+							>
+							<DropdownMenu.Item
+								onSelect={() => {
+									error = '';
+									confirmServiceAction = 'restart';
+								}}><RefreshCw />Restart service</DropdownMenu.Item
+							>
+							<DropdownMenu.Item
+								onSelect={() => {
+									error = '';
+									confirmServiceAction = 'stop';
+								}}><Square />Stop service</DropdownMenu.Item
+							>
+						{/if}
+						<DropdownMenu.Item
+							variant="destructive"
+							class="mt-1 border-t border-border pt-2"
+							onSelect={() => {
+								error = '';
+								showDeleteDialog = true;
+							}}><Trash2 />Delete service</DropdownMenu.Item
+						>
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
 			</div>
 		{/if}
 	</header>
 
-	{#if !showDeleteDialog && !confirmServiceAction}<RequestError message={error} />{/if}
+	{#if !showDeleteDialog && !confirmServiceAction}<RequestError
+			message={error}
+			onRetry={!service ? loadDetail : undefined}
+		/>{/if}
 
 	{#if actionMsg}
 		<div class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400">
@@ -287,6 +382,18 @@
 	{#if loading}
 		<RequestLoading label="Loading service details…" />
 	{:else if service}
+		<ServiceStatus
+			{service}
+			variant="detail"
+			checking={checkingStatus}
+			onRefresh={() => refreshStatus()}
+			refreshDisabled={Boolean(pendingAction)}
+		/>
+		<RequestError
+			message={statusError}
+			title="Status could not be refreshed"
+			onRetry={() => refreshStatus()}
+		/>
 		<!-- Service Info Card -->
 		<Card.Root class="border-border bg-card">
 			<Card.Content class="grid min-w-0 grid-cols-2 gap-x-6 gap-y-4 px-6 sm:grid-cols-3">
@@ -404,7 +511,10 @@
 
 			<!-- Health History -->
 			<Tabs.Content value="health" class="mt-4">
-				<HealthTab {healthHistory} />
+				<RequestError message={healthError} onRetry={loadHealthHistory} />
+				{#if healthLoading && healthHistory.length === 0}<RequestLoading
+						label="Loading health history…"
+					/>{:else}<HealthTab {healthHistory} />{/if}
 			</Tabs.Content>
 
 			<!-- Logs -->
@@ -442,14 +552,17 @@
 
 			<!-- Deploys -->
 			<Tabs.Content value="deploys" class="mt-4">
-				<DeploysTab
-					bind:deploys
-					bind:deployPage
-					bind:deployPageSize
-					{deployTotal}
-					{watcher}
-					onLoadDeploys={loadDeploys}
-				/>
+				<RequestError message={deploysError} onRetry={loadDeploys} />
+				{#if deploysLoading}<RequestLoading label="Loading deployments…" />{:else}
+					<DeploysTab
+						bind:deploys
+						bind:deployPage
+						bind:deployPageSize
+						{deployTotal}
+						{watcher}
+						onLoadDeploys={loadDeploys}
+					/>
+				{/if}
 			</Tabs.Content>
 
 			<Tabs.Content value="candidates" class="mt-4">

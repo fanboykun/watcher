@@ -11,7 +11,7 @@ import (
 // healthCheck retries an HTTP endpoint until it returns a successful status.
 func (d *Deployer) healthCheck(ctx context.Context, serviceName, url string) error {
 	hc := d.wcfg.HealthCheck
-	client := &http.Client{Timeout: time.Duration(hc.TimeoutSec) * time.Second}
+	client := &http.Client{Timeout: time.Duration(hc.TimeoutSec) * time.Second, Transport: tracedTransport{log: d.log}}
 	interval := time.Duration(hc.IntervalSec) * time.Second
 
 	d.l("health check", "service", serviceName, "url", url, "retries", hc.Retries)

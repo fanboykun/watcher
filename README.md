@@ -199,6 +199,7 @@ Base path: `/api`
 ### Services (flat)
 - `GET /services`
 - `GET /services/:id`
+- `GET /services/:id/status`
 - `POST /services/:id/start`
 - `POST /services/:id/stop`
 - `POST /services/:id/restart`
@@ -207,6 +208,19 @@ Base path: `/api`
 - `GET /services/:id/health/history`
 - `GET /services/:id/logs`
 - `GET /services/:id/deploys`
+
+Opening a service detail page calls `GET /api/services/:id/status`. It runs one
+`nssm status` query and one HTTP health request in parallel with a five-second
+limit, saves both observations, and returns the service with its
+`last_service_*` and `last_health_*` fields. The health request uses the service
+URL first, then the watcher URL, and treats HTTP 200 as healthy. Runtime status
+remains separate from health: a running service can be unhealthy. Missing
+services report `not_installed`; unavailable NSSM reports `unknown`; IIS runtime
+status is `not_applicable`. No health URL reports `unknown`.
+
+The flat service list and watcher service table display saved observations with
+last-check times. Detail-page visits and **Check status** refresh them; service
+start/stop/restart actions in the UI also refresh them.
 
 ### Self
 - `GET /self/version`
@@ -255,6 +269,11 @@ WATCHER_REPO_URL=https://github.com/fanboykun/watcher
 Notes:
 - `GITHUB_TOKEN` is required for private repos.
 - Logs are JSON records written to `watcher.log`. They rotate at `LOG_MAX_SIZE_MB`; rotated logs are retained according to `LOG_MAX_BACKUPS` and `LOG_MAX_AGE_DAYS`, and can be gzip-compressed with `LOG_COMPRESS`.
+- Each polling watcher also appends its records to `LOG_DIR/watchers/<watcher-id>/watcher.log`, using the same rotation settings. IDs keep logs separate even when names match or change. Polling and manual deployment/rollback operations share the same file; existing global records are not backfilled. View these under watcher detail → Polls → Activity logs.
+- The Logs page offers structured agent records and Watcher’s NSSM stdout/stderr files. On Windows it reads the configured `AppStdout`/`AppStderr` paths; elsewhere it uses `LOG_DIR/watcher.out.log` and `watcher.err.log`. Events expose timestamps, severity, attributes, and expandable stack traces, with search and raw output available. Windows Event Log entries are not included.
+- Log viewers read the active file’s latest 100–1000 lines on load or Refresh; rotated archives are retained on disk. Rebuild and restart Watcher to activate logging changes.
+- API responses include `X-Request-ID` and `X-Correlation-ID`; UUID request IDs supplied by clients are preserved. Manual poll responses also expose `X-Poll-ID` and the IDs in JSON. Every polling run has a unique `poll_id`, and records include `correlation_id` plus the initiating `request_id` for manual checks. Poll history → View logs opens that run. Older history rows have no trace IDs.
+- Paste an ID into the single search field on the Logs or watcher activity view to match a request, poll, correlation, or outgoing network request ID. Trace filtering scans retained JSON files (including rotated gzip archives) before applying the line limit. Deleted archives cannot be recovered. Normal unfiltered viewing tails the active file. GitHub and deployment health-check requests include trace headers and log status/timing without headers, bodies, URL credentials, or query strings.
 - `API_BASE_URL` enables GitHub Deployment API `log_url` linking.
 - `WATCHER_REPO_URL` is used by self-update check/update.
 - `GITHUB_DEPLOY_ENABLED=true|false` toggles GitHub Deployment API reporting globally.
@@ -408,3 +427,9 @@ Typical flow on Windows:
 - `binary_name` must match the extracted file for `nssm` services.
 - Manual rollback sets `max_ignored_version`; auto-deploy ignores versions `<=` that value until resumed or a newer version appears.
 - After repeated failures for the same target version, auto deploy is suspended for that version until manual redeploy.
+
+### Polling status in the dashboard
+
+Watchers and Polling show the live loop activity separately from the latest poll result. Active means the loop is running and waiting; Checking now means a cycle is in progress; Paused means automatic checks are disabled; Stopped means the agent has no running loop for that watcher. Deployment status is labelled separately on watcher details.
+
+The latest completed result, error, time, and poll ID are persisted without restarting the loop. While a new cycle runs, the previous result remains visible. Existing poll history supplies a result until the first completion summary is recorded. Watcher lists refresh in the background every five seconds, and watcher details receive cycle start/completion events.

@@ -78,7 +78,7 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 
 	// Create deploy log first and process rollback asynchronously so API can return immediately.
 	wcfg := agent.WatcherConfigFromDB(watcher)
-	logger := h.log.WithComponent(wcfg.Name)
+	logger := h.log.WithWatcher(watcher.ID, wcfg.Name).WithTrace(agent.TraceFromContext(c.Request.Context()))
 
 	now := time.Now().UTC()
 	dlog := database.DeployLog{
@@ -140,6 +140,7 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 
 func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targetVersion, previousVersion string, reportGitHub bool, logger *agent.Logger, wcfg *agent.WatcherConfig) {
 	startedAt := time.Now().UTC()
+	logger.Info("manual rollback started", "deploy_log_id", deployLogID, "target_version", targetVersion, "previous_version", previousVersion)
 	appendRollbackLog := func(text string) {
 		_ = h.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).
 			UpdateColumn("logs", gorm.Expr("COALESCE(logs, '') || ?", text+"\n")).Error
@@ -155,6 +156,7 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 		}
 	}
 	if rollbackErr != nil {
+		logger.Error("manual rollback failed", "deploy_log_id", deployLogID, "target_version", targetVersion, "error", rollbackErr)
 		completed := time.Now().UTC()
 		durationMs := completed.Sub(startedAt).Milliseconds()
 		_ = h.db.Model(&database.DeployLog{}).Where("id = ?", deployLogID).Updates(map[string]any{
@@ -185,6 +187,7 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 		return
 	}
 
+	logger.Info("manual rollback completed", "deploy_log_id", deployLogID, "target_version", targetVersion)
 	completed := time.Now().UTC()
 	durationMs := completed.Sub(startedAt).Milliseconds()
 	maxIgnored := agent.RollbackHighWatermark(targetVersion, previousVersion)

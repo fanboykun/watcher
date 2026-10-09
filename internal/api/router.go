@@ -16,7 +16,7 @@ import (
 )
 
 // NewRouter creates a Gin engine with all API routes and embedded SPA.
-func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, log *agent.Logger, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *gin.Engine {
+func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, log *agent.Logger, events *agent.WatcherEventBus, checkTrigger chan agent.CheckTrigger, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}, monitors ...*agent.PollingMonitor) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	// Keep encoded slashes in version tags inside their route parameter.
@@ -25,6 +25,9 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath stri
 
 	h := NewHandler(db, nssmPath, logDir, version, githubToken, envPath, appCfg, log, events, checkTrigger, syncTrigger, webhookService, webhookTrigger)
 
+	if len(monitors) > 0 {
+		h.polling = monitors[0]
+	}
 	registerAPIRoutes(r.Group("/api"), h)
 
 	// ── Serve embedded SPA and dynamic subpath routing for all non-API routes ──
@@ -34,6 +37,7 @@ func NewRouter(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath stri
 }
 
 func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
+	apiGroup.Use(h.RequestTrace(), gin.Recovery())
 	apiGroup.GET("/auth/bootstrap", h.AuthBootstrap)
 	apiGroup.POST("/auth/login", h.AuthLogin)
 	apiGroup.Use(h.RequireAuth())
@@ -51,6 +55,7 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 	{
 		services.GET("", h.ListAllServices)
 		services.GET("/:id", h.GetServiceDetail)
+		services.GET("/:id/status", h.GetServiceStatus)
 		services.POST("/:id/start", h.StartService)
 		services.POST("/:id/stop", h.StopService)
 		services.POST("/:id/restart", h.RestartService)
@@ -86,6 +91,7 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 		watchers.GET("/:id/deploys/:did/stream", h.StreamDeployLog)
 		watchers.GET("/:id/events", h.StreamWatcherEvents)
 		watchers.GET("/:id/polls", h.ListPollEvents)
+		watchers.GET("/:id/logs", h.WatcherLogs)
 		watchers.POST("/:id/check", h.TriggerCheck)
 		watchers.POST("/:id/redeploy", h.RedeployWatcher)
 		watchers.POST("/:id/intercept", h.InterceptRelease)

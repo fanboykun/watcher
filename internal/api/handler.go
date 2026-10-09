@@ -13,6 +13,7 @@ import (
 )
 
 type Handler struct {
+	polling        *agent.PollingMonitor
 	db             *gorm.DB
 	nssmPath       string
 	serviceManager agent.ServiceManager
@@ -24,8 +25,8 @@ type Handler struct {
 	log            *agent.Logger
 	events         *agent.WatcherEventBus
 	startTime      time.Time
-	checkTrigger   chan uint     // send watcher ID for immediate poll
-	syncTrigger    chan struct{} // trigger background agent to sync DB
+	checkTrigger   chan agent.CheckTrigger // send watcher ID for immediate poll
+	syncTrigger    chan struct{}           // trigger background agent to sync DB
 	webhooks       *webhook.Service
 	webhookTrigger chan struct{}
 	isWindows      func() bool
@@ -33,7 +34,7 @@ type Handler struct {
 }
 
 // NewHandler creates a new Handler with the given dependencies.
-func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, log *agent.Logger, events *agent.WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *Handler {
+func NewHandler(db *gorm.DB, nssmPath, logDir, version, githubToken, envPath string, appCfg *config.AppConfig, log *agent.Logger, events *agent.WatcherEventBus, checkTrigger chan agent.CheckTrigger, syncTrigger chan struct{}, webhookService *webhook.Service, webhookTrigger chan struct{}) *Handler {
 	if log == nil {
 		log = agent.NewLogger("api")
 	}

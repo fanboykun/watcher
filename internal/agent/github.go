@@ -61,7 +61,8 @@ func NewGitHubClient(token string, log *Logger) *GitHubClient {
 		token:   token,
 		apiBase: defaultAPIBase,
 		client: &http.Client{
-			Timeout: 90 * time.Second,
+			Timeout:   90 * time.Second,
+			Transport: tracedTransport{log: log},
 		},
 		log: log,
 	}

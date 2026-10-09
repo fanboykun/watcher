@@ -2,7 +2,7 @@
 	import type { HealthEvent } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
-	import { Heart, CheckCircle2, XCircle } from '@lucide/svelte';
+	import { Heart, CheckCircle2, XCircle, CircleHelp } from '@lucide/svelte';
 	import { healthBadgeColor, formatDate } from '$lib/utils';
 
 	let { healthHistory = [] }: { healthHistory: HealthEvent[] } = $props();
@@ -28,7 +28,9 @@
 									h.status
 								)}"
 							>
-								{#if h.status === 'healthy'}<CheckCircle2 class="h-3 w-3" />{:else}<XCircle
+								{#if h.status === 'healthy'}<CheckCircle2
+										class="h-3 w-3"
+									/>{:else if h.status === 'unknown'}<CircleHelp class="h-3 w-3" />{:else}<XCircle
 										class="h-3 w-3"
 									/>{/if}
 								{h.status}
@@ -51,7 +53,9 @@
 		<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
 			<Heart class="mb-3 h-8 w-8 text-muted-foreground/40" />
 			<p class="text-sm text-muted-foreground">No health checks recorded</p>
-			<p class="mt-1 text-xs text-muted-foreground/60">Use "Check health" to run a check</p>
+			<p class="mt-1 text-xs text-muted-foreground/60">
+				Health checks appear here after a status refresh.
+			</p>
 		</Card.Content>
 	</Card.Root>
 {/if}

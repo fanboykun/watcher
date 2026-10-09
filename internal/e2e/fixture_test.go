@@ -118,7 +118,7 @@ func newE2EFixture(t *testing.T, failStart bool) *e2eFixture {
 		WebhookTimeoutSec:       1,
 		WebhookRetryScheduleSec: "0",
 	}
-	checkTrigger := make(chan uint, 10)
+	checkTrigger := make(chan agent.CheckTrigger, 10)
 	syncTrigger := make(chan struct{}, 10)
 	events := agent.NewWatcherEventBus()
 	log := agent.NewLoggerWithWriter("e2e", io.Discard, "error")

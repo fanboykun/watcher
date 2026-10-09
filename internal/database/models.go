@@ -40,6 +40,12 @@ type Watcher struct {
 	CurrentVersion    string     `gorm:"not null;default:''" json:"current_version"`
 	MaxIgnoredVersion string     `gorm:"not null;default:''" json:"max_ignored_version"`
 	Status            string     `gorm:"not null;default:'unknown'" json:"status"`
+	PollingActivity   string     `gorm:"-" json:"polling_activity"`
+	PollStartedAt     *time.Time `gorm:"-" json:"poll_started_at"`
+	LastPollStatus    string     `gorm:"not null;default:''" json:"last_poll_status"`
+	LastPollError     string     `gorm:"not null;default:''" json:"last_poll_error"`
+	LastPollID        string     `gorm:"not null;default:''" json:"last_poll_id"`
+	LastPollAt        *time.Time `json:"last_poll_at"`
 	LastChecked       *time.Time `json:"last_checked"`
 	LastDeployed      *time.Time `json:"last_deployed"`
 	LastError         string     `gorm:"not null;default:''" json:"last_error"`
@@ -97,6 +103,9 @@ type Service struct {
 	IISManagedRuntime    string              `gorm:"not null;default:''" json:"iis_managed_runtime"` // IIS-hosted only; maintained from app kind for compatibility
 	PublicURL            string              `gorm:"not null;default:''" json:"public_url"`
 	EnvContent           string              `gorm:"type:text" json:"env_content"`
+	LastServiceStatus    string              `gorm:"not null;default:'unknown'" json:"last_service_status"`
+	LastServiceError     string              `gorm:"not null;default:''" json:"last_service_error"`
+	LastServiceCheckedAt *time.Time          `json:"last_service_checked_at,omitempty"`
 	LastHealthStatus     string              `gorm:"not null;default:''" json:"last_health_status"`
 	LastHealthHTTPStatus int                 `gorm:"not null;default:0" json:"last_health_http_status"`
 	LastHealthError      string              `gorm:"not null;default:''" json:"last_health_error"`
@@ -145,7 +154,7 @@ type DeployLog struct {
 type HealthEvent struct {
 	ID             uint       `gorm:"primaryKey" json:"id"`
 	ServiceID      uint       `gorm:"not null;index" json:"service_id"`
-	Status         string     `gorm:"not null" json:"status"` // healthy|unhealthy|error
+	Status         string     `gorm:"not null" json:"status"` // healthy|unhealthy|error|unknown
 	PreviousStatus string     `gorm:"not null;default:''" json:"previous_status"`
 	Source         string     `gorm:"not null;default:'manual'" json:"source"` // manual|deploy|rollback|monitor
 	HTTPStatus     int        `gorm:"not null;default:0" json:"http_status"`
@@ -155,6 +164,10 @@ type HealthEvent struct {
 
 // PollEvent records the outcome of a GitHub version check.
 type PollEvent struct {
+	PollID        string    `gorm:"index;not null;default:''" json:"poll_id"`
+	RequestID     string    `gorm:"index;not null;default:''" json:"request_id"`
+	CorrelationID string    `gorm:"index;not null;default:''" json:"correlation_id"`
+	TriggeredBy   string    `gorm:"not null;default:''" json:"triggered_by"`
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	WatcherID     uint      `gorm:"not null;index" json:"watcher_id"`
 	CheckedAt     time.Time `gorm:"not null;autoCreateTime" json:"checked_at"`

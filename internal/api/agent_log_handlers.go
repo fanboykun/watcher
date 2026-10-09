@@ -2,12 +2,10 @@ package api
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/fanboykun/watcher/internal/agent"
@@ -15,28 +13,17 @@ import (
 )
 
 func (h *Handler) AgentLogs(c *gin.Context) {
-	lines := 100
-	if l := c.Query("lines"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 1000 {
-			lines = parsed
-		}
-	}
-
-	logFile := filepath.Join(h.logDir, agent.LogFilename)
-
-	content, err := tailFile(logFile, lines)
-	if err != nil {
-		c.JSON(http.StatusNotFound, ErrorResponse{
-			Error: fmt.Sprintf("agent log file not found: %s", logFile),
-		})
+	source := c.DefaultQuery("source", "agent")
+	if source != "agent" && source != "stdout" && source != "stderr" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "source must be agent, stdout, or stderr"})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"log_file": logFile,
-		"format":   "json",
-		"lines":    content,
-	})
+	path, format, err := h.agentLogSource(c.Request.Context(), source)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	serveLogFile(c, source, path, format, 0)
 }
 
 // StreamAgentLogs streams the agent logs using Server-Sent Events (SSE).

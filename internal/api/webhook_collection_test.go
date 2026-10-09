@@ -42,7 +42,7 @@ func TestWebhookCollectionAPIsReturnEmptyArrays(t *testing.T) {
 		cfg,
 		agent.NewLoggerWithWriter("api", io.Discard, "error"),
 		nil,
-		make(chan uint, 1),
+		make(chan agent.CheckTrigger, 1),
 		make(chan struct{}, 1),
 		nil,
 		make(chan struct{}, 1),

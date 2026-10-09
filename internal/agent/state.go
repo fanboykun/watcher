@@ -21,11 +21,15 @@ const (
 // StateManager manages deploy state in the database.
 // Replaces the old file-based version.txt + state.json approach.
 type StateManager struct {
-	db        *gorm.DB
-	watcherID uint
-	log       *Logger
-	events    *WatcherEventBus
-	webhooks  *webhook.Service
+	db                *gorm.DB
+	watcherID         uint
+	log               *Logger
+	events            *WatcherEventBus
+	webhooks          *webhook.Service
+	trace             Trace
+	pollErrorRecorded bool
+	pollStatus        string
+	pollError         string
 }
 
 // NewStateManager creates persistence and event helpers scoped to one watcher.
@@ -261,7 +265,12 @@ func (s *StateManager) AppendDeployLog(text string) {
 
 // RecordPollEvent appends a poll result and trims the watcher history to its limit.
 func (s *StateManager) RecordPollEvent(status, remoteVersion, errMsg string) {
+	s.pollStatus, s.pollError = status, errMsg
+	if status == "error" {
+		s.pollErrorRecorded = true
+	}
 	evt := database.PollEvent{
+		PollID: s.trace.PollID, RequestID: s.trace.RequestID, CorrelationID: s.trace.CorrelationID, TriggeredBy: s.trace.TriggeredBy,
 		WatcherID:     s.watcherID,
 		Status:        status,
 		RemoteVersion: remoteVersion,
@@ -271,6 +280,7 @@ func (s *StateManager) RecordPollEvent(status, remoteVersion, errMsg string) {
 		s.log.Warn("failed to record poll event", "error", err)
 	}
 	s.publish(EventPollEvent, map[string]any{
+		"poll_id": s.trace.PollID, "request_id": s.trace.RequestID, "correlation_id": s.trace.CorrelationID, "triggered_by": s.trace.TriggeredBy,
 		"status":         status,
 		"remote_version": remoteVersion,
 		"error":          errMsg,

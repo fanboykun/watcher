@@ -1,84 +1,13 @@
 <script lang="ts">
-	import RequestError from '$lib/components/request-error.svelte';
-	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import * as Card from '$lib/components/ui/card';
-	import * as Button from '$lib/components/ui/button';
-	import * as Tabs from '$lib/components/ui/tabs';
-	import * as Select from '$lib/components/ui/select/index.js';
-	import { Activity, AlertCircle, RefreshCw } from '@lucide/svelte';
-	import RequestLoading from '$lib/components/request-loading.svelte';
-
-	let agentLines = $state<string[]>([]);
-	let error = $state('');
-	let loading = $state(true);
-	let lineCount = $state('100');
-
-	onMount(() => loadLogs());
-
-	async function loadLogs() {
-		loading = true;
-		error = '';
-		try {
-			const res = await api.agentLogs(Number(lineCount));
-			agentLines = res.lines ?? [];
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load logs';
-			agentLines = [];
-		} finally {
-			loading = false;
-		}
-	}
+	import LogBrowser from '$lib/components/log-browser.svelte';
 </script>
 
 <div class="space-y-6">
-	<div class="flex items-center justify-between">
-		<div>
-			<h1 class="text-2xl font-bold tracking-tight">Logs</h1>
-			<p class="text-sm text-muted-foreground">Agent log output</p>
-		</div>
-		<div class="flex items-center gap-2">
-			<Select.Root type="single" bind:value={lineCount} onValueChange={() => loadLogs()}>
-				<Select.Trigger class="w-36 bg-card">
-					{lineCount} lines
-				</Select.Trigger>
-				<Select.Content>
-					<Select.Item value="50" label="50 lines">50 lines</Select.Item>
-					<Select.Item value="100" label="100 lines">100 lines</Select.Item>
-					<Select.Item value="200" label="200 lines">200 lines</Select.Item>
-					<Select.Item value="500" label="500 lines">500 lines</Select.Item>
-				</Select.Content>
-			</Select.Root>
-			<Button.Root variant="outline" size="sm" onclick={loadLogs} disabled={loading}>
-				<RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
-				Refresh
-			</Button.Root>
-		</div>
-	</div>
-
-	<RequestError message={error} />
-
-	<Card.Root class="border-border bg-card">
-		<Card.Content class="p-0">
-			{#if loading}
-				<RequestLoading label="Loading agent logs…" />
-			{:else if agentLines.length > 0}
-				<div class="max-h-150 overflow-auto">
-					<pre class="p-4 font-mono text-xs leading-relaxed text-muted-foreground">
-						{#each agentLines as line, i (`${i}-${line}`)}
-							{line}
-						{/each}
-					</pre>
-				</div>
-			{:else if !error}
-				<div class="flex flex-col items-center justify-center py-16 text-center">
-					<Activity class="mb-3 h-8 w-8 text-muted-foreground/40" />
-					<p class="text-sm text-muted-foreground">No log output found</p>
-					<p class="mt-1 text-xs text-muted-foreground/60">
-						Agent logs will appear here when available
-					</p>
-				</div>
-			{/if}
-		</Card.Content>
-	</Card.Root>
+	<header>
+		<h1 class="text-2xl font-semibold tracking-tight">Logs</h1>
+		<p class="mt-1 text-sm text-muted-foreground">
+			Agent activity and Watcher's Windows service output
+		</p>
+	</header>
+	<LogBrowser />
 </div>

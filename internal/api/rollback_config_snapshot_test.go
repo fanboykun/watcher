@@ -37,7 +37,7 @@ func TestRollbackAPIRejectsVersionWithoutTrustedConfigSnapshot(t *testing.T) {
 	}
 
 	cfg := &config.AppConfig{APIPort: "8080", LogDir: t.TempDir()}
-	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan uint, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
+	router := NewRouter(db, "nssm", cfg.LogDir, "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan agent.CheckTrigger, 1), make(chan struct{}, 1), nil, make(chan struct{}, 1))
 	rec := authRequest(router, http.MethodPost, "/api/watchers/"+itoa(watcher.ID)+"/rollback", `{"version":"v1"}`, database.DefaultAuthPassword)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
