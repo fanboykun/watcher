@@ -38,6 +38,8 @@
 	import PollingTab from './components/polling-tab.svelte';
 	import WebhooksTab from './components/webhooks-tab.svelte';
 	import CandidateTab from './components/candidate-tab.svelte';
+	import ReleasesTab from './components/releases-tab.svelte';
+	import DownloadedVersions from './components/downloaded-versions.svelte';
 	import RollbackDialog from './components/rollback-dialog.svelte';
 	import ConfirmationDialog from './components/confirmation-dialog.svelte';
 
@@ -58,6 +60,7 @@
 	let deploys = $state<DeployLog[]>([]);
 	let polls = $state<import('$lib/api').PollEvent[]>([]);
 	let versions = $state<import('$lib/api').ReleaseInfo[]>([]);
+	let downloads = $state.raw<import('$lib/api').CatalogDownload[]>([]);
 	let webhookDeliveries = $state<WebhookDelivery[]>([]);
 	let deployPage = $state(1);
 	let deployPageSize = $state(10);
@@ -95,6 +98,45 @@
 
 	const id = Number(page.params.id);
 
+	async function loadVersions() {
+		const result = await api.watcherVersionCatalog(id);
+		versions = result.versions ?? [];
+		downloads = result.downloads ?? [];
+	}
+	async function configureDownload(download: import('$lib/api').CatalogDownload) {
+		try {
+			await api.selectCatalogCandidate(id, download.id);
+			watcher = await api.getWatcher(id);
+			activeTab = 'candidates';
+			await goto(resolve('/watchers/[id]?tab=candidates', { id: String(id) }), {
+				replaceState: true,
+				noScroll: true
+			});
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : 'Could not select candidate';
+		}
+	}
+	function deployDownload(download: import('$lib/api').CatalogDownload) {
+		openConfirmDialog({
+			title: `Deploy ${download.version}?`,
+			description: `Deploy the downloaded ${download.asset_name} using saved candidate configuration? Services will stop during activation, followed by health checks. Automatic polling keeps its configured release reference.`,
+			actionLabel: 'Deploy release',
+			action: async () => {
+				try {
+					await api.deployCatalogRelease(id, download.id);
+					watcher = await api.getWatcher(id);
+					await loadDeploys();
+					activeTab = 'deploys';
+					await goto(resolve('/watchers/[id]?tab=deploys', { id: String(id) }), {
+						replaceState: true,
+						noScroll: true
+					});
+				} catch (cause) {
+					error = cause instanceof Error ? cause.message : 'Could not queue deployment';
+				}
+			}
+		});
+	}
 	const loadPolls = async () => {
 		try {
 			const res = await api.watcherPolls(id, pollPage, pollPageSize, pollStatus);
@@ -129,7 +171,7 @@
 		dataError = '';
 		const results = await Promise.allSettled([
 			loadDeploys(),
-			api.watcherVersions(id).then((v) => (versions = v)),
+			loadVersions(),
 			loadPolls(),
 			loadWebhookDeliveries()
 		]);
@@ -149,7 +191,7 @@
 					loadDeploys()
 				];
 				if (includeVersions) {
-					tasks.push(api.watcherVersions(id).then((v) => (versions = v)));
+					tasks.push(loadVersions());
 				}
 				if (includePolls || activeTab === 'polling') {
 					tasks.push(loadPolls());
@@ -347,7 +389,7 @@
 			action: async () => {
 				try {
 					await api.deleteWatcherVersion(id, version);
-					versions = await api.watcherVersions(id);
+					await loadVersions();
 				} catch (e) {
 					error = e instanceof Error ? e.message : `Delete ${version} failed`;
 				}
@@ -584,6 +626,10 @@
 			bind:value={activeTab}
 			onValueChange={(v) => {
 				if (v) {
+					if (v === 'versions')
+						void loadVersions().catch((cause) => {
+							dataError = cause instanceof Error ? cause.message : 'Could not load versions';
+						});
 					goto(resolve(`/watchers/[id]?tab=${v}`, { id: String(id) }), {
 						replaceState: true,
 						keepFocus: true,
@@ -595,6 +641,7 @@
 			<Tabs.List>
 				<Tabs.Trigger value="overview">Overview</Tabs.Trigger>
 				<Tabs.Trigger value="services">Services ({watcher.services.length})</Tabs.Trigger>
+				<Tabs.Trigger value="releases">GitHub releases</Tabs.Trigger>
 				<Tabs.Trigger value="candidates" class="relative">
 					Candidates
 					{#if watcher.status === 'pending_approval'}
@@ -602,7 +649,8 @@
 					{/if}
 				</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploys ({deployTotal})</Tabs.Trigger>
-				<Tabs.Trigger value="versions">Versions ({versions.length})</Tabs.Trigger>
+				<Tabs.Trigger value="versions">Versions ({versions.length + downloads.length})</Tabs.Trigger
+				>
 				<Tabs.Trigger value="polling">Polls</Tabs.Trigger>
 				<Tabs.Trigger value="webhooks">Webhooks ({deliveryTotal})</Tabs.Trigger>
 			</Tabs.List>
@@ -617,6 +665,24 @@
 					readonly={true}
 					manageHref={resolve(`/watchers/${id}/edit#services`)}
 				/>
+			</Tabs.Content>
+
+			<Tabs.Content value="releases" class="mt-4">
+				{#if activeTab === 'releases'}
+					{#key id}
+						<ReleasesTab
+							{watcher}
+							onNavigate={async (tab) => {
+								watcher = await api.getWatcher(id);
+								activeTab = tab;
+								await goto(resolve(`/watchers/[id]?tab=${tab}`, { id: String(id) }), {
+									replaceState: true,
+									noScroll: true
+								});
+							}}
+						/>
+					{/key}
+				{/if}
 			</Tabs.Content>
 
 			<Tabs.Content value="candidates" class="mt-4">
@@ -650,7 +716,14 @@
 				/>
 			</Tabs.Content>
 
-			<Tabs.Content value="versions" class="mt-4">
+			<Tabs.Content value="versions" class="mt-4 space-y-4">
+				<DownloadedVersions
+					{downloads}
+					busy={actionBusy}
+					onConfigure={(download) =>
+						runPending('catalog_candidate', () => configureDownload(download))}
+					onDeploy={deployDownload}
+				/>
 				<VersionsTab
 					busy={actionBusy}
 					{versions}

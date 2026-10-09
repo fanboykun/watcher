@@ -16,6 +16,7 @@ type Trace struct {
 
 type CheckTrigger struct {
 	WatcherID uint
+	CatalogID uint
 	Trace     Trace
 }
 

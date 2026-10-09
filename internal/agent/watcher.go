@@ -15,14 +15,15 @@ import (
 // RepoWatcher manages the poll loop for a single watcher entry from the database.
 // Multiple RepoWatchers run concurrently inside the main Agent.
 type RepoWatcher struct {
-	wcfg      *WatcherConfig // converted from DB model
-	global    *config.AppConfig
-	log       *Logger
-	state     *StateManager
-	deployer  *Deployer
-	db        *gorm.DB
-	watcherID uint
-	webhooks  *webhook.Service
+	cachedArtifact string
+	wcfg           *WatcherConfig // converted from DB model
+	global         *config.AppConfig
+	log            *Logger
+	state          *StateManager
+	deployer       *Deployer
+	db             *gorm.DB
+	watcherID      uint
+	webhooks       *webhook.Service
 }
 
 // NewRepoWatcher creates a configured repo watcher.
@@ -99,6 +100,14 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 
 	_ = r.state.SetChecked()
 
+	var live database.Watcher
+	if err := r.db.First(&live, r.watcherID).Error; err != nil {
+		return err
+	}
+	if live.PendingCatalogID != 0 {
+		r.state.RecordPollEvent("intercepted", live.PendingVersion, "A catalog candidate is awaiting explicit deployment")
+		return nil
+	}
 	gh := NewGitHubClient(r.resolveGitHubToken(), r.log)
 	meta, err := gh.FetchServiceMetadataForRelease(ctx, r.wcfg.MetadataURL, r.wcfg.ReleaseRef, r.wcfg.ServiceName)
 	if err != nil {
@@ -164,6 +173,10 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 	}
 
 	if err := r.deploy(ctx, gh, svcMeta, targetVersion, localVersion); err != nil {
+		if errors.Is(err, errDeploymentPolicyChanged) {
+			r.state.RecordPollEvent("intercepted", targetVersion, err.Error())
+			return nil
+		}
 		if !errors.Is(err, context.Canceled) {
 			if r.recordDeployFailure(err, targetVersion, localVersion) {
 				return nil
@@ -182,8 +195,11 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 // (or race with cancellation of) an in-flight deployment. Approval is version-bound.
 func (r *RepoWatcher) releaseApproved(targetVersion string) (bool, error) {
 	var watcher database.Watcher
-	if err := r.db.Select("auto_deploy", "intercept_next_release", "pending_version", "approved_version", "status").First(&watcher, r.watcherID).Error; err != nil {
+	if err := r.db.Select("auto_deploy", "intercept_next_release", "pending_version", "approved_version", "status", "pending_catalog_id").First(&watcher, r.watcherID).Error; err != nil {
 		return false, fmt.Errorf("read deployment policy: %w", err)
+	}
+	if watcher.PendingCatalogID != 0 {
+		return false, nil
 	}
 	if watcher.ApprovedVersion == targetVersion {
 		return true, nil
