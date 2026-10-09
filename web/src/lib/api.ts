@@ -333,6 +333,13 @@ export interface Service {
 	iis_managed_runtime: string;
 	public_url: string;
 	env_content: string;
+	last_service_status: string;
+	last_service_error: string;
+	last_service_checked_at?: string;
+	last_health_status: string;
+	last_health_http_status: number;
+	last_health_error: string;
+	last_health_checked_at?: string;
 	config_files: ServiceConfigFile[];
 	created_at: string;
 	updated_at: string;
@@ -746,6 +753,7 @@ export const api = {
 	// Services (flat)
 	listServices: () => request<ServiceWithWatcher[]>('/services'),
 	getService: (id: number) => request<{ service: Service; watcher: Watcher }>(`/services/${id}`),
+	serviceStatus: (id: number) => request<Service>(`/services/${id}/status`),
 	startService: (id: number) =>
 		request<{ message: string }>(`/services/${id}/start`, { method: 'POST' }),
 	stopService: (id: number) =>

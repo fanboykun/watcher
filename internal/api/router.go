@@ -51,6 +51,7 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 	{
 		services.GET("", h.ListAllServices)
 		services.GET("/:id", h.GetServiceDetail)
+		services.GET("/:id/status", h.GetServiceStatus)
 		services.POST("/:id/start", h.StartService)
 		services.POST("/:id/stop", h.StopService)
 		services.POST("/:id/restart", h.RestartService)

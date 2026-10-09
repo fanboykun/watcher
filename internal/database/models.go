@@ -97,6 +97,9 @@ type Service struct {
 	IISManagedRuntime    string              `gorm:"not null;default:''" json:"iis_managed_runtime"` // IIS-hosted only; maintained from app kind for compatibility
 	PublicURL            string              `gorm:"not null;default:''" json:"public_url"`
 	EnvContent           string              `gorm:"type:text" json:"env_content"`
+	LastServiceStatus    string              `gorm:"not null;default:'unknown'" json:"last_service_status"`
+	LastServiceError     string              `gorm:"not null;default:''" json:"last_service_error"`
+	LastServiceCheckedAt *time.Time          `json:"last_service_checked_at,omitempty"`
 	LastHealthStatus     string              `gorm:"not null;default:''" json:"last_health_status"`
 	LastHealthHTTPStatus int                 `gorm:"not null;default:0" json:"last_health_http_status"`
 	LastHealthError      string              `gorm:"not null;default:''" json:"last_health_error"`
@@ -145,7 +148,7 @@ type DeployLog struct {
 type HealthEvent struct {
 	ID             uint       `gorm:"primaryKey" json:"id"`
 	ServiceID      uint       `gorm:"not null;index" json:"service_id"`
-	Status         string     `gorm:"not null" json:"status"` // healthy|unhealthy|error
+	Status         string     `gorm:"not null" json:"status"` // healthy|unhealthy|error|unknown
 	PreviousStatus string     `gorm:"not null;default:''" json:"previous_status"`
 	Source         string     `gorm:"not null;default:'manual'" json:"source"` // manual|deploy|rollback|monitor
 	HTTPStatus     int        `gorm:"not null;default:0" json:"http_status"`

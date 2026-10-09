@@ -1,5 +1,6 @@
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
 <script lang="ts">
+	import ServiceStatus from '$lib/components/service-status.svelte';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
@@ -57,6 +58,7 @@
 					<Table.Head>Type</Table.Head>
 					<Table.Head>Binary / App Pool</Table.Head>
 					<Table.Head>Health URL</Table.Head>
+					<Table.Head>Last known status</Table.Head>
 					{#if !readonly}
 						<Table.Head class="text-right">Actions</Table.Head>
 					{/if}
@@ -106,6 +108,7 @@
 						<Table.Cell class="font-mono text-xs text-muted-foreground">
 							{svc.health_check_url || '—'}
 						</Table.Cell>
+						<Table.Cell><ServiceStatus service={svc} /></Table.Cell>
 						{#if !readonly}
 							<Table.Cell class="text-right"
 								><div class="flex flex-wrap justify-end gap-2">

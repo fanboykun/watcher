@@ -199,6 +199,7 @@ Base path: `/api`
 ### Services (flat)
 - `GET /services`
 - `GET /services/:id`
+- `GET /services/:id/status`
 - `POST /services/:id/start`
 - `POST /services/:id/stop`
 - `POST /services/:id/restart`
@@ -207,6 +208,19 @@ Base path: `/api`
 - `GET /services/:id/health/history`
 - `GET /services/:id/logs`
 - `GET /services/:id/deploys`
+
+Opening a service detail page calls `GET /api/services/:id/status`. It runs one
+`nssm status` query and one HTTP health request in parallel with a five-second
+limit, saves both observations, and returns the service with its
+`last_service_*` and `last_health_*` fields. The health request uses the service
+URL first, then the watcher URL, and treats HTTP 200 as healthy. Runtime status
+remains separate from health: a running service can be unhealthy. Missing
+services report `not_installed`; unavailable NSSM reports `unknown`; IIS runtime
+status is `not_applicable`. No health URL reports `unknown`.
+
+The flat service list and watcher service table display saved observations with
+last-check times. Detail-page visits and **Check status** refresh them; service
+start/stop/restart actions in the UI also refresh them.
 
 ### Self
 - `GET /self/version`
