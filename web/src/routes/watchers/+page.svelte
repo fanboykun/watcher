@@ -1,4 +1,5 @@
 <script lang="ts">
+	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { api, type Watcher } from '$lib/api';
@@ -20,18 +21,39 @@
 	let deleting = $state(false);
 	let deleteWatcherID = $state<number | null>(null);
 	let deleteWatcherName = $state('');
+	let loadController: AbortController | null = null;
 
-	onMount(load);
+	onMount(() => {
+		void load();
+		const timer = setInterval(() => {
+			if (document.visibilityState === 'visible') void load(true);
+		}, 5000);
+		return () => {
+			clearInterval(timer);
+			loadController?.abort();
+		};
+	});
 
-	async function load() {
-		loading = true;
+	async function load(background = false) {
+		if (background && loadController) return;
+		loadController?.abort();
+		const request = new AbortController();
+		loadController = request;
+		if (!background) loading = true;
 		try {
-			watchers = await api.listWatchers();
-			error = '';
+			const result = await api.listWatchers(request.signal);
+			if (!request.signal.aborted) {
+				watchers = result;
+				error = '';
+			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load watchers';
+			if (!request.signal.aborted)
+				error = e instanceof Error ? e.message : 'Failed to load watchers';
 		} finally {
-			loading = false;
+			if (loadController === request) {
+				loading = false;
+				loadController = null;
+			}
 		}
 	}
 
@@ -81,7 +103,7 @@
 		</a>
 	</div>
 
-	<RequestError message={error} onRetry={load} />
+	<RequestError message={error} onRetry={() => load()} />
 
 	{#if triggerMsg}
 		<div
@@ -102,9 +124,9 @@
 				<Table.Header>
 					<Table.Row class="border-border hover:bg-transparent">
 						<Table.Head>Name</Table.Head>
-						<Table.Head>Status</Table.Head>
+						<Table.Head>Polling</Table.Head>
 						<Table.Head>Version</Table.Head>
-						<Table.Head>Last Checked</Table.Head>
+						<Table.Head>Latest poll</Table.Head>
 						<Table.Head>Services</Table.Head>
 						<Table.Head class="text-right">Actions</Table.Head>
 					</Table.Row>
@@ -119,19 +141,13 @@
 								<p class="font-mono text-xs text-muted-foreground">{w.service_name}</p>
 							</Table.Cell>
 							<Table.Cell>
-								<span
-									class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize {statusColor(
-										w.status
-									)}"
-								>
-									{w.status}
-								</span>
+								<WatcherPollingStatus watcher={w} kind="activity" />
 							</Table.Cell>
 							<Table.Cell>
 								<span class="font-mono text-sm">{w.current_version || '—'}</span>
 							</Table.Cell>
 							<Table.Cell class="text-muted-foreground">
-								{timeAgo(w.last_checked)}
+								<WatcherPollingStatus watcher={w} kind="result" />
 							</Table.Cell>
 							<Table.Cell class="text-muted-foreground">
 								{w.services ? w.services.length : 0}

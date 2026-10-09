@@ -1,4 +1,5 @@
 <script lang="ts">
+	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
 	import { onMount } from 'svelte';
 	import { api, type SystemStatus, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
@@ -180,12 +181,13 @@
 												w.status
 											)}"
 										>
-											{w.status}
+											Deployment: {w.status}
 										</span>
 									</div>
 									<p class="font-mono text-xs text-muted-foreground">{w.service_name}</p>
 								</Card.Header>
 								<Card.Content>
+									<div class="mb-4"><WatcherPollingStatus watcher={w} /></div>
 									<div class="flex items-center justify-between text-sm">
 										<div class="flex items-center gap-1.5 text-muted-foreground">
 											<Rocket class="h-3.5 w-3.5" />

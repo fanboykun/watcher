@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"sync"
 
 	"github.com/fanboykun/watcher/internal/config"
@@ -13,7 +12,7 @@ import (
 
 type watcherHandle struct {
 	cancel    context.CancelFunc
-	trigger   chan struct{}
+	trigger   chan CheckTrigger
 	updatedAt int64
 }
 
@@ -23,16 +22,21 @@ type Agent struct {
 	appCfg       *config.AppConfig
 	log          *Logger
 	events       *WatcherEventBus
-	checkTrigger chan uint
+	checkTrigger chan CheckTrigger
 	syncTrigger  chan struct{}
 	webhooks     *webhook.Service
 
 	mu       sync.Mutex
 	watchers map[uint]watcherHandle
+	polling  *PollingMonitor
 }
 
 // NewAgent creates a configured agent.
-func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus, checkTrigger chan uint, syncTrigger chan struct{}, webhookService *webhook.Service) *Agent {
+func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *WatcherEventBus, checkTrigger chan CheckTrigger, syncTrigger chan struct{}, webhookService *webhook.Service, monitors ...*PollingMonitor) *Agent {
+	monitor := NewPollingMonitor()
+	if len(monitors) > 0 && monitors[0] != nil {
+		monitor = monitors[0]
+	}
 	return &Agent{
 		db:           db,
 		appCfg:       appCfg,
@@ -42,6 +46,7 @@ func NewAgent(db *gorm.DB, appCfg *config.AppConfig, log *Logger, events *Watche
 		syncTrigger:  syncTrigger,
 		webhooks:     webhookService,
 		watchers:     make(map[uint]watcherHandle),
+		polling:      monitor,
 	}
 }
 
@@ -63,17 +68,18 @@ func (a *Agent) Run(ctx context.Context) {
 		case <-a.syncTrigger:
 			a.log.Info("syncing watchers from database")
 			a.syncWatchers(ctx)
-		case triggerID := <-a.checkTrigger:
+		case trigger := <-a.checkTrigger:
 			a.mu.Lock()
-			h, ok := a.watchers[triggerID]
+			h, ok := a.watchers[trigger.WatcherID]
 			a.mu.Unlock()
 			if ok {
 				select {
-				case h.trigger <- struct{}{}:
+				case h.trigger <- trigger:
 				default:
+					a.log.WithTrace(trigger.Trace).Warn("poll trigger skipped: watcher queue is full", "watcher_id", trigger.WatcherID)
 				}
 			} else {
-				a.log.Warn("check trigger for unknown watcher", "id", triggerID)
+				a.log.WithTrace(trigger.Trace).Warn("check trigger for unknown watcher", "watcher_id", trigger.WatcherID)
 			}
 		}
 	}
@@ -87,7 +93,7 @@ func (a *Agent) prepareConfigSnapshots() {
 		return
 	}
 	for i := range watchers {
-		PrepareConfigSnapshots(WatcherConfigFromDB(&watchers[i]), watchers[i].CurrentVersion, a.log)
+		PrepareConfigSnapshots(WatcherConfigFromDB(&watchers[i]), watchers[i].CurrentVersion, a.log.WithWatcher(watchers[i].ID, watchers[i].Name))
 	}
 }
 
@@ -128,15 +134,17 @@ func (a *Agent) syncWatchers(ctx context.Context) {
 			a.log.Info("starting new watcher", "id", w.ID)
 		}
 		watcherCtx, cancel := context.WithCancel(ctx)
-		trigger := make(chan struct{}, 1)
+		trigger := make(chan CheckTrigger, 10)
 		a.watchers[w.ID] = watcherHandle{cancel: cancel, trigger: trigger, updatedAt: updatedAt}
-		go a.runWatcher(watcherCtx, w, trigger)
+		generation := a.polling.register(w.ID)
+		go a.runWatcher(watcherCtx, w, trigger, generation)
 	}
 }
 
 // runWatcher runs one watcher's immediate and ticker-triggered polling loop.
-func (a *Agent) runWatcher(ctx context.Context, watcher *database.Watcher, trigger chan struct{}) {
-	log := a.log.WithComponent(watcher.Name)
+func (a *Agent) runWatcher(ctx context.Context, watcher *database.Watcher, trigger chan CheckTrigger, generation uint64) {
+	defer a.polling.stop(watcher.ID, generation)
+	log := a.log.WithWatcher(watcher.ID, watcher.Name)
 	rw := NewRepoWatcher(watcher, a.db, a.appCfg, a.log, a.events, a.webhooks)
 	log.Info("watcher starting",
 		"service_name", watcher.ServiceName,
@@ -145,9 +153,21 @@ func (a *Agent) runWatcher(ctx context.Context, watcher *database.Watcher, trigg
 		"services", len(watcher.Services),
 	)
 
-	if err := rw.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		log.Error("initial check failed", "error", err)
+	run := func(trace Trace) {
+		if watcher.Paused {
+			return
+		}
+		a.polling.checking(watcher.ID, generation, true)
+		if a.events != nil {
+			a.events.Publish(watcher.ID, WatcherEvent{Type: "poll_started", Data: map[string]any{"poll_id": trace.PollID}})
+		}
+		_ = rw.Run(WithTrace(ctx, trace))
+		a.polling.checking(watcher.ID, generation, false)
+		if a.events != nil {
+			a.events.Publish(watcher.ID, WatcherEvent{Type: "poll_completed", Data: map[string]any{"poll_id": trace.PollID}})
+		}
 	}
+	run(NewPollTrace("", "startup"))
 
 	ticker := newTicker(watcher.CheckIntervalSec)
 	defer ticker.Stop()
@@ -157,14 +177,10 @@ func (a *Agent) runWatcher(ctx context.Context, watcher *database.Watcher, trigg
 			log.Info("watcher stopping")
 			return
 		case <-ticker.C:
-			if err := rw.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Error("check cycle failed", "error", err)
-			}
-		case <-trigger:
-			log.Info("immediate check triggered via API")
-			if err := rw.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Error("triggered check failed", "error", err)
-			}
+			run(NewPollTrace("", "scheduled"))
+		case request := <-trigger:
+			log.WithTrace(request.Trace).Info("immediate check triggered via API")
+			run(request.Trace)
 		}
 	}
 }

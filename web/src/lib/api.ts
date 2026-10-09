@@ -27,7 +27,8 @@ export class APIRequestError extends Error {
 	constructor(
 		message: string,
 		public readonly status: number,
-		public readonly responseBody?: unknown
+		public readonly responseBody?: unknown,
+		public readonly requestId?: string
 	) {
 		super(message);
 		this.name = 'APIRequestError';
@@ -72,10 +73,16 @@ export function errorMessageFromResponse(
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
 	const normalizedPath = path.startsWith('/api/') ? path.slice(4) : path;
 	let res: Response;
+	const clientRequestId = globalThis.crypto?.randomUUID?.();
 	try {
 		res = await fetch(`${API_BASE}${normalizedPath}`, {
 			...options,
-			headers: { 'Content-Type': 'application/json', ...authHeader(), ...options?.headers }
+			headers: {
+				'Content-Type': 'application/json',
+				...(clientRequestId ? { 'X-Request-ID': clientRequestId } : {}),
+				...authHeader(),
+				...options?.headers
+			}
 		});
 	} catch (error) {
 		if (error instanceof Error && error.name === 'AbortError') throw error;
@@ -94,10 +101,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 			// Plain-text and HTML error bodies fall back to an actionable status message.
 		}
 		let message = errorMessageFromResponse(res.status, res.statusText, body);
+		const requestId = res.headers.get('X-Request-ID') || undefined;
+		if (requestId) message += ` (request_id: ${requestId})`;
 		if (body && typeof body === 'object' && 'deploy_log_id' in body) {
 			message += ` (deploy_log_id: ${String((body as { deploy_log_id?: unknown }).deploy_log_id ?? '')})`;
 		}
-		throw new APIRequestError(message, res.status, body);
+		throw new APIRequestError(message, res.status, body, requestId);
 	}
 	if (res.status === 204) return undefined as T;
 	try {
@@ -108,6 +117,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 			res.status
 		);
 	}
+}
+
+export type AgentLogSource = 'agent' | 'stdout' | 'stderr';
+export interface LogFileResponse {
+	source: AgentLogSource | 'watcher';
+	trace_id?: string;
+	watcher_id?: number;
+	log_file: string;
+	format: 'json' | 'mixed';
+	missing: boolean;
+	lines: string[];
 }
 
 export interface AuthenticatedEventStream {
@@ -235,6 +255,12 @@ export interface InspectRepoResponse {
 }
 
 export interface Watcher {
+	polling_activity: 'active' | 'checking' | 'paused' | 'stopped' | 'unknown';
+	poll_started_at: string | null;
+	last_poll_status: string;
+	last_poll_error: string;
+	last_poll_id: string;
+	last_poll_at: string | null;
 	id: number;
 	name: string;
 	service_name: string;
@@ -515,6 +541,10 @@ export interface WebhookDeliveryDetails {
 }
 
 export interface PollEvent {
+	poll_id: string;
+	request_id: string;
+	correlation_id: string;
+	triggered_by: string;
 	id: number;
 	watcher_id: number;
 	checked_at: string;
@@ -665,10 +695,19 @@ export const api = {
 
 	// System
 	status: () => request<SystemStatus>('/status'),
-	agentLogs: (lines = 100) => request<{ lines: string[] }>(`/logs?lines=${lines}`),
+	agentLogs: (lines = 100, source: AgentLogSource = 'agent', signal?: AbortSignal, traceId = '') =>
+		request<LogFileResponse>(
+			`/logs?lines=${lines}&source=${source}&trace_id=${encodeURIComponent(traceId)}`,
+			{ signal }
+		),
+	watcherLogs: (id: number, lines = 100, signal?: AbortSignal, traceId = '') =>
+		request<LogFileResponse>(
+			`/watchers/${id}/logs?lines=${lines}&trace_id=${encodeURIComponent(traceId)}`,
+			{ signal }
+		),
 
 	// Watchers
-	listWatchers: () => request<Watcher[]>('/watchers'),
+	listWatchers: (signal?: AbortSignal) => request<Watcher[]>('/watchers', { signal }),
 	getWatcher: (id: number) => request<Watcher>(`/watchers/${id}`),
 	createWatcher: (data: WatcherWritePayload) =>
 		request<Watcher>('/watchers', { method: 'POST', body: JSON.stringify(data) }),
@@ -677,7 +716,10 @@ export const api = {
 	deleteWatcher: (id: number) =>
 		request<{ message: string }>(`/watchers/${id}`, { method: 'DELETE' }),
 	triggerCheck: (id: number) =>
-		request<{ message: string }>(`/watchers/${id}/check`, { method: 'POST' }),
+		request<{ message: string; request_id: string; poll_id: string; correlation_id: string }>(
+			`/watchers/${id}/check`,
+			{ method: 'POST' }
+		),
 	redeployWatcher: (id: number) =>
 		request<{ message: string; deploy_log_id: number; log_url: string }>(
 			`/watchers/${id}/redeploy`,

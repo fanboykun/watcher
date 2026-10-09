@@ -75,13 +75,9 @@ func (h *Handler) RedeployWatcher(c *gin.Context) {
 		})
 	}
 
-	h.triggerSync()
-
+	// Runtime reads versions from the DB; queue without restarting an uncorrelated cycle.
 	// Trigger immediate check
-	select {
-	case h.checkTrigger <- watcher.ID:
-	default:
-	}
+	_, _ = h.queueCheck(c, watcher.ID)
 
 	apiBaseURL := ""
 	if h.appCfg != nil {

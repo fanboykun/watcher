@@ -18,17 +18,12 @@ func (h *Handler) TriggerCheck(c *gin.Context) {
 		return
 	}
 
-	// Non-blocking send — if buffer is full, the check is already pending
-	select {
-	case h.checkTrigger <- watcher.ID:
-		c.JSON(http.StatusAccepted, MessageResponse{
-			Message: fmt.Sprintf("immediate check triggered for watcher %q", watcher.Name),
-		})
-	default:
-		c.JSON(http.StatusAccepted, MessageResponse{
-			Message: fmt.Sprintf("check already pending for watcher %q", watcher.Name),
-		})
+	trace, queued := h.queueCheck(c, watcher.ID)
+	if !queued {
+		h.pollQueueUnavailable(c)
+		return
 	}
+	c.JSON(http.StatusAccepted, gin.H{"message": fmt.Sprintf("immediate check triggered for watcher %q", watcher.Name), "request_id": trace.RequestID, "poll_id": trace.PollID, "correlation_id": trace.CorrelationID})
 }
 
 // ── Self-management endpoints ─────────────────────────────────────────

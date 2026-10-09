@@ -1,4 +1,5 @@
 <script lang="ts">
+	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { api, type Watcher } from '$lib/api';
 	import * as Button from '$lib/components/ui/button';
@@ -50,21 +51,6 @@
 
 	function showError(msg: string) {
 		globalError = msg;
-	}
-
-	function getNextCheck(w: Watcher) {
-		if (w.paused) return 'Paused';
-		if (!w.last_checked) return 'Pending...';
-
-		const last = new Date(w.last_checked).getTime();
-		const next = last + w.check_interval_sec * 1000;
-		const now = Date.now();
-
-		if (next <= now) return 'Imminent';
-
-		const diffSec = Math.floor((next - now) / 1000);
-		if (diffSec < 60) return `in ${diffSec}s`;
-		return `in ${Math.floor(diffSec / 60)}m ${diffSec % 60}s`;
 	}
 
 	let filteredWatchers = $derived(
@@ -128,16 +114,15 @@
 						<Table.Head>Watcher</Table.Head>
 						<Table.Head>Target Service</Table.Head>
 						<Table.Head>Interval</Table.Head>
-						<Table.Head>Last Checked</Table.Head>
-						<Table.Head>Next Check</Table.Head>
-						<Table.Head>Status</Table.Head>
+						<Table.Head>Polling</Table.Head>
+						<Table.Head>Latest poll</Table.Head>
 						<Table.Head class="text-right">Actions</Table.Head>
 					</Table.Row>
 				</Table.Header>
 				<Table.Body>
 					{#if filteredWatchers.length === 0 && !loadError}
 						<Table.Row>
-							<Table.Cell colspan={7} class="h-24 text-center">No watchers found.</Table.Cell>
+							<Table.Cell colspan={6} class="h-24 text-center">No watchers found.</Table.Cell>
 						</Table.Row>
 					{/if}
 					{#each filteredWatchers as w (w.id)}
@@ -153,31 +138,8 @@
 									{w.check_interval_sec}s
 								</div>
 							</Table.Cell>
-							<Table.Cell>
-								<span title={w.last_checked || ''}>
-									{w.last_checked ? timeAgo(w.last_checked) : 'Never'}
-								</span>
-							</Table.Cell>
-							<Table.Cell>
-								<span class={w.paused ? 'text-muted-foreground' : 'font-medium'}>
-									{getNextCheck(w)}
-								</span>
-							</Table.Cell>
-							<Table.Cell>
-								{#if w.paused}
-									<span
-										class="inline-flex items-center rounded-md bg-yellow-400/10 px-2 py-1 text-xs font-medium text-yellow-500 ring-1 ring-yellow-400/20 ring-inset"
-									>
-										Paused
-									</span>
-								{:else}
-									<span
-										class="inline-flex items-center rounded-md bg-green-500/10 px-2 py-1 text-xs font-medium text-green-500 ring-1 ring-green-500/20 ring-inset"
-									>
-										Active
-									</span>
-								{/if}
-							</Table.Cell>
+							<Table.Cell><WatcherPollingStatus watcher={w} kind="activity" /></Table.Cell>
+							<Table.Cell><WatcherPollingStatus watcher={w} kind="result" /></Table.Cell>
 							<Table.Cell class="text-right">
 								<div class="flex justify-end gap-2" role="group" aria-label="Actions">
 									{#if w.paused}

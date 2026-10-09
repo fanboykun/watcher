@@ -30,7 +30,7 @@ func candidateAPIFixture(t *testing.T) (*gin.Engine, *gorm.DB, database.Watcher,
 		t.Fatal(err)
 	}
 	cfg := &config.AppConfig{WebAssetsPath: "/watcher"}
-	router := NewRouter(db, "nssm", t.TempDir(), "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan uint, 1), make(chan struct{}, 1), nil, nil)
+	router := NewRouter(db, "nssm", t.TempDir(), "test", "", ".env", cfg, agent.NewLoggerWithWriter("api", io.Discard, "error"), nil, make(chan agent.CheckTrigger, 1), make(chan struct{}, 1), nil, nil)
 	return router, db, w, svc
 }
 

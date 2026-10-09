@@ -33,7 +33,7 @@ func (h *Handler) GetServiceStatus(c *gin.Context) {
 		status, statusError := h.probeServiceRuntime(ctx, svc)
 		runtimeDone <- runtimeResult{status, statusError}
 	}()
-	event, _ := probeServiceHealth(ctx, svc, &watcher)
+	event, _ := h.probeServiceHealth(ctx, svc, &watcher)
 	runtime := <-runtimeDone
 	checkedAt := timeNow()
 

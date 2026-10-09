@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -22,7 +23,7 @@ func (h *Handler) GetServiceHealth(c *gin.Context) {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "parent watcher not found"})
 		return
 	}
-	event, healthURL := probeServiceHealth(c.Request.Context(), svc, &watcher)
+	event, healthURL := h.probeServiceHealth(c.Request.Context(), svc, &watcher)
 
 	// Record the event and refresh last-known state.
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
@@ -58,7 +59,7 @@ func (h *Handler) GetServiceHealth(c *gin.Context) {
 }
 
 // probeServiceHealth performs one bounded request, independently of runtime status.
-func probeServiceHealth(ctx context.Context, svc *database.Service, watcher *database.Watcher) (database.HealthEvent, string) {
+func (h *Handler) probeServiceHealth(ctx context.Context, svc *database.Service, watcher *database.Watcher) (database.HealthEvent, string) {
 	event := database.HealthEvent{
 		ServiceID: svc.ID, CheckedAt: timeNow(), Source: "manual",
 		PreviousStatus: svc.LastHealthStatus, Status: "unknown",
@@ -76,6 +77,9 @@ func probeServiceHealth(ctx context.Context, svc *database.Service, watcher *dat
 		return event, healthURL
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
+	if h.log != nil {
+		client.Transport = agent.NewTraceTransport(nil, h.log.WithWatcher(watcher.ID, watcher.Name))
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		event.Status, event.Error = "error", err.Error()

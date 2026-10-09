@@ -34,6 +34,7 @@
 	import ServicesTab from './components/services-tab.svelte';
 	import DeploysTab from './components/deploys-tab.svelte';
 	import VersionsTab from './components/versions-tab.svelte';
+	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
 	import PollingTab from './components/polling-tab.svelte';
 	import WebhooksTab from './components/webhooks-tab.svelte';
 	import CandidateTab from './components/candidate-tab.svelte';
@@ -452,7 +453,7 @@
 			{#if watcher}<span
 					class="shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium capitalize {statusColor(
 						watcher.status
-					)}">{watcher.status.replaceAll('_', ' ')}</span
+					)}">Deployment: {watcher.status.replaceAll('_', ' ')}</span
 				>{/if}
 		</div>
 		{#if watcher}
@@ -526,6 +527,9 @@
 	{#if loading}
 		<RequestLoading label="Loading watcher details…" />
 	{:else if watcher}
+		<div class="rounded-xl border border-border bg-card p-4">
+			<WatcherPollingStatus {watcher} />
+		</div>
 		{#if watcher.status === 'pending_approval' && activeTab !== 'candidates'}
 			<div class="section-toolbar rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
 				<div class="min-w-0">
@@ -657,6 +661,7 @@
 
 			<Tabs.Content value="polling" class="mt-4">
 				<PollingTab
+					watcherId={id}
 					{polls}
 					bind:pollPage
 					{pollPageSize}

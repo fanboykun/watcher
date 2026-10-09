@@ -40,6 +40,12 @@ type Watcher struct {
 	CurrentVersion    string     `gorm:"not null;default:''" json:"current_version"`
 	MaxIgnoredVersion string     `gorm:"not null;default:''" json:"max_ignored_version"`
 	Status            string     `gorm:"not null;default:'unknown'" json:"status"`
+	PollingActivity   string     `gorm:"-" json:"polling_activity"`
+	PollStartedAt     *time.Time `gorm:"-" json:"poll_started_at"`
+	LastPollStatus    string     `gorm:"not null;default:''" json:"last_poll_status"`
+	LastPollError     string     `gorm:"not null;default:''" json:"last_poll_error"`
+	LastPollID        string     `gorm:"not null;default:''" json:"last_poll_id"`
+	LastPollAt        *time.Time `json:"last_poll_at"`
 	LastChecked       *time.Time `json:"last_checked"`
 	LastDeployed      *time.Time `json:"last_deployed"`
 	LastError         string     `gorm:"not null;default:''" json:"last_error"`
@@ -158,6 +164,10 @@ type HealthEvent struct {
 
 // PollEvent records the outcome of a GitHub version check.
 type PollEvent struct {
+	PollID        string    `gorm:"index;not null;default:''" json:"poll_id"`
+	RequestID     string    `gorm:"index;not null;default:''" json:"request_id"`
+	CorrelationID string    `gorm:"index;not null;default:''" json:"correlation_id"`
+	TriggeredBy   string    `gorm:"not null;default:''" json:"triggered_by"`
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	WatcherID     uint      `gorm:"not null;index" json:"watcher_id"`
 	CheckedAt     time.Time `gorm:"not null;autoCreateTime" json:"checked_at"`

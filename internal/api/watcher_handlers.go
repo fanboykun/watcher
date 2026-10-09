@@ -20,9 +20,11 @@ func (h *Handler) ListWatchers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	h.enrichLegacyPolling(watchers)
 	for i := range watchers {
 		normalizeWatcherServices(&watchers[i])
 		enrichWatcherSecrets(&watchers[i])
+		h.enrichPolling(&watchers[i])
 	}
 	c.JSON(http.StatusOK, watchers)
 }
@@ -33,8 +35,12 @@ func (h *Handler) GetWatcher(c *gin.Context) {
 	if err != nil {
 		return // response already sent
 	}
+	legacy := []database.Watcher{*watcher}
+	h.enrichLegacyPolling(legacy)
+	*watcher = legacy[0]
 	normalizeWatcherServices(watcher)
 	enrichWatcherSecrets(watcher)
+	h.enrichPolling(watcher)
 	c.JSON(http.StatusOK, watcher)
 }
 
@@ -348,6 +354,7 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	// Reload
 	h.db.Preload("Services").First(watcher, watcher.ID)
 	enrichWatcherSecrets(watcher)
+	h.enrichPolling(watcher)
 	c.JSON(http.StatusOK, watcher)
 }
 
@@ -422,10 +429,7 @@ func (h *Handler) ApproveRelease(c *gin.Context) {
 		return
 	}
 
-	select {
-	case h.checkTrigger <- watcher.ID:
-	default:
-	}
+	_, _ = h.queueCheck(c, watcher.ID)
 
 	c.JSON(http.StatusOK, MessageResponse{Message: "Release approved and deployment triggered"})
 }
@@ -611,4 +615,38 @@ func (h *Handler) UpdateWatcherCandidate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, MessageResponse{Message: "Candidate configuration saved successfully"})
+}
+
+func (h *Handler) enrichPolling(w *database.Watcher) {
+	w.PollingActivity, w.PollStartedAt = h.polling.Snapshot(w.ID, w.Paused)
+}
+
+// Preserve historical results until the first cycle stores a completion summary.
+func (h *Handler) enrichLegacyPolling(watchers []database.Watcher) {
+	ids := make([]uint, 0)
+	for _, w := range watchers {
+		if w.LastPollAt == nil {
+			ids = append(ids, w.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	var events []database.PollEvent
+	if err := h.db.Where("watcher_id IN ? AND id IN (SELECT MAX(id) FROM poll_events GROUP BY watcher_id)", ids).Find(&events).Error; err != nil {
+		return
+	}
+	latest := make(map[uint]database.PollEvent, len(events))
+	for _, event := range events {
+		latest[event.WatcherID] = event
+	}
+	for i := range watchers {
+		if watchers[i].LastPollAt != nil {
+			continue
+		}
+		if event, ok := latest[watchers[i].ID]; ok {
+			at := event.CheckedAt
+			watchers[i].LastPollStatus, watchers[i].LastPollError, watchers[i].LastPollID, watchers[i].LastPollAt = event.Status, event.Error, event.PollID, &at
+		}
+	}
 }

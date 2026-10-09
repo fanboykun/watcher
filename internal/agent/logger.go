@@ -26,8 +26,13 @@ type LogConfig struct {
 // Logger keeps the existing call-site API while delegating JSON encoding and
 // attribute handling to log/slog.
 type Logger struct {
-	logger *slog.Logger
-	closer io.Closer
+	logger      *slog.Logger
+	handler     slog.Handler
+	component   string
+	watcherID   uint
+	watcherName string
+	trace       Trace
+	closer      io.Closer
 }
 
 // NewLogger creates a configured logger.
@@ -58,7 +63,8 @@ func newFileLogger(component, logDir string, cfg LogConfig, stdout io.Writer) (*
 		MaxAge:     cfg.MaxAgeDays,
 		Compress:   cfg.Compress,
 	}
-	return newLogger(component, io.MultiWriter(stdout, rotator), cfg.Level, rotator), nil
+	writer := &scopedLogWriter{global: io.MultiWriter(stdout, rotator), globalFile: rotator, logDir: logDir, cfg: cfg, files: make(map[uint]*lumberjack.Logger)}
+	return newLogger(component, writer, cfg.Level, writer), nil
 }
 
 // newLogger creates the shared slog wrapper and records ownership of its output closer.
@@ -67,16 +73,44 @@ func newLogger(component string, out io.Writer, level string, closer io.Closer) 
 	if err := parsedLevel.UnmarshalText([]byte(strings.ToUpper(strings.TrimSpace(level)))); err != nil {
 		parsedLevel = slog.LevelInfo
 	}
-	return &Logger{
-		logger: slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: parsedLevel})).With("component", component),
-		closer: closer,
-	}
+	log := &Logger{handler: slog.NewJSONHandler(out, &slog.HandlerOptions{Level: parsedLevel}), component: component, closer: closer}
+	log.rebuild()
+	return log
 }
 
-// WithComponent returns a logger sharing the output and level with a
-// replacement component attribute, rather than nesting component values.
+// WithComponent replaces the component while retaining watcher identity and destinations.
 func (l *Logger) WithComponent(component string) *Logger {
-	return &Logger{logger: slog.New(l.logger.Handler()).With("component", component)}
+	child := *l
+	child.component, child.closer = component, nil
+	child.rebuild()
+	return &child
+}
+
+// WithWatcher routes records to the watcher ID's file as well as the global output.
+func (l *Logger) WithWatcher(id uint, name string) *Logger {
+	child := *l
+	child.watcherID, child.watcherName, child.component, child.closer = id, name, name, nil
+	child.rebuild()
+	return &child
+}
+
+func (l *Logger) rebuild() {
+	l.logger = slog.New(l.handler).With("component", l.component)
+	if l.watcherID != 0 {
+		l.logger = l.logger.With("watcher_id", l.watcherID, "watcher_name", l.watcherName)
+	}
+	if l.trace.CorrelationID != "" {
+		l.logger = l.logger.With("correlation_id", l.trace.CorrelationID)
+	}
+	if l.trace.RequestID != "" {
+		l.logger = l.logger.With("request_id", l.trace.RequestID)
+	}
+	if l.trace.PollID != "" {
+		l.logger = l.logger.With("poll_id", l.trace.PollID)
+	}
+	if l.trace.TriggeredBy != "" {
+		l.logger = l.logger.With("triggered_by", l.trace.TriggeredBy)
+	}
 }
 
 // Info writes an informational structured log entry.
