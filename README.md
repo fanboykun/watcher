@@ -229,8 +229,11 @@ from live services until activation and health checks succeed.
 including for paused watchers. The deployment reuses the normal service stop,
 activation, health-check, snapshot, and rollback pipeline. Missing or modified
 cached artifacts are rejected before service operations. A failed or interrupted
-deployment retains its download for an explicit retry. The watcher's configured
-polling release reference remains unchanged after a manual deployment; automatic
+deployment retains its download for an explicit retry. The selected
+candidate remains available in **Candidates** after a failure or automatic rollback:
+review the error, retry deployment, or discard the candidate to choose another
+release. Discarding a candidate preserves its downloaded ZIP in **Versions**.
+The configured polling release reference remains unchanged after a manual deployment; automatic
 polling can subsequently deploy its configured release. Catalog ZIPs remain
 staged independently of retained deployed-version cleanup.
 

@@ -448,7 +448,8 @@ func (h *Handler) DiscardRelease(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	if watcher.Status != "pending_approval" {
+	recoverableCatalog := watcher.PendingCatalogID != 0 && watcher.ApprovedVersion == "" && watcher.Status != "approved" && watcher.Status != "deploying"
+	if watcher.Status != "pending_approval" && !recoverableCatalog {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "No release pending approval"})
 		return
 	}
@@ -465,13 +466,23 @@ func (h *Handler) DiscardRelease(c *gin.Context) {
 		"intercept_next_release": false,
 	}
 	if discardedVersion != "" {
-		updates["max_ignored_version"] = discardedVersion
+		cmp, comparable := agent.CompareVersions(discardedVersion, watcher.MaxIgnoredVersion)
+		if watcher.MaxIgnoredVersion == "" || (comparable && cmp > 0) {
+			updates["max_ignored_version"] = discardedVersion
+		}
 	}
 
 	updates["approved_version"] = ""
 	updates["pending_catalog_id"] = 0
 	err = h.db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", discardedVersion).UpdateColumns(updates)
+		var active int64
+		if err := tx.Model(&database.DeployLog{}).Where("watcher_id = ? AND completed_at IS NULL", watcher.ID).Count(&active).Error; err != nil {
+			return err
+		}
+		if active != 0 {
+			return errCatalogConflict
+		}
+		result := tx.Model(watcher).Where("status = ? AND pending_version = ? AND pending_catalog_id = ? AND approved_version = ? AND max_ignored_version = ?", watcher.Status, discardedVersion, watcher.PendingCatalogID, watcher.ApprovedVersion, watcher.MaxIgnoredVersion).UpdateColumns(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -487,7 +498,7 @@ func (h *Handler) DiscardRelease(c *gin.Context) {
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, errCatalogConflict) {
 			status = http.StatusConflict
 		}
 		c.JSON(status, ErrorResponse{Error: err.Error()})

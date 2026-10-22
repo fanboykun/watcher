@@ -57,6 +57,13 @@
 		}
 	}
 	let watcher = $state<Watcher | null>(null);
+	const reviewableCandidate = $derived(
+		watcher &&
+			(watcher.status === 'pending_approval' ||
+				(watcher.pending_catalog_id > 0 &&
+					watcher.status !== 'approved' &&
+					watcher.status !== 'deploying'))
+	);
 	let deploys = $state<DeployLog[]>([]);
 	let polls = $state<import('$lib/api').PollEvent[]>([]);
 	let versions = $state<import('$lib/api').ReleaseInfo[]>([]);
@@ -95,6 +102,8 @@
 
 	let watcherEventSource: AuthenticatedEventStream | null = null;
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+	let refreshVersions = false;
+	let refreshPolls = false;
 
 	const id = Number(page.params.id);
 
@@ -182,9 +191,15 @@
 	}
 
 	function scheduleRefresh(includeVersions = false, includePolls = false) {
+		refreshVersions ||= includeVersions;
+		refreshPolls ||= includePolls;
 		if (refreshTimer) return;
 		refreshTimer = setTimeout(async () => {
 			refreshTimer = null;
+			const includeVersions = refreshVersions;
+			const includePolls = refreshPolls;
+			refreshVersions = false;
+			refreshPolls = false;
 			try {
 				const tasks: Array<Promise<unknown>> = [
 					api.getWatcher(id).then((w) => (watcher = w)),
@@ -440,11 +455,12 @@
 		}
 	}
 
-	async function approveRelease(version?: string) {
+	async function approveRelease(version?: string, catalogId = 0) {
 		// The candidate editor owns approval errors and keeps its review state.
 		const target = version || watcher?.pending_version;
 		if (!target) return;
-		await api.approveRelease(id, target);
+		if (catalogId > 0) await api.deployCatalogRelease(id, catalogId);
+		else await api.approveRelease(id, target);
 		triggerMsg = 'Release approved! Deploying...';
 		scheduleRefresh();
 	}
@@ -541,7 +557,9 @@
 						>
 						<DropdownMenu.Item
 							class="text-amber-400"
-							disabled={actionBusy || watcher.status === 'pending_approval'}
+							disabled={actionBusy ||
+								!!watcher.pending_catalog_id ||
+								watcher.status === 'pending_approval'}
 							onSelect={triggerRedeploy}><RotateCcw />Redeploy</DropdownMenu.Item
 						>
 					</DropdownMenu.Content>
@@ -572,14 +590,14 @@
 		<div class="rounded-xl border border-border bg-card p-4">
 			<WatcherPollingStatus {watcher} />
 		</div>
-		{#if watcher.status === 'pending_approval' && activeTab !== 'candidates'}
+		{#if reviewableCandidate && activeTab !== 'candidates'}
 			<div class="section-toolbar rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
 				<div class="min-w-0">
 					<p class="text-sm font-medium">
-						Release <span class="font-mono">{watcher.pending_version}</span> awaits approval
+						Release <span class="font-mono">{watcher.pending_version}</span> awaits review
 					</p>
 					<p class="mt-1 text-xs text-muted-foreground">
-						Review its configuration before deploying.
+						Review its configuration to deploy or discard this candidate.
 					</p>
 				</div>
 				<Button.Root
@@ -644,7 +662,7 @@
 				<Tabs.Trigger value="releases">GitHub releases</Tabs.Trigger>
 				<Tabs.Trigger value="candidates" class="relative">
 					Candidates
-					{#if watcher.status === 'pending_approval'}
+					{#if reviewableCandidate}
 						<span class="ml-1.5 flex h-2 w-2 rounded-full bg-purple-500"></span>
 					{/if}
 				</Tabs.Trigger>
@@ -672,8 +690,10 @@
 					{#key id}
 						<ReleasesTab
 							{watcher}
+							onDownloaded={loadVersions}
 							onNavigate={async (tab) => {
 								watcher = await api.getWatcher(id);
+								await Promise.all([loadVersions(), loadDeploys()]);
 								activeTab = tab;
 								await goto(resolve(`/watchers/[id]?tab=${tab}`, { id: String(id) }), {
 									replaceState: true,
@@ -689,7 +709,8 @@
 				<CandidateTab
 					{watcher}
 					busy={actionBusy}
-					onApprove={(version) => runPending('approve', () => approveRelease(version))}
+					onApprove={(version, catalogId) =>
+						runPending('approve', () => approveRelease(version, catalogId))}
 					onDiscard={discardRelease}
 					onRefreshWatcher={async () => {
 						watcher = await api.getWatcher(id);

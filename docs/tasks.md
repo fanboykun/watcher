@@ -3,6 +3,10 @@
 Open issues and requested improvements. These tasks are pending implementation;
 the reported symptoms below do not establish a confirmed root cause.
 
+The per-watcher GitHub release catalog has a separate
+[continuation and handoff plan](release-catalog-plan.md), including its current
+implementation, remaining acceptance work, and uncommitted changes.
+
 ## 1. Preserve the public host and base path when opening deployment logs
 
 - [ ] Fix the automatic navigation to deployment logs when a user connected to a watcher's SSE stream receives a new deployment event.

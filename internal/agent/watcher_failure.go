@@ -11,27 +11,45 @@ import (
 // recordDeployFailure persists a failed deployment and any compensation attempt.
 func (r *RepoWatcher) recordDeployFailure(err error, targetVersion, localVersion string) bool {
 	phase, originalErr, rollbackTo, rollbackFailed := classifyDeployFailure(err)
-	_ = r.state.SetFailedWithPhase(originalErr, phase)
-	if rollbackTo != "" {
+	var rollbackID uint
+	if rollbackTo != "" || rollbackFailed {
 		deployAttemptID, rootAttemptID := r.latestDeployAttemptIDs()
-		rollbackID, rbErr := r.state.StartRollbackAttempt(rollbackTo, targetVersion, targetVersion, "auto_after_deploy_failure", "agent", deployAttemptID, rootAttemptID)
-		if rbErr == nil {
-			services, reconcileErr := ReconcileConfigSnapshot(r.db, r.watcherID, rollbackTo)
-			if reconcileErr != nil {
-				message := fmt.Sprintf("rollback to %s restored runtime but failed to reconcile persisted config: %v", rollbackTo, reconcileErr)
-				_ = r.state.FailRollbackAttempt(rollbackID, message)
-				return false
+		version := rollbackTo
+		if version == "" {
+			version = localVersion
+		}
+		var startErr error
+		rollbackID, startErr = r.state.StartRollbackAttempt(version, targetVersion, targetVersion, "auto_after_deploy_failure", "agent", deployAttemptID, rootAttemptID)
+		if startErr != nil {
+			r.log.Error("failed to record compensation attempt", "deploy_log_id", r.state.deployLogID, "error", startErr)
+			return false
+		}
+	}
+	// An open recovery attempt keeps API admission closed until reconciliation and
+	// the final watcher state have committed, even after approval is released.
+	if err := r.state.SetFailedWithPhase(originalErr, phase); err != nil {
+		r.log.Error("failed to settle deployment attempt", "deploy_log_id", r.state.deployLogID, "error", err)
+		return false
+	}
+	if rollbackTo != "" {
+		services, reconcileErr := ReconcileConfigSnapshot(r.db, r.watcherID, rollbackTo)
+		if reconcileErr != nil {
+			message := fmt.Sprintf("rollback to %s restored runtime but failed to reconcile persisted config: %v", rollbackTo, reconcileErr)
+			if err := r.state.FailRollbackAttempt(rollbackID, message); err != nil {
+				r.log.Error("failed to settle rollback reconciliation failure", "deploy_log_id", rollbackID, "error", err)
 			}
-			r.wcfg.Services = services
-			_ = r.state.CompleteRollbackAttempt(rollbackID, rollbackTo, "")
+			return false
+		}
+		r.wcfg.Services = services
+		if err := r.state.CompleteRollbackAttempt(rollbackID, rollbackTo, ""); err != nil {
+			r.log.Error("failed to complete rollback attempt", "deploy_log_id", rollbackID, "error", err)
+			return false
 		}
 		return true
 	}
 	if rollbackFailed {
-		deployAttemptID, rootAttemptID := r.latestDeployAttemptIDs()
-		rollbackID, rbErr := r.state.StartRollbackAttempt(localVersion, targetVersion, targetVersion, "auto_after_deploy_failure", "agent", deployAttemptID, rootAttemptID)
-		if rbErr == nil {
-			_ = r.state.FailRollbackAttempt(rollbackID, err.Error())
+		if failureErr := r.state.FailRollbackAttempt(rollbackID, err.Error()); failureErr != nil {
+			r.log.Error("failed to settle failed rollback attempt", "deploy_log_id", rollbackID, "error", failureErr)
 		}
 	}
 	return false
@@ -40,7 +58,11 @@ func (r *RepoWatcher) recordDeployFailure(err error, targetVersion, localVersion
 // latestDeployAttemptIDs loads the latest deploy attempt identifiers for rollback lineage.
 func (r *RepoWatcher) latestDeployAttemptIDs() (*uint, *uint) {
 	var attempt database.DeployLog
-	if err := r.db.Where("watcher_id = ? AND kind = ?", r.watcherID, "deploy").Order("id desc").First(&attempt).Error; err != nil {
+	query := r.db.Where("watcher_id = ? AND kind = ?", r.watcherID, "deploy")
+	if r.state.deployLogID != 0 {
+		query = query.Where("id = ?", r.state.deployLogID)
+	}
+	if err := query.Order("id desc").First(&attempt).Error; err != nil {
 		return nil, nil
 	}
 	parent := attempt.ID

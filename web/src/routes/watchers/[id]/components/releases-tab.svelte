@@ -25,8 +25,13 @@
 
 	let {
 		watcher,
+		onDownloaded,
 		onNavigate
-	}: { watcher: Watcher; onNavigate: (tab: 'candidates' | 'deploys') => Promise<void> } = $props();
+	}: {
+		watcher: Watcher;
+		onDownloaded: () => Promise<void>;
+		onNavigate: (tab: 'candidates' | 'deploys') => Promise<void>;
+	} = $props();
 	let catalog = $state.raw<ReleaseCatalogResponse | null>(null);
 	let loading = $state(true);
 	let error = $state('');
@@ -83,6 +88,7 @@
 				catalog = { ...catalog, downloads: [result, ...catalog.downloads] };
 				message = `${result.asset_name} downloaded to Watcher. Ready to configure.`;
 			}
+			await onDownloaded();
 		} catch (cause) {
 			if (mounted) error = cause instanceof Error ? cause.message : 'Download failed.';
 		} finally {

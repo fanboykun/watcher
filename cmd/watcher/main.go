@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -78,11 +79,23 @@ func main() {
 	webhookTrigger := make(chan struct{}, 32)
 	webhookService := webhook.NewService(db, cfg, webhookTrigger)
 
+	// Recovery must finish before HTTP handlers can enqueue new catalog work.
+	agentCtx, stopAgent := context.WithCancel(context.Background())
+	defer stopAgent()
+	a := agent.NewAgent(db, cfg, log, events, checkTrigger, syncTrigger, webhookService, polling)
+	agentDone := make(chan struct{})
+	go func() {
+		defer close(agentDone)
+		a.Run(agentCtx)
+	}()
+	<-a.Ready()
+
 	// Start API server in background
 	router := api.NewRouter(db, cfg.NssmPath, cfg.LogDir, Version, cfg.GitHubToken, *envPath, cfg, log.WithComponent("api"), events, checkTrigger, syncTrigger, webhookService, webhookTrigger, polling)
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%s", cfg.APIPort),
-		Handler: router,
+		Addr:        fmt.Sprintf(":%s", cfg.APIPort),
+		Handler:     router,
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	go func() {
@@ -94,13 +107,15 @@ func main() {
 
 	go webhook.NewDispatcher(db, cfg, log.WithComponent("webhook-dispatcher"), webhookService, webhookTrigger).Run(ctx)
 
-	// Start watcher agent (blocks until ctx cancelled)
-	a := agent.NewAgent(db, cfg, log, events, checkTrigger, syncTrigger, webhookService, polling)
-	a.Run(ctx)
+	// Signal cancellation also ends streaming HTTP requests via BaseContext.
+	<-ctx.Done()
 
 	// Graceful shutdown of API server
 	log.Info("shutting down API server")
 	if err := srv.Shutdown(context.Background()); err != nil {
 		log.Warn("API server shutdown error", "error", err)
 	}
+	// Active handlers have finished enqueueing; drain and join all accepted work.
+	stopAgent()
+	<-agentDone
 }

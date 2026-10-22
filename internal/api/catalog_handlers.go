@@ -91,9 +91,12 @@ func (h *Handler) DownloadCatalogRelease(c *gin.Context) {
 	path := agent.CatalogArtifactPath(&artifact)
 	sum, err := client.DownloadCatalogAsset(c.Request.Context(), watcher.MetadataURL, asset.ID, path, asset.Digest)
 	if err == nil {
+		err = c.Request.Context().Err()
+	}
+	if err == nil {
 		now := time.Now().UTC()
 		artifact.SHA256, artifact.DownloadedAt = sum, &now
-		err = h.db.Save(&artifact).Error
+		err = h.db.WithContext(c.Request.Context()).Save(&artifact).Error
 	}
 	if err != nil {
 		_ = os.RemoveAll(filepath.Dir(path))
@@ -208,7 +211,7 @@ func (h *Handler) queueCatalogDeploy(c *gin.Context, watcher *database.Watcher, 
 		return
 	}
 	select {
-	case h.checkTrigger <- agent.CheckTrigger{WatcherID: watcher.ID, CatalogID: artifact.ID, Trace: trace}:
+	case h.checkTrigger <- agent.CheckTrigger{WatcherID: watcher.ID, CatalogID: artifact.ID, DeployLogID: dlog.ID, Trace: trace}:
 		c.Header("X-Poll-ID", trace.PollID)
 		c.JSON(http.StatusAccepted, gin.H{"message": "Selected release queued for deployment", "deploy_log_id": dlog.ID, "version": artifact.Version, "catalog_id": artifact.ID, "poll_id": trace.PollID, "correlation_id": trace.CorrelationID})
 	default:

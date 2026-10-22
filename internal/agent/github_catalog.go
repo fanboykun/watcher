@@ -159,6 +159,9 @@ func (g *GitHubClient) DownloadCatalogAsset(ctx context.Context, repoURL string,
 	if err != nil {
 		return "", err
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if err := os.Rename(f.Name(), path); err != nil {
 		return "", err
 	}
@@ -195,17 +198,20 @@ func ValidateCatalogArtifact(watcher *database.Watcher, artifact *database.Catal
 
 // RunCatalog deploys exactly the approved local artifact without resolving "latest".
 // It runs on the existing watcher goroutine, so deployments remain serialized.
-func (r *RepoWatcher) RunCatalog(ctx context.Context, catalogID uint) error {
+func (r *RepoWatcher) RunCatalog(ctx context.Context, catalogID, deployLogID uint) (runErr error) {
 	var watcher database.Watcher
 	if err := r.db.Preload("Services").Preload("Services.ConfigFiles").First(&watcher, r.watcherID).Error; err != nil {
 		return err
 	}
-	if watcher.PendingCatalogID != catalogID || watcher.ApprovedVersion == "" {
+	if watcher.PendingCatalogID != catalogID || watcher.ApprovedVersion == "" || watcher.Status != "approved" {
 		return fmt.Errorf("catalog approval changed; deployment canceled")
 	}
-	var artifact database.CatalogArtifact
-	if err := r.db.Where("id = ? AND watcher_id = ?", catalogID, watcher.ID).First(&artifact).Error; err != nil {
-		return err
+	var attempt database.DeployLog
+	if deployLogID == 0 {
+		return fmt.Errorf("catalog deployment attempt is required")
+	}
+	if err := r.db.Where("id = ? AND watcher_id = ? AND kind = ? AND reason = ? AND status = ? AND version = ? AND completed_at IS NULL", deployLogID, watcher.ID, "deploy", "catalog_release", "in_progress", watcher.PendingVersion).First(&attempt).Error; err != nil {
+		return fmt.Errorf("catalog deployment attempt changed: %w", err)
 	}
 	cycle := NewRepoWatcher(&watcher, r.db, r.global, r.log, r.state.events, r.webhooks)
 	// Future scheduled cycles must use the environment committed (or restored) by this deployment.
@@ -220,24 +226,33 @@ func (r *RepoWatcher) RunCatalog(ctx context.Context, catalogID uint) error {
 	trace := TraceFromContext(ctx)
 	cycle.log = cycle.log.WithTrace(trace)
 	cycle.state.log, cycle.state.trace = cycle.log, trace
-	cycle.state.catalogID = catalogID
+	cycle.state.catalogID, cycle.state.deployLogID = catalogID, deployLogID
 	cycle.deployer.log, cycle.deployer.logFn = cycle.log, cycle.state.AppendDeployLog
+	// Every accepted request must complete its queued attempt, including failures
+	// before deployment starts (for example, a removed catalog record).
+	defer func() {
+		if runErr != nil {
+			cycle.recordDeployFailure(runErr, watcher.PendingVersion, watcher.CurrentVersion)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var artifact database.CatalogArtifact
+	if err := r.db.Where("id = ? AND watcher_id = ?", catalogID, watcher.ID).First(&artifact).Error; err != nil {
+		return fmt.Errorf("load selected catalog download: %w", err)
+	}
 	cycle.cachedArtifact = CatalogArtifactPath(&artifact)
 	if watcher.ApprovedVersion != artifact.Version || watcher.PendingVersion != artifact.Version {
 		return fmt.Errorf("catalog version does not match approval")
 	}
 	if err := ValidateCatalogArtifact(&watcher, &artifact); err != nil {
-		cycle.recordDeployFailure(err, artifact.Version, watcher.CurrentVersion)
-		_ = r.db.Model(&database.Watcher{}).Where("id = ? AND pending_catalog_id = ?", watcher.ID, catalogID).UpdateColumn("approved_version", "").Error
 		return err
 	}
 	cycle.log.Info("catalog deployment started", "catalog_id", catalogID, "version", artifact.Version, "asset", artifact.AssetName)
 	gh := NewGitHubClient(cycle.resolveGitHubToken(), cycle.log)
 	err := cycle.deploy(ctx, gh, ServiceMeta{Version: artifact.Version, Artifact: artifact.AssetName, ArtifactURL: artifact.ArtifactURL}, artifact.Version, watcher.CurrentVersion)
 	if err != nil {
-		cycle.recordDeployFailure(err, artifact.Version, watcher.CurrentVersion)
-		// Retain the exact artifact for retry, but require fresh operator approval.
-		_ = r.db.Model(&database.Watcher{}).Where("id = ? AND pending_catalog_id = ?", watcher.ID, catalogID).UpdateColumn("approved_version", "").Error
 		return err
 	}
 	cycle.log.Info("catalog deployment completed", "catalog_id", catalogID, "version", artifact.Version)

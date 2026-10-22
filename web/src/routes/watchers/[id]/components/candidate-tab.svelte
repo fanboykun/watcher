@@ -25,7 +25,8 @@
 		Trash2,
 		Zap
 	} from '@lucide/svelte';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
 
 	interface EditableServiceCandidate {
 		serviceId: number;
@@ -55,7 +56,7 @@
 	}: {
 		watcher: Watcher;
 		busy?: boolean;
-		onApprove?: (version: string) => Promise<void>;
+		onApprove?: (version: string, catalogId: number) => Promise<void>;
 		onDiscard?: () => Promise<void>;
 		onRefreshWatcher?: () => Promise<void>;
 	} = $props();
@@ -67,6 +68,7 @@
 	let services = $state<EditableServiceCandidate[]>([]);
 	let loading = $state(true);
 	let loadedTarget = $state('');
+	let loadedSelection = $state('');
 	let loadGeneration = 0;
 	let saving = $state(false);
 	let saveSuccess = $state('');
@@ -74,8 +76,16 @@
 	let approving = $state(false);
 	let discarding = $state(false);
 
+	const pendingSelection = $derived(
+		`${watcher.id}:${watcher.pending_catalog_id}:${watcher.pending_version}`
+	);
 	const activeTargetChoice = $derived(selectedTarget || watcher.pending_version || 'next');
 	const effectiveTarget = $derived(isCustom ? customTarget.trim() : activeTargetChoice);
+	const retainedCatalog = $derived(
+		watcher.pending_catalog_id > 0 &&
+			watcher.status !== 'approved' &&
+			watcher.status !== 'deploying'
+	);
 
 	const hasAnyChanges = $derived(services.some((s) => s.candidateEnv !== s.originalCandidateEnv));
 
@@ -84,12 +94,16 @@
 	async function loadCandidateData(target: string) {
 		if (!target) return;
 		const generation = ++loadGeneration;
+		const selection = pendingSelection;
+		loadedTarget = '';
+		loadedSelection = '';
 		loading = true;
 		error = '';
 		try {
 			const res = await api.getWatcherCandidate(watcher.id, target);
-			if (generation !== loadGeneration) return;
+			if (generation !== loadGeneration || selection !== pendingSelection) return;
 			loadedTarget = target;
+			loadedSelection = selection;
 			services = res.services.map((s) => ({
 				serviceId: s.service_id,
 				serviceName: s.service_name,
@@ -108,9 +122,28 @@
 		}
 	}
 
-	onMount(() => {
+	// Tabs keep this editor mounted. Catalog selection refreshes the watcher before
+	// navigating here; routine watcher refreshes must preserve in-progress edits.
+	let navigatedSelection = '';
+	function syncPendingSelection() {
+		if (navigatedSelection === pendingSelection) return;
+		navigatedSelection = pendingSelection;
+		++loadGeneration;
+		loadedSelection = '';
+		if (hasAnyChanges) {
+			loading = false;
+			error =
+				'The pending release changed. Your edits are preserved; save them before loading the new candidate.';
+			return;
+		}
+		isCustom = false;
 		selectedTarget = watcher.pending_version || 'next';
 		void loadCandidateData(selectedTarget);
+	}
+	onMount(syncPendingSelection);
+	afterNavigate(syncPendingSelection);
+	onDestroy(() => {
+		++loadGeneration;
 	});
 
 	async function selectTarget(target: string, custom = false) {
@@ -184,12 +217,15 @@
 		if (
 			loading ||
 			loadedTarget !== watcher.pending_version ||
-			effectiveTarget !== watcher.pending_version
+			effectiveTarget !== watcher.pending_version ||
+			loadedSelection !== pendingSelection
 		) {
 			error = 'Select and load the pending release before approving';
 			return;
 		}
 		const version = watcher.pending_version;
+		const selection = pendingSelection;
+		const catalogId = watcher.pending_catalog_id;
 		approving = true;
 		error = '';
 		try {
@@ -204,7 +240,11 @@
 					}))
 				);
 			}
-			await onApprove(version);
+			if (selection !== pendingSelection || loadedSelection !== selection) {
+				error = 'The pending release changed. Load and review it before approving.';
+				return;
+			}
+			await onApprove(version, catalogId);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Approval failed';
 		} finally {
@@ -308,7 +348,7 @@
 		</div>
 	{/if}
 
-	{#if watcher.status === 'pending_approval'}
+	{#if watcher.status === 'pending_approval' || retainedCatalog}
 		<div class="section-toolbar rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
 			<div class="min-w-0">
 				<p class="text-sm font-medium">
@@ -317,6 +357,19 @@
 				<p class="mt-1 text-xs text-muted-foreground">
 					Approval saves your edits and restarts the services.
 				</p>
+				{#if !loading && loadedSelection !== pendingSelection}
+					<p class="mt-2 text-sm text-amber-400">
+						Load the pending candidate using its version below before approving.
+						{#if hasAnyChanges}Save your edits first to keep them for the displayed target.{/if}
+					</p>
+				{/if}
+				{#if retainedCatalog && watcher.last_error}
+					<p class="mt-2 text-sm text-destructive">{watcher.last_error}</p>
+					<p class="mt-1 text-xs text-muted-foreground">
+						Retry this download, or discard the candidate to select another release. The download
+						stays in Versions.
+					</p>
+				{/if}
 			</div>
 			<div class="page-actions">
 				<Button.Root
@@ -333,7 +386,8 @@
 						saving ||
 						loading ||
 						effectiveTarget !== watcher.pending_version ||
-						loadedTarget !== watcher.pending_version}
+						loadedTarget !== watcher.pending_version ||
+						loadedSelection !== pendingSelection}
 					loading={approving}
 					onclick={handleApprove}>Approve & deploy</Button.Root
 				>

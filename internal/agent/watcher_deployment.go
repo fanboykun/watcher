@@ -112,10 +112,10 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 	}
 
 	if err := r.state.WriteVersion(targetVersion); err != nil {
-		r.log.Warn("failed to write version", "error", err)
+		return fmt.Errorf("record deployed version: %w", err)
 	}
 	if err := r.state.SetHealthy(targetVersion); err != nil {
-		r.log.Warn("failed to update state", "error", err)
+		return fmt.Errorf("complete deployment attempt: %w", err)
 	}
 	if owner, repo, err := resolveDeploymentRepo(r.wcfg.MetadataURL, svcMeta.ArtifactURL); err == nil {
 		metadata := ReleaseDeploymentMetadata{
