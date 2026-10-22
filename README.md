@@ -54,6 +54,8 @@ Full installation guide: [INSTALL.md](INSTALL.md)
 The detailed agent ownership, NSSM state matrix, deployment sequencing, and
 compensation invariants are documented in [docs/agent.md](docs/agent.md).
 
+Open issues and requested improvements are tracked in [docs/tasks.md](docs/tasks.md).
+
 ```text
 cmd/watcher/main.go
   ├─ load .env config (Viper)
