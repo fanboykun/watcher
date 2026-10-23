@@ -1,5 +1,11 @@
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
 <script lang="ts">
+	import UnsavedChanges from '$lib/components/console/unsaved-changes.svelte';
+	import {
+		copyFiles,
+		configFingerprint,
+		configurationProblems
+	} from '$lib/features/configuration/model';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { afterNavigate } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -35,10 +41,10 @@
 	} from '@lucide/svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import HealthTab from './components/health-tab.svelte';
-	import DeploysTab from './components/deploys-tab.svelte';
-	import LogsTab from './components/logs-tab.svelte';
-	import EnvTab from './components/env-tab.svelte';
+	import HealthTab from '$lib/features/services/components/health-tab.svelte';
+	import DeploysTab from '$lib/features/services/components/deploys-tab.svelte';
+	import LogsTab from '$lib/features/services/components/logs-tab.svelte';
+	import EnvTab from '$lib/features/services/components/env-tab.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let service = $state<Service | null>(null);
@@ -64,7 +70,13 @@
 	let logCount = $state(100);
 
 	let envContent = $state('');
+	let baselineEnv = $state('');
+	let baselineFiles = $state<ServiceConfigFile[]>([]);
+	let configConflict = $state(false);
 	let configFiles = $state<ServiceConfigFile[]>([]);
+	const configDirty = $derived(
+		configFingerprint(envContent, configFiles) !== configFingerprint(baselineEnv, baselineFiles)
+	);
 	let savingEnv = $state(false);
 	let showDeleteDialog = $state(false);
 	let deleting = $state(false);
@@ -117,7 +129,12 @@
 	async function openCandidates(replaceState = false) {
 		if (!candidateURL) return;
 		try {
-			await goto(candidateURL, { replaceState });
+			await goto(
+				resolve(`/watchers/[id]?tab=candidates&service=${id}#candidate-service-${id}`, {
+					id: String(watcher!.id)
+				}),
+				{ replaceState }
+			);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not open deployment candidates';
 		}
@@ -136,6 +153,11 @@
 		error = '';
 		service = null;
 		watcher = null;
+		envContent = '';
+		baselineEnv = '';
+		configFiles = [];
+		baselineFiles = [];
+		configConflict = false;
 		try {
 			await refreshServiceDetail();
 		} catch (e) {
@@ -212,13 +234,19 @@
 		if (id !== serviceID || generation !== detailGeneration) return;
 		service = detail.service;
 		watcher = detail.watcher;
-		envContent = service?.env_content || '';
-		configFiles = [
-			...(detail.service.config_files || []).map((file) => ({
-				...file,
-				target: file.target || 'app_dir'
-			}))
-		];
+		if (configDirty) {
+			configConflict =
+				configFingerprint(detail.service.env_content || '', detail.service.config_files || []) !==
+				configFingerprint(baselineEnv, baselineFiles);
+		} else resetConfiguration();
+	}
+
+	function resetConfiguration() {
+		baselineEnv = service?.env_content || '';
+		baselineFiles = copyFiles(service?.config_files || []);
+		envContent = baselineEnv;
+		configFiles = copyFiles(baselineFiles);
+		configConflict = false;
 	}
 
 	async function runAction(name: string, fn: () => Promise<{ message: string }>) {
@@ -242,20 +270,19 @@
 
 	async function saveEnv() {
 		if (!service || !watcher || savingEnv) return false;
+		const problems = configurationProblems(service.env_file, configFiles);
+		if (problems.length) {
+			error = problems.join(' ');
+			return false;
+		}
 		savingEnv = true;
 		error = '';
 		try {
 			service = await api.updateService(watcher.id, service.id, {
 				env_content: envContent,
-				config_files: configFiles.filter((file) => file.file_path.trim() !== '')
+				config_files: copyFiles(configFiles)
 			});
-			envContent = service.env_content || '';
-			configFiles = [
-				...(service.config_files || []).map((file) => ({
-					...file,
-					target: file.target || 'app_dir'
-				}))
-			];
+			resetConfiguration();
 			actionMsg = 'Service files saved';
 			setTimeout(() => (actionMsg = ''), 4000);
 			return true;
@@ -313,8 +340,9 @@
 	}
 </script>
 
+<UnsavedChanges dirty={configDirty} label="configuration" />
 <div class="space-y-6">
-	<header class="page-header">
+	<header class="page-header border-b border-border pb-6">
 		<div class="page-identity">
 			<Button.Root
 				href={resolve('/services')}
@@ -323,6 +351,7 @@
 				aria-label="Back to services"><ArrowLeft /></Button.Root
 			>
 			<div class="min-w-0">
+				<p class="eyebrow mb-2">Workspace / service</p>
 				<h1 class="text-2xl font-semibold tracking-tight">
 					{service?.windows_service_name || service?.binary_name || 'Service'}
 				</h1>
@@ -558,16 +587,24 @@
 			<Tabs.Content value="env" class="mt-4">
 				<EnvTab
 					{service}
+					{baselineEnv}
+					{baselineFiles}
+					directory={watcher?.install_dir}
+					conflict={configConflict}
+					saveError={error}
+					onReset={resetConfiguration}
 					bind:envContent
 					bind:configFiles
 					savingEnv={savingEnv || restartingEnv || actionBusy}
 					onSaveEnv={async () => {
-						await saveEnv();
+						return await saveEnv();
 					}}
 					onSaveAndRestart={async () => {
 						restartingEnv = true;
 						try {
-							if (await saveEnv()) await runAction('restart', () => api.restartService(id));
+							if (!(await saveEnv())) return false;
+							await runAction('restart', () => api.restartService(id));
+							return !error;
 						} finally {
 							restartingEnv = false;
 						}

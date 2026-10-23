@@ -1,42 +1,21 @@
-# sv
+# Watcher dashboard
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
-
-## Creating a project
-
-If you're seeing this, you've probably already done this step. Congrats!
+Svelte 5 + SvelteKit static SPA, embedded in the Go agent.
 
 ```sh
-# create a new project
-npx sv create my-app
+bun install
+bun run dev
+bun run check
+bun run build
 ```
 
-To recreate this project with the same configuration:
+The development server proxies `/api` to the Go agent at `localhost:8080`.
+The production build is emitted to `build/` for Go embedding. Fonts are bundled
+locally so Windows installations do not need access to a font service.
 
-```sh
-# recreate this project
-bun x sv@0.12.8 create --template minimal --types ts --add prettier eslint tailwindcss="plugins:typography,forms" sveltekit-adapter="adapter:static" mcp="ide:other,vscode+setup:local" --install bun .
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+See [frontend structure and design](../docs/frontend-design.md) for component
+boundaries, design tokens, and verification guidance. Import the backend client
+from `$lib/api`; it re-exports response types and authentication helpers for
+existing consumers. Domain UI lives under `src/lib/features`, shared console
+components under `src/lib/components/console`, and navigation under
+`src/lib/components/shell`.

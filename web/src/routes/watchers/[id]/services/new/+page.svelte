@@ -1,4 +1,7 @@
 <script lang="ts">
+	import PageHeading from '$lib/components/console/page-heading.svelte';
+	import RequestLoading from '$lib/components/request-loading.svelte';
+	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -12,24 +15,35 @@
 
 	let watcher = $state<Watcher | null>(null);
 	let saving = $state(false);
+	let createdServiceID = 0;
+	let loading = $state(true);
 	let error = $state('');
 
-	onMount(async () => {
+	onMount(() => {
+		void load();
+	});
+	async function load() {
+		loading = true;
+		error = '';
 		try {
 			watcher = await api.getWatcher(watcherId);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load watcher';
+		} finally {
+			loading = false;
 		}
-	});
+	}
 
 	async function createService(payload: ServiceWritePayload) {
 		saving = true;
 		error = '';
 		try {
 			const service = await api.createService(watcherId, payload);
-			await goto(resolve(`/services/${service.id}`));
+			createdServiceID = service.id;
+			return true;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to create service';
+			return false;
 		} finally {
 			saving = false;
 		}
@@ -41,28 +55,32 @@
 </svelte:head>
 
 <div class="space-y-6">
-	<div class="flex items-center gap-4">
-		<a href={resolve(`/watchers/${watcherId}/edit#services`)}>
-			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
-				<ArrowLeft class="h-4 w-4" />
-			</Button.Root>
-		</a>
-		<div>
-			<h1 class="text-2xl font-bold tracking-tight">Add Service</h1>
-			<p class="text-sm text-muted-foreground">
-				{watcher
-					? `Create a managed service for ${watcher.name}.`
-					: 'Create a managed service for this watcher.'}
-			</p>
-		</div>
-	</div>
+	<PageHeading
+		eyebrow="Workspace / New service"
+		title="Add service"
+		description={watcher
+			? `Create a managed service for ${watcher.name}.`
+			: 'Define how Watcher runs and monitors your service.'}
+	>
+		{#snippet actions()}<Button.Root
+				href={resolve(`/watchers/${watcherId}/edit#services`)}
+				variant="outline"
+				size="sm"><ArrowLeft class="size-3.5" />Back to watcher</Button.Root
+			>{/snippet}
+	</PageHeading>
 
-	<ServiceWizardForm
-		title="Service Setup"
-		description="Define how Watcher should start, health-check, and write runtime files for this service."
-		submitLabel="Create Service"
-		submitting={saving}
-		{error}
-		onSubmit={createService}
-	/>
+	{#if loading}<RequestLoading label="Loading watcher configuration…" />
+	{:else if !watcher}<RequestError message={error} onRetry={load} />
+	{:else}
+		<ServiceWizardForm
+			showHeader={false}
+			title="Service Setup"
+			description="Define how Watcher should start, health-check, and write runtime files for this service."
+			submitLabel="Create Service"
+			submitting={saving}
+			{error}
+			onSubmit={createService}
+			onSaved={() => goto(resolve(`/services/${createdServiceID}`))}
+		/>
+	{/if}
 </div>

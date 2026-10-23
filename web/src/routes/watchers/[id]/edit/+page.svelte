@@ -23,7 +23,7 @@
 		Send,
 		Link as LinkIcon
 	} from '@lucide/svelte';
-	import ServicesTab from '../components/services-tab.svelte';
+	import ServicesTab from '$lib/features/watchers/components/services-tab.svelte';
 
 	const id = Number(page.params.id);
 
@@ -322,8 +322,8 @@
 											aria-describedby="editInstallDir-help"
 										/>
 										<p id="editInstallDir-help" class="text-xs text-muted-foreground">
-											Fixed when this pool is created. Changing its location requires moving
-											its releases, snapshots, and service paths through a managed relocation.
+											Fixed when this pool is created. Changing its location requires moving its
+											releases, snapshots, and service paths through a managed relocation.
 										</p>
 									</div>
 									<div class="space-y-2">

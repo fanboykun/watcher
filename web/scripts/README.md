@@ -28,7 +28,7 @@ entry, failed deployment review/discard, retained downloads, failed candidate
 reload, same-version artifact replacement during save, unsaved edits across
 watcher events/navigation, and active deployment controls. Managed-config coverage
 includes env-only inheritance, app-dir/release-dir file staging and review,
-save/reload, exact/next targets, explicit empty file sets, API path validation,
+save/reload, exact/next targets, explicit empty file sets, path validation before saving,
 reset, and saving file edits during approval without calling live service writes. Set `CATALOG_STRESS=1`
 to also overlap candidate requests and reject a delayed superseded response; this
 adversarial case dispatches a DOM click for the second target while loading.
@@ -53,3 +53,45 @@ update. Update cases cover progress, failure/retry, accepted-restart wording,
 back/forward navigation, refresh without a duplicate update, and unsaved-settings
 protection. All mutations use deterministic API mocks; no running Watcher is
 updated by this runner.
+
+## Console redesign
+
+`verify-redesign.cjs` exercises the production build at 1440px and 390px under
+both `/` and `/watcher`. Run it with the same Playwright and Chromium settings
+shown above:
+
+```sh
+rtk proxy bun scripts/verify-redesign.cjs
+```
+
+Coverage includes dashboard attention signals, watcher/service search and filters,
+filter resets, contextual actions, canceled service stops, polling pause/resume,
+detail routes, first-use states, API error/retry, refresh, sign-out/sign-in, and
+horizontal overflow. Set `SCREENSHOT_DIR` to retain dashboard screenshots.
+Set `CAPTURE_ONLY=1` with `SCREENSHOT_DIR` to refresh only the visual previews.
+Use one browser suite at a time.
+
+## Configuration and deployment workflows
+
+`verify-configuration.cjs` checks the shared CodeMirror workspace, single-page
+service settings, candidate deployment review, and shared deployment timeline.
+Run it against a fresh production build with the same browser settings above:
+
+```sh
+rtk proxy bun scripts/verify-configuration.cjs
+```
+
+It runs at desktop/mobile widths under both `/` and `/watcher`. Coverage includes
+exact environment content and mixed newline preservation, CRLF editing, multiline paste, undo/redo,
+file diffs, tab and action refresh draft survival, navigation protection,
+failed-save retry, apply/restart, candidate inheritance and isolation, exact
+artifact conflict rejection, and related attempt fetching and pagination.
+Set `SCREENSHOT_DIR` to retain configuration previews. These use deterministic API
+fixtures; Windows file writes, NSSM restarts, and real deployments require live
+integration checks.
+
+For the raw configuration model:
+
+```sh
+rtk proxy bun test src/lib/features/configuration/model.test.ts
+```

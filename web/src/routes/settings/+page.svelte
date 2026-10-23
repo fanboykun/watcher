@@ -1,4 +1,5 @@
 <script lang="ts">
+	import PageHeading from '$lib/components/console/page-heading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -344,12 +345,11 @@
 </svelte:head>
 
 <div class="space-y-6">
-	<div>
-		<h1 class="text-2xl font-bold tracking-tight">Global settings</h1>
-		<p class="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
-			<Info class="h-4 w-4" /> Defaults, access and maintenance for this agent
-		</p>
-	</div>
+	<PageHeading
+		eyebrow="Administration / Agent"
+		title="Settings"
+		description="Configure your environment, manage access, and keep the agent up to date."
+	/>
 
 	{#if loading}
 		<RequestLoading label="Loading global settings…" />
