@@ -107,6 +107,16 @@
 
 	const id = Number(page.params.id);
 
+	function fetchWatcher() {
+		const signal = AbortSignal.timeout(30_000);
+		return api.getWatcher(id, signal).catch((cause) => {
+			if (signal.aborted) {
+				throw new Error('Watcher details timed out. Check the agent connection and retry.');
+			}
+			throw cause;
+		});
+	}
+
 	async function loadVersions() {
 		const result = await api.watcherVersionCatalog(id);
 		versions = result.versions ?? [];
@@ -115,7 +125,7 @@
 	async function configureDownload(download: import('$lib/api').CatalogDownload) {
 		try {
 			await api.selectCatalogCandidate(id, download.id);
-			watcher = await api.getWatcher(id);
+			watcher = await fetchWatcher();
 			activeTab = 'candidates';
 			await goto(resolve('/watchers/[id]?tab=candidates', { id: String(id) }), {
 				replaceState: true,
@@ -133,7 +143,7 @@
 			action: async () => {
 				try {
 					await api.deployCatalogRelease(id, download.id);
-					watcher = await api.getWatcher(id);
+					watcher = await fetchWatcher();
 					await loadDeploys();
 					activeTab = 'deploys';
 					await goto(resolve('/watchers/[id]?tab=deploys', { id: String(id) }), {
@@ -202,7 +212,7 @@
 			refreshPolls = false;
 			try {
 				const tasks: Array<Promise<unknown>> = [
-					api.getWatcher(id).then((w) => (watcher = w)),
+					fetchWatcher().then((w) => (watcher = w)),
 					loadDeploys()
 				];
 				if (includeVersions) {
@@ -221,29 +231,43 @@
 		}, 200);
 	}
 
-	onMount(() => {
-		const init = async () => {
-			try {
-				watcher = await api.getWatcher(id);
+	async function loadWatcher() {
+		loading = true;
+		error = '';
+		try {
+			watcher = await fetchWatcher();
+			// History and catalog requests must not block a newly created watcher.
+			void refreshDetails();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load watcher';
+		} finally {
+			loading = false;
+		}
+	}
 
-				await refreshDetails();
-			} catch (e) {
-				error = e instanceof Error ? e.message : 'Failed to load watcher';
-			} finally {
-				loading = false;
-			}
-		};
-		init();
+	onMount(() => {
+		void loadWatcher();
 
 		watcherEventSource = api.streamWatcherEvents(
 			id,
-			(data) => {
+			async (data) => {
 				try {
-					const ev = JSON.parse(data) as { type?: string };
+					const ev = JSON.parse(data) as {
+						type?: string;
+						watcher_id?: number;
+						data?: { deploy_log_id?: number };
+					};
+					if (ev.watcher_id && ev.watcher_id !== id) return;
 					switch (ev.type) {
-						case 'deploy_started':
-							scheduleRefresh(false, false);
+						case 'deploy_started': {
+							const logId = ev.data?.deploy_log_id;
+							if (typeof logId === 'number' && Number.isSafeInteger(logId) && logId > 0) {
+								await goto(
+									resolve('/watchers/[id]/logs/[logId]', { id: String(id), logId: String(logId) })
+								);
+							} else scheduleRefresh(false, false);
 							break;
+						}
 						case 'deploy_finished':
 						case 'version_changed':
 							scheduleRefresh(true, false);
@@ -315,7 +339,7 @@
 			action: async () => {
 				try {
 					await api.deleteService(id, svcId);
-					watcher = await api.getWatcher(id);
+					watcher = await fetchWatcher();
 				} catch (e) {
 					error = e instanceof Error ? e.message : 'Delete failed';
 				}
@@ -343,10 +367,6 @@
 				try {
 					const res = await api.redeployWatcher(id);
 					const fallback = resolve(`/watchers/${id}/logs/${res.deploy_log_id}`);
-					if (res.log_url && /^https?:\/\//i.test(res.log_url)) {
-						window.location.href = res.log_url;
-						return;
-					}
 					await goto(fallback);
 				} catch (e) {
 					const msg = e instanceof Error ? e.message : 'Redeploy failed';
@@ -385,10 +405,6 @@
 			const res = await api.rollbackWatcher(id, version, reportGithub);
 			showRollbackDialog = false;
 			const fallback = resolve(`/watchers/${id}/logs/${res.deploy_log_id}`);
-			if (res.log_url && /^https?:\/\//i.test(res.log_url)) {
-				window.location.href = res.log_url;
-				return;
-			}
 			await goto(fallback);
 		} catch (e) {
 			error = e instanceof Error ? e.message : `Rollback to ${version} failed`;
@@ -416,7 +432,7 @@
 		try {
 			await api.resumeWatcherUpdates(id);
 			triggerMsg = `Auto-deploy resumed!`;
-			watcher = await api.getWatcher(id);
+			watcher = await fetchWatcher();
 		} catch (e) {
 			error = e instanceof Error ? e.message : `Failed to resume auto deploy`;
 		}
@@ -449,7 +465,7 @@
 			const nextVal = !watcher.intercept_next_release;
 			await api.interceptWatcher(id, nextVal);
 			triggerMsg = nextVal ? 'Will intercept next release.' : 'Intercept disabled.';
-			watcher = await api.getWatcher(id);
+			watcher = await fetchWatcher();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to toggle intercept';
 		}
@@ -475,7 +491,7 @@
 				try {
 					const res = await api.discardRelease(id);
 					triggerMsg = res.message;
-					watcher = await api.getWatcher(id);
+					watcher = await fetchWatcher();
 				} catch (e) {
 					error = e instanceof Error ? e.message : 'Failed to discard release';
 				}
@@ -568,7 +584,10 @@
 		{/if}
 	</header>
 
-	{#if !showConfirmDialog && !showRollbackDialog}<RequestError message={error} />{/if}
+	{#if !showConfirmDialog && !showRollbackDialog}<RequestError
+			message={error}
+			onRetry={!watcher ? loadWatcher : undefined}
+		/>{/if}
 	<RequestError
 		message={dataError}
 		title="Details could not be refreshed"
@@ -692,7 +711,7 @@
 							{watcher}
 							onDownloaded={loadVersions}
 							onNavigate={async (tab) => {
-								watcher = await api.getWatcher(id);
+								watcher = await fetchWatcher();
 								await Promise.all([loadVersions(), loadDeploys()]);
 								activeTab = tab;
 								await goto(resolve(`/watchers/[id]?tab=${tab}`, { id: String(id) }), {
@@ -713,7 +732,7 @@
 						runPending('approve', () => approveRelease(version, catalogId))}
 					onDiscard={discardRelease}
 					onRefreshWatcher={async () => {
-						watcher = await api.getWatcher(id);
+						watcher = await fetchWatcher();
 					}}
 				/>
 			</Tabs.Content>

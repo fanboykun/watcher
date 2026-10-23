@@ -51,7 +51,6 @@
 
 	let editInterval = $state(60);
 	let editMetadataURL = $state('');
-	let editInstallDir = $state('');
 	let editReleaseRef = $state('latest');
 	let editAutoDeploy = $state(true);
 	let editHcEnabled = $state(false);
@@ -94,7 +93,6 @@
 		editInterval = watcher.check_interval_sec;
 		editAutoDeploy = watcher.auto_deploy ?? true;
 		editMetadataURL = watcher.metadata_url;
-		editInstallDir = watcher.install_dir;
 		editReleaseRef = watcher.release_ref || 'latest';
 		editHcEnabled = watcher.hc_enabled;
 		editHcURL = watcher.hc_url;
@@ -146,7 +144,6 @@
 				notify_rollback_succeeded: webhookSelections.notify_rollback_succeeded,
 				notify_rollback_failed: webhookSelections.notify_rollback_failed,
 				notify_service_health_changed: webhookSelections.notify_service_health_changed,
-				install_dir: editInstallDir,
 				hc_enabled: editHcEnabled,
 				hc_url: editHcURL,
 				max_kept_versions: editMaxKeptVersions
@@ -320,12 +317,13 @@
 										<Label for="editInstallDir">Install Directory</Label>
 										<Input
 											id="editInstallDir"
-											bind:value={editInstallDir}
+											value={watcher.install_dir}
+											readonly
 											aria-describedby="editInstallDir-help"
 										/>
 										<p id="editInstallDir-help" class="text-xs text-muted-foreground">
-											Deployment root on the Watcher machine. Release folders and the current
-											release live here.
+											Fixed when this pool is created. Changing its location requires moving
+											its releases, snapshots, and service paths through a managed relocation.
 										</p>
 									</div>
 									<div class="space-y-2">

@@ -202,6 +202,20 @@ Base path: `/api`
 - `POST /watchers/:id/webhook/test`
 - `POST /watchers/:id/webhook/resume`
 
+### Managed watcher directories
+
+Choose each pool's `install_dir` when creating its watcher. The directory is
+read-only in Edit settings. `PUT /api/watchers/:id` rejects a different
+`install_dir` with HTTP 409 before saving any changes; omitting it or sending the
+existing value remains supported.
+
+Editing a path does not relocate a pool. Its downloads, extracted releases,
+`current` junction, configuration snapshots, and Windows service/IIS paths must
+stay consistent. Pausing a watcher alone does not move them or finish an active
+deployment's recovery. A managed relocation workflow is
+[planned separately](docs/watcher-relocation-plan.md); automatic relocation and
+repair of pools affected by earlier directory edits are not implemented.
+
 ### GitHub release catalog
 
 Open **Watchers → watcher detail → GitHub releases** to browse the configured
@@ -220,9 +234,12 @@ selected asset must match the configured service's manifest entry, and the
 candidate uses that entry's version.
 
 Use **Configure candidate** to select that exact download and open the existing
-version-specific environment editor. Selection holds automatic deployment until
+version-specific environment and managed-config editor. Selection holds automatic deployment until
 the operator deploys or discards the candidate. Finish or discard any existing
-candidate before selecting another one. Configuration edits remain isolated
+candidate before selecting another one. Stage env content and config files with
+relative paths targeting the service/app dir or release dir. Env-only drafts
+inherit active managed files; a staged file set replaces them, including an empty
+set when all files are removed. Configuration edits remain isolated
 from live services until activation and health checks succeed.
 
 **Deploy release…** queues the exact staged ZIP on the watcher's existing loop,

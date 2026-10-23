@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -170,5 +171,103 @@ func TestCandidateAndSnapshotSupportEncodedVersionTags(t *testing.T) {
 	}
 	if rev.TargetVersion != version {
 		t.Fatalf("target was not decoded correctly: %q", rev.TargetVersion)
+	}
+}
+
+func TestCandidateManagedFilesRoundTripAndSaveIsolation(t *testing.T) {
+	r, db, w, svc := candidateAPIFixture(t)
+	active := database.ServiceConfigFile{ServiceID: svc.ID, FilePath: "config/active.json", Target: "app_dir", Content: "active"}
+	if err := db.Create(&active).Error; err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(w.InstallDir, "config", "active.json")
+	if err := os.MkdirAll(filepath.Dir(live), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte("active"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	revisionPath := fmt.Sprintf("/api/services/%d/revisions/v2", svc.ID)
+	body := `{"env_content":"candidate","config_files":[{"file_path":"config/new.json","target":"app_dir","content":"new"},{"file_path":"web.config","target":"release_dir","content":"release"}]}`
+	rec := authRequest(r, http.MethodPut, revisionPath, body, "watcher")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	var activeService database.Service
+	if err := db.Preload("ConfigFiles").First(&activeService, svc.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(live)
+	if err != nil || string(data) != "active" || activeService.EnvContent != svc.EnvContent || len(activeService.ConfigFiles) != 1 || activeService.ConfigFiles[0].FilePath != active.FilePath {
+		t.Fatalf("draft changed active configuration: %+v %s %v", activeService, data, err)
+	}
+	if _, err := os.Stat(filepath.Join(w.InstallDir, "config", "new.json")); !os.IsNotExist(err) {
+		t.Fatalf("draft wrote live file: %v", err)
+	}
+	get := func() ServiceCandidateInfo {
+		t.Helper()
+		rec := authRequest(r, http.MethodGet, fmt.Sprintf("/api/watchers/%d/candidate?target=v2", w.ID), "", "watcher")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: %d %s", rec.Code, rec.Body.String())
+		}
+		var result WatcherCandidateResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result.Services[0]
+	}
+	got := get()
+	if len(got.ActiveConfigFiles) != 1 || len(got.CandidateConfigFiles) != 2 || !got.HasCandidateConfigFiles || !got.IsModified {
+		t.Fatalf("round trip: %+v", got)
+	}
+	// Existing env-only clients preserve a previously prepared file override.
+	for _, body := range []string{`{"env_content":"changed"}`, `{"env_content":"changed","config_files":null}`} {
+		rec = authRequest(r, http.MethodPut, revisionPath, body, "watcher")
+		if rec.Code != http.StatusOK || len(get().CandidateConfigFiles) != 2 {
+			t.Fatalf("legacy save lost file override: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	// Bulk saves support explicit removal and keep it across an omitted update.
+	for _, body := range []string{
+		fmt.Sprintf(`{"target_version":"v2","services":[{"service_id":%d,"env_content":"changed","config_files":[]}]}`, svc.ID),
+		fmt.Sprintf(`{"target_version":"v2","services":[{"service_id":%d,"env_content":"changed"}]}`, svc.ID),
+	} {
+		rec = authRequest(r, http.MethodPut, fmt.Sprintf("/api/watchers/%d/candidate", w.ID), body, "watcher")
+		got = get()
+		if rec.Code != http.StatusOK || !got.HasCandidateConfigFiles || got.CandidateConfigFiles == nil || len(got.CandidateConfigFiles) != 0 {
+			t.Fatalf("explicit removal lost: %d %s %+v", rec.Code, rec.Body.String(), got)
+		}
+	}
+}
+
+func TestCandidateManagedFilesRejectUnsafeAndConflictingTargets(t *testing.T) {
+	r, db, w, svc := candidateAPIFixture(t)
+	for _, file := range []string{
+		`{"file_path":"../outside","target":"app_dir"}`,
+		`{"file_path":"..\\outside","target":"release_dir"}`,
+		`{"file_path":"C:\\outside","target":"app_dir"}`,
+		`{"file_path":"/outside","target":"app_dir"}`,
+		`{"file_path":".watcher/snapshots/fake","target":"app_dir"}`,
+		`{"file_path":"current/config.json","target":"app_dir"}`,
+		`{"file_path":"config.json","target":"unknown"}`,
+		`{"file_path":".env","target":"app_dir"}`,
+		`{"file_path":"x.json","target":"app_dir"},{"file_path":"X.json","target":"app_dir"}`,
+		`{"file_path":"settings","target":"app_dir"},{"file_path":"settings/app.json","target":"app_dir"}`,
+		`{"file_path":".env/app.json","target":"app_dir"}`,
+	} {
+		body := `{"env_content":"draft","config_files":[` + file + `]}`
+		rec := authRequest(r, http.MethodPut, fmt.Sprintf("/api/services/%d/revisions/next", svc.ID), body, "watcher")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("accepted unsafe files %s: %d %s", file, rec.Code, rec.Body.String())
+		}
+		body = fmt.Sprintf(`{"target_version":"next","services":[{"service_id":%d,"env_content":"draft","config_files":[%s]}]}`, svc.ID, file)
+		rec = authRequest(r, http.MethodPut, fmt.Sprintf("/api/watchers/%d/candidate", w.ID), body, "watcher")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("bulk accepted unsafe files %s: %d %s", file, rec.Code, rec.Body.String())
+		}
+	}
+	var count int64
+	if err := db.Model(&database.ServiceConfigRevision{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("invalid revisions persisted: %d %v", count, err)
 	}
 }

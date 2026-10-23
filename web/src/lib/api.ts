@@ -408,6 +408,8 @@ export interface ServiceConfigRevision {
 	service_id: number;
 	target_version: string;
 	env_content: string;
+	// null inherits active managed files; [] explicitly removes the managed file set.
+	config_files: ServiceConfigFile[] | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -419,6 +421,9 @@ export interface ServiceCandidateInfo {
 	active_env: string;
 	candidate_env: string;
 	has_candidate_env: boolean;
+	active_config_files: ServiceConfigFile[];
+	candidate_config_files: ServiceConfigFile[];
+	has_candidate_config_files: boolean;
 	is_modified: boolean;
 }
 
@@ -763,7 +768,7 @@ export const api = {
 
 	// Watchers
 	listWatchers: (signal?: AbortSignal) => request<Watcher[]>('/watchers', { signal }),
-	getWatcher: (id: number) => request<Watcher>(`/watchers/${id}`),
+	getWatcher: (id: number, signal?: AbortSignal) => request<Watcher>(`/watchers/${id}`, { signal }),
 	createWatcher: (data: WatcherWritePayload) =>
 		request<Watcher>('/watchers', { method: 'POST', body: JSON.stringify(data) }),
 	updateWatcher: (id: number, data: WatcherWritePayload) =>
@@ -927,10 +932,15 @@ export const api = {
 		request(`/watchers/${id}/approve`, { method: 'POST', body: JSON.stringify({ version }) }),
 	getServiceConfigRevisions: async (id: number) =>
 		request<{ data: ServiceConfigRevision[] }>(`/services/${id}/revisions`),
-	updateServiceConfigRevision: async (id: number, target: string, envContent: string) =>
+	updateServiceConfigRevision: async (
+		id: number,
+		target: string,
+		envContent: string,
+		configFiles?: ServiceConfigFile[]
+	) =>
 		request(`/services/${id}/revisions/${encodeURIComponent(target)}`, {
 			method: 'PUT',
-			body: JSON.stringify({ env_content: envContent })
+			body: JSON.stringify({ env_content: envContent, config_files: configFiles })
 		}),
 	deleteServiceConfigRevision: async (id: number, target: string) =>
 		request(`/services/${id}/revisions/${encodeURIComponent(target)}`, { method: 'DELETE' }),
@@ -948,7 +958,7 @@ export const api = {
 	updateWatcherCandidate: async (
 		id: number,
 		targetVersion: string,
-		services: { service_id: number; env_content: string }[]
+		services: { service_id: number; env_content: string; config_files?: ServiceConfigFile[] }[]
 	) =>
 		request<{ message: string }>(`/watchers/${id}/candidate`, {
 			method: 'PUT',

@@ -1,11 +1,7 @@
 <script lang="ts">
+	import CandidateConfigFiles from './candidate-config-files.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
-	import {
-		api,
-		type Watcher,
-		type WatcherCandidateResponse,
-		type ServiceCandidateInfo
-	} from '$lib/api';
+	import { api, type Watcher, type ServiceConfigFile } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -36,6 +32,11 @@
 		candidateEnv: string;
 		originalCandidateEnv: string;
 		hasCandidateEnv: boolean;
+		activeFiles: ServiceConfigFile[];
+		candidateFiles: ServiceConfigFile[];
+		originalCandidateFiles: ServiceConfigFile[];
+		filesExplicit: boolean;
+		originalFilesExplicit: boolean;
 		viewMode: 'edit' | 'diff' | 'side-by-side';
 	}
 
@@ -87,9 +88,31 @@
 			watcher.status !== 'deploying'
 	);
 
-	const hasAnyChanges = $derived(services.some((s) => s.candidateEnv !== s.originalCandidateEnv));
+	function copyFiles(files: ServiceConfigFile[] = []) {
+		return files.map(({ file_path, target, content }) => ({ file_path, target, content }));
+	}
 
-	const hasAnyDifferenceFromActive = $derived(services.some((s) => s.candidateEnv !== s.activeEnv));
+	function filesEqual(a: ServiceConfigFile[], b: ServiceConfigFile[]) {
+		return JSON.stringify(copyFiles(a)) === JSON.stringify(copyFiles(b));
+	}
+
+	function serviceChanged(service: EditableServiceCandidate) {
+		return (
+			service.candidateEnv !== service.originalCandidateEnv ||
+			service.filesExplicit !== service.originalFilesExplicit ||
+			!filesEqual(service.candidateFiles, service.originalCandidateFiles)
+		);
+	}
+
+	function candidatePayload() {
+		return services.map((service) => ({
+			service_id: service.serviceId,
+			env_content: service.candidateEnv,
+			...(service.filesExplicit ? { config_files: copyFiles(service.candidateFiles) } : {})
+		}));
+	}
+
+	const hasAnyChanges = $derived(services.some(serviceChanged));
 
 	async function loadCandidateData(target: string) {
 		if (!target) return;
@@ -112,6 +135,11 @@
 				candidateEnv: s.candidate_env,
 				originalCandidateEnv: s.candidate_env,
 				hasCandidateEnv: s.has_candidate_env,
+				activeFiles: copyFiles(s.active_config_files),
+				candidateFiles: copyFiles(s.candidate_config_files ?? s.active_config_files),
+				originalCandidateFiles: copyFiles(s.candidate_config_files ?? s.active_config_files),
+				filesExplicit: s.has_candidate_config_files ?? false,
+				originalFilesExplicit: s.has_candidate_config_files ?? false,
 				viewMode: 'edit'
 			}));
 		} catch (e) {
@@ -178,17 +206,12 @@
 		error = '';
 		saveSuccess = '';
 		try {
-			await api.updateWatcherCandidate(
-				watcher.id,
-				effectiveTarget,
-				services.map((s) => ({
-					service_id: s.serviceId,
-					env_content: s.candidateEnv
-				}))
-			);
+			await api.updateWatcherCandidate(watcher.id, effectiveTarget, candidatePayload());
 			for (const s of services) {
 				s.originalCandidateEnv = s.candidateEnv;
 				s.hasCandidateEnv = true;
+				s.originalCandidateFiles = copyFiles(s.candidateFiles);
+				s.originalFilesExplicit = s.filesExplicit;
 			}
 			saveSuccess = `Candidate configuration saved for version "${effectiveTarget}"!`;
 			setTimeout(() => {
@@ -210,6 +233,8 @@
 
 	function resetCandidate(service: EditableServiceCandidate) {
 		service.candidateEnv = service.originalCandidateEnv;
+		service.candidateFiles = copyFiles(service.originalCandidateFiles);
+		service.filesExplicit = service.originalFilesExplicit;
 	}
 
 	async function handleApprove() {
@@ -231,14 +256,7 @@
 		try {
 			// Save any unpersisted edits first
 			if (hasAnyChanges) {
-				await api.updateWatcherCandidate(
-					watcher.id,
-					effectiveTarget,
-					services.map((s) => ({
-						service_id: s.serviceId,
-						env_content: s.candidateEnv
-					}))
-				);
+				await api.updateWatcherCandidate(watcher.id, effectiveTarget, candidatePayload());
 			}
 			if (selection !== pendingSelection || loadedSelection !== selection) {
 				error = 'The pending release changed. Load and review it before approving.';
@@ -402,7 +420,7 @@
 
 	<!-- Version Selector and Actions Bar -->
 	<Card.Root class="border-border bg-card">
-		<Card.Header class="pb-3">
+		<Card.Header class="flex flex-col items-stretch pb-3">
 			<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<div>
 					<Card.Title class="text-base font-semibold">Candidate configuration</Card.Title>
@@ -526,7 +544,8 @@
 		<div class="space-y-4">
 			{#each services as svc (svc.serviceId)}
 				{@const diffLines = computeEnvDiff(svc.activeEnv, svc.candidateEnv)}
-				{@const hasModified = svc.candidateEnv !== svc.activeEnv}
+				{@const hasModified =
+					svc.candidateEnv !== svc.activeEnv || !filesEqual(svc.candidateFiles, svc.activeFiles)}
 
 				<Card.Root class="border-border bg-card">
 					<Card.Header class="pb-3">
@@ -614,13 +633,13 @@
 										<Copy class="mr-1 h-3.5 w-3.5" /> Copy Active
 									</Button.Root>
 								{/if}
-								{#if svc.candidateEnv !== svc.originalCandidateEnv}
+								{#if serviceChanged(svc)}
 									<Button.Root
 										variant="ghost"
 										size="sm"
 										class="h-8 text-xs text-muted-foreground"
 										onclick={() => resetCandidate(svc)}
-										title="Reset candidate content"
+										title="Reset unsaved environment and managed file changes"
 									>
 										<RefreshCw class="mr-1 h-3.5 w-3.5" /> Reset
 									</Button.Root>
@@ -629,7 +648,7 @@
 						</div>
 					</Card.Header>
 
-					<Card.Content class="pt-0">
+					<Card.Content class="space-y-5 pt-0">
 						{#if svc.viewMode === 'edit'}
 							<div class="space-y-1">
 								<Textarea
@@ -728,6 +747,13 @@
 								{/if}
 							</div>
 						{/if}
+						<CandidateConfigFiles
+							serviceName={svc.serviceName}
+							activeFiles={svc.activeFiles}
+							bind:files={svc.candidateFiles}
+							explicit={svc.filesExplicit}
+							onChange={() => (svc.filesExplicit = true)}
+						/>
 					</Card.Content>
 				</Card.Root>
 			{/each}

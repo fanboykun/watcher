@@ -50,7 +50,7 @@ flowchart LR
 | GitHub release | Remote release ID, tag, notes, publication status, and assets. |
 | Downloaded target | Local immutable ZIP plus a `CatalogArtifact` record and checksum. It is deployable without another GitHub artifact download. |
 | Selected candidate | The exact local artifact selected for review and deployment. Selection holds automatic activation. |
-| Candidate configuration | Existing per-service revisions keyed by target version, with `next` fallback. Currently these contain environment content. |
+| Candidate configuration | Existing per-service revisions keyed by target version, with `next` fallback. These contain environment content and optional managed app-dir/release-dir file overrides. |
 | Retained deployed version | An extracted release and its trusted configuration snapshot, eligible for the existing rollback workflow. |
 
 A downloaded ZIP is not automatically a rollback target: it has not necessarily
@@ -67,7 +67,7 @@ a second catalog beside it.
 | Host-side download | `DownloadCatalogRelease` creates a `CatalogArtifact`; `DownloadCatalogAsset` streams to a temporary file, checks ZIP structure and optional GitHub SHA-256, then renames it. | Cancellation/error cleanup, token selection, private API transport, restart persistence and download feedback verified locally. Live private repository access remains a release gate. |
 | Deployable downloaded versions | `/versions` returns `downloads` separately from extracted `versions`; `DownloadedVersions` supplies configure/deploy actions. | Browser checks cover list/count refresh after download completion, navigation and reload; integration checks retain cached targets after activation, rollback, retry and discard. |
 | Exact artifact selection | Candidate reservation stores `pending_catalog_id` and `pending_version`; API guards conflicting work. | Artifact-specific UI approval and exact queued attempt IDs prevent stale selections and same-artifact retry messages from acquiring another attempt. |
-| Version configuration | Existing candidate endpoints/editor and exact-version → `next` → active environment resolution. | Fixed mounted-editor target loading; browser and API/agent tests verify target matching, isolated drafts and post-health activation. |
+| Version configuration | Existing candidate endpoints/editor and exact-version → `next` → active configuration resolution, including managed files. | Fixed mounted-editor target loading; browser and API/agent tests verify target matching, isolated drafts and post-health activation. |
 | Manual cached deployment | `RunCatalog` uses the existing watcher loop and `cachedArtifact`; the standard deploy pipeline is reused. | Mocked browser flow plus real API/agent cached activation, health rollback and explicit retry pass locally. Windows behavior still needs live acceptance. |
 | Failure/restart recovery | Transactional attempt completion, exact attempt identity, worker join/drain, and interrupted deploy/rollback recovery. | Local regression and integration tests pass; live Windows interruption/recovery remains a release gate. |
 
@@ -80,7 +80,7 @@ and may move; use the named symbols to relocate them.
 2. `docs/deployment-candidate-plan.md`: version configuration precedence,
    isolation, snapshots, and reverse-proxy paths. Parts describe historical work;
    the current source is authoritative for what exists.
-3. `docs/tasks.md`: separate reported issues and managed-config follow-up.
+3. `docs/tasks.md`: implemented navigation, update, fresh-watcher, and managed-config fixes with verification and remaining live gates.
 4. `internal/database/models.go:222`: `ServiceConfigRevision` and
    `CatalogArtifact`; also inspect the watcher's pending/approved fields.
 5. `internal/api/catalog_handlers.go:20`: client boundary, download, ownership,
@@ -259,10 +259,13 @@ rtk proxy bun run build
 rtk git diff --check
 ```
 
-Use the required Svelte tooling/autofixer for changed components. Run browser
-checks against a running local frontend, including root-hosted and `/watcher`
-deployments. Mocked API/browser checks prove UI behavior; use an actual Windows
-host with NSSM/IIS and a representative GitHub repository to prove deployment.
+Use the required Svelte tooling/autofixer for changed components. Browser checks
+are opt-in for significant UI work, not automatic after small edits. When
+explicitly requested, run one suite at a time against a local frontend, including
+root-hosted and `/watcher` deployments, without overlapping frontend builds and
+full Go checks. Mocked API/browser checks prove UI behavior; use an actual
+Windows host with NSSM/IIS and a representative GitHub repository to prove
+deployment.
 
 End-to-end acceptance scenario:
 
@@ -278,18 +281,18 @@ and unrun gates. Do not mark the catalog complete on static checks alone.
 
 ## Scope boundaries and follow-ups
 
-- `docs/tasks.md` task 4 already requests candidates for all managed config
-  files, including app-dir/release-dir targets. It is a separate pending extension:
-  current `ServiceConfigRevision` contains environment content only. The catalog
-  must reuse current candidate contracts; do not claim full managed-file staging
-  exists or silently expand this handoff into that migration.
+- `docs/tasks.md` task 4 now extends the shared candidate contracts to managed
+  app-dir/release-dir files. Env-only drafts inherit active files, while an
+  explicit array replaces the file set (`[]` removes it). The catalog reuses the
+  same editor, snapshots, deployment activation, recovery, and rollback pipeline.
+  See `docs/deployment-candidate-plan.md` for the API and inheritance contract.
 - Local download deletion, quotas, retention, deduplication, search/filtering,
   resumable download jobs, and global cross-watcher catalogs were not explicitly
   required in the original brief. They may be useful later; they are not completion
   gates for this plan and need explicit scope/design before implementation.
 - Existing deployed-release deletion is not a local catalog-download deletion API.
-- The other issues in `docs/tasks.md` remain separate unless a reproduced failure
-  directly blocks the catalog journey.
+- The other issues in `docs/tasks.md` are separate fixes; their validation is
+  recorded in that task list.
 - No broad frontend/API rewrite, release-workflow change, Git history operation,
   publishing, or live deployment is required merely to finish this handoff plan.
 
@@ -343,6 +346,6 @@ Remaining release acceptance:
       behavior, and interrupted-service recovery.
 
 Next action: review the local diff, run the documented browser command if needed,
-and perform the two live acceptance checks in a suitable environment. Full
-managed-file candidate support and optional local-download cleanup remain the
-separate follow-ups described above.
+and perform the two live acceptance checks in a suitable environment. Managed-file
+candidate support is implemented through the shared candidate flow. Optional
+local-download cleanup remains a separate follow-up described above.

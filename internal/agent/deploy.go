@@ -15,11 +15,12 @@ var runCommand = func(name string, args ...string) ([]byte, error) {
 }
 
 type Deployer struct {
-	wcfg           *WatcherConfig
-	nssmPath       string
-	serviceManager ServiceManager
-	log            *Logger
-	logFn          func(string)
+	wcfg             *WatcherConfig
+	previousServices []ServiceConfig
+	nssmPath         string
+	serviceManager   ServiceManager
+	log              *Logger
+	logFn            func(string)
 }
 
 // NewDeployer creates a configured deployer.
@@ -65,6 +66,10 @@ func (d *Deployer) lWarn(msg string, args ...any) {
 
 // Deploy executes the validated release deployment and compensation pipeline.
 func (d *Deployer) Deploy(ctx context.Context, version, zipPath, previousVersion string) (deployErr error) {
+	defer func() { d.previousServices = nil }()
+	if err := validateDeploymentManagedFiles(d.wcfg.Services); err != nil {
+		return fmt.Errorf("validate managed config: %w", err)
+	}
 	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(version))
 	currentDir := filepath.Join(d.wcfg.InstallDir, "current")
 	rollbackVersion := d.resolveRollbackVersion(version, previousVersion)

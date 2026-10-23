@@ -113,6 +113,13 @@ async function serveBuild() {
 				let rejectedWrongArtifact = 0;
 				let failCatalog = false;
 				let emptyCatalog = false;
+				let managedMode = false;
+				const managedDrafts = new Map();
+				const candidateWrites = [];
+				let liveConfigWrites = 0;
+				const activeFiles = [
+					{ file_path: 'appsettings.json', target: 'app_dir', content: '{"active":true}' }
+				];
 				const release = {
 					id: 11,
 					name: 'Release two',
@@ -137,6 +144,10 @@ async function serveBuild() {
 					if (process.env.DEBUG_CATALOG) console.log(route.request().method(), path, url.search);
 					const respond = (data, status = 200) =>
 						route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
+					if (managedMode && /\/services\//.test(path) && route.request().method() !== 'GET') {
+						liveConfigWrites++;
+						return respond({ error: 'Candidate editing must not write live configuration' }, 500);
+					}
 					if (path === '/api/auth/status') return respond({ authenticated: true });
 					if (path === '/api/self/update-check') return respond({ update_available: false });
 					if (path === '/api/watchers/1') return respond(watcher);
@@ -201,6 +212,20 @@ async function serveBuild() {
 					}
 					if (path.endsWith('/candidate')) {
 						if (route.request().method() === 'PUT') {
+							if (managedMode) {
+								const body = route.request().postDataJSON();
+								const draft = body.services[0];
+								if (draft.config_files?.some((file) => file.file_path.includes('..')))
+									return respond(
+										{ error: 'Managed config file path must stay within its target directory' },
+										400
+									);
+								candidateWrites.push(body);
+								managedDrafts.set(body.target_version, {
+									...managedDrafts.get(body.target_version),
+									...draft
+								});
+							}
 							if (saveSwitchesArtifact) watcher.pending_catalog_id = 8;
 							return respond({ message: 'Saved' });
 						}
@@ -219,8 +244,16 @@ async function serveBuild() {
 									service_name: 'API service',
 									service_type: 'nssm',
 									active_env: 'TARGET=active',
-									candidate_env: `TARGET=${target}`,
-									has_candidate_env: true
+									candidate_env: managedMode
+										? (managedDrafts.get(target)?.env_content ?? `TARGET=${target}`)
+										: `TARGET=${target}`,
+									has_candidate_env: true,
+									active_config_files: managedMode ? activeFiles : [],
+									candidate_config_files: managedMode
+										? (managedDrafts.get(target)?.config_files ?? activeFiles)
+										: [],
+									has_candidate_config_files:
+										managedMode && Array.isArray(managedDrafts.get(target)?.config_files)
 								}
 							]
 						});
@@ -376,6 +409,7 @@ async function serveBuild() {
 					false
 				);
 				failCandidate = false;
+
 				await pendingPill.click();
 				await editor.locator('textarea').waitFor();
 				await page
@@ -441,9 +475,110 @@ async function serveBuild() {
 					assert.equal(await page.getByRole('button', { name: 'Discard', exact: true }).count(), 0);
 					assert.equal(await page.getByRole('button', { name: 'Approve & deploy' }).count(), 0);
 				}
+				// Managed files stage per target and never call the active service endpoints.
+				managedMode = true;
+				watcher.status = 'pending_approval';
+				await page.reload();
+				const filesEditor = page.getByRole('region', { name: 'API service managed config files' });
+				await filesEditor
+					.getByText('Inherits active files at deployment.', { exact: false })
+					.waitFor();
+				await editor.locator('textarea').first().fill('TARGET=env-only');
+				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
+				await editor
+					.getByText('Candidate configuration saved for version "v2"!', { exact: true })
+					.waitFor();
+				assert.equal(Object.hasOwn(candidateWrites.at(-1).services[0], 'config_files'), false);
+				await filesEditor.getByRole('button', { name: 'Stage active files', exact: true }).click();
+				await filesEditor
+					.getByLabel('Config file 1 contents', { exact: true })
+					.fill('{"candidate":true}');
+				await filesEditor.getByRole('button', { name: 'Add config file', exact: true }).click();
+				await filesEditor.getByLabel('Config file 2 path', { exact: true }).fill('web.config');
+				await filesEditor
+					.getByLabel('Config file 2 target', { exact: true })
+					.selectOption('release_dir');
+				await filesEditor
+					.getByLabel('Config file 2 contents', { exact: true })
+					.fill('<configuration />');
+				await editor.getByText('Unsaved edits', { exact: true }).waitFor();
+				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
+				await editor.getByText('Unsaved edits', { exact: true }).waitFor({ state: 'hidden' });
+				assert.deepEqual(managedDrafts.get('v2').config_files, [
+					{ file_path: 'appsettings.json', target: 'app_dir', content: '{"candidate":true}' },
+					{ file_path: 'web.config', target: 'release_dir', content: '<configuration />' }
+				]);
+				assert.equal(activeFiles[0].content, '{"active":true}');
+				await page.reload();
+				await filesEditor.getByLabel('Config file 2 contents', { exact: true }).waitFor();
+				assert.equal(
+					await filesEditor.getByLabel('Config file 2 target', { exact: true }).inputValue(),
+					'release_dir'
+				);
+				await filesEditor.getByText('Review active file', { exact: true }).first().click();
+				await filesEditor.getByText('{"active":true}', { exact: true }).waitFor();
+				await editor.getByRole('button', { name: 'Next release', exact: true }).click();
+				await filesEditor.getByLabel('Config file 1 contents', { exact: true }).waitFor();
+				await filesEditor
+					.getByRole('button', { name: 'Remove config file 1', exact: true })
+					.click();
+				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
+				await editor.getByText('Unsaved edits', { exact: true }).waitFor({ state: 'hidden' });
+				assert.deepEqual(managedDrafts.get('next').config_files, []);
+				await pendingPill.click();
+				await filesEditor.getByLabel('Config file 2 contents', { exact: true }).waitFor();
+				await filesEditor.getByLabel('Config file 1 path', { exact: true }).fill('../outside.json');
+				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
+				await editor
+					.getByText('Managed config file path must stay within its target directory', {
+						exact: true
+					})
+					.waitFor();
+				await editor.getByRole('button', { name: 'Reset', exact: true }).click();
+				assert.equal(
+					await filesEditor.getByLabel('Config file 1 path', { exact: true }).inputValue(),
+					'appsettings.json'
+				);
+				await filesEditor
+					.getByRole('button', { name: 'Remove config file 2', exact: true })
+					.click();
+				await filesEditor
+					.getByRole('button', { name: 'Remove config file 1', exact: true })
+					.click();
+				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
+				await editor.getByText('Unsaved edits', { exact: true }).waitFor({ state: 'hidden' });
+				assert.deepEqual(managedDrafts.get('v2').config_files, []);
+				await page.reload();
+				await filesEditor
+					.getByText('No managed config files will be included in this candidate.', { exact: true })
+					.waitFor();
+				await editor.getByRole('button', { name: 'Next release', exact: true }).click();
+				await filesEditor
+					.getByText('No managed config files will be included in this candidate.', { exact: true })
+					.waitFor();
+				await pendingPill.click();
+				await filesEditor.getByRole('button', { name: 'Add config file', exact: true }).click();
+				await filesEditor.getByLabel('Config file 1 path', { exact: true }).fill('web.config');
+				await filesEditor
+					.getByLabel('Config file 1 target', { exact: true })
+					.selectOption('release_dir');
+				await filesEditor
+					.getByLabel('Config file 1 contents', { exact: true })
+					.fill('<approved />');
+				const approvalsBeforeFiles = approvals;
+				await editor.getByRole('button', { name: 'Approve & deploy', exact: true }).click();
+				await editor
+					.getByText('Staged artifact checksum changed; download again', { exact: true })
+					.waitFor();
+				assert.equal(approvals, approvalsBeforeFiles + 1);
+				assert.deepEqual(candidateWrites.at(-1).services[0].config_files, [
+					{ file_path: 'web.config', target: 'release_dir', content: '<approved />' }
+				]);
+				assert.equal(liveConfigWrites, 0);
+				assert.equal(activeFiles[0].content, '{"active":true}');
 				assert.deepEqual(errors, []);
 				console.log(
-					`PASS ${prefix || '/'} ${viewport.width}px: browse, host download, configure, failed deploy, review, discard, retained target, rollback review, active-deploy guards, failed loads, artifact-switch conflict, preserved edits; no page errors`
+					`PASS ${prefix || '/'} ${viewport.width}px: browse, host download, configure, failed deploy, review, discard, retained target, rollback review, active-deploy guards, failed loads, artifact-switch conflict, preserved edits, managed file staging/reload/removal/approval/validation; no page errors`
 				);
 				await page.close();
 			}

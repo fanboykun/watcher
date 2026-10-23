@@ -221,12 +221,14 @@ type WebhookDelivery struct {
 
 // ServiceConfigRevision holds configuration prepared for a specific target version.
 type ServiceConfigRevision struct {
-	ID            uint      `gorm:"primaryKey" json:"id"`
-	ServiceID     uint      `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"service_id"`
-	TargetVersion string    `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"target_version"` // e.g., "v1.2.0" or "next"
-	EnvContent    string    `gorm:"type:text" json:"env_content"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            uint   `gorm:"primaryKey" json:"id"`
+	ServiceID     uint   `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"service_id"`
+	TargetVersion string `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"target_version"` // e.g., "v1.2.0" or "next"
+	EnvContent    string `gorm:"type:text" json:"env_content"`
+	// Nil inherits active files; an explicit empty slice removes all managed files.
+	ConfigFiles *[]RevisionConfigFile `gorm:"serializer:json;type:text" json:"config_files"`
+	CreatedAt   time.Time             `json:"created_at"`
+	UpdatedAt   time.Time             `json:"updated_at"`
 }
 
 // CatalogArtifact is an immutable, locally staged release asset. Paths are derived from its ID.
@@ -245,4 +247,11 @@ type CatalogArtifact struct {
 	SHA256       string     `json:"sha256"`
 	DownloadedAt *time.Time `json:"downloaded_at"`
 	CreatedAt    time.Time  `json:"created_at"`
+}
+
+// RevisionConfigFile is a managed file staged without active row identities.
+type RevisionConfigFile struct {
+	FilePath string `json:"file_path"`
+	Target   string `json:"target"`
+	Content  string `json:"content"`
 }

@@ -42,11 +42,12 @@ func ReconcileConfigSnapshot(db *gorm.DB, watcherID uint, version string) ([]Ser
 					return fmt.Errorf("update environment for service %d: %w", service.ID, err)
 				}
 			}
-			for j := range service.ConfigFiles {
-				file := &service.ConfigFiles[j]
-				if err := tx.Model(file).Update("content", snapshotService.ConfigFiles[j].Content).Error; err != nil {
-					return fmt.Errorf("update config file %d for service %d: %w", file.ID, service.ID, err)
-				}
+			files := make([]database.RevisionConfigFile, 0, len(snapshotService.ConfigFiles))
+			for _, file := range snapshotService.ConfigFiles {
+				files = append(files, database.RevisionConfigFile{FilePath: file.FilePath, Target: file.Target, Content: file.Content})
+			}
+			if err := replaceServiceManagedFiles(tx, service.ID, files); err != nil {
+				return fmt.Errorf("restore managed config for service %d: %w", service.ID, err)
 			}
 		}
 		if err := tx.Model(&database.Watcher{}).Where("id = ?", watcherID).
@@ -89,17 +90,13 @@ func readConfigSnapshotServices(wcfg *WatcherConfig, version string) ([]ServiceC
 			services[i].EnvContent = content
 		}
 
-		for j := range services[i].ConfigFiles {
-			file := &services[i].ConfigFiles[j]
-			category := "app"
-			if normalizeConfigFileTarget(file.Target) == "release_dir" {
-				category = "release"
-			}
-			content, err := readSnapshotManagedFile(filepath.Join(serviceRoot, category), file.FilePath)
+		services[i].ConfigFiles = nil
+		for _, category := range []struct{ name, target string }{{"app", "app_dir"}, {"release", "release_dir"}} {
+			files, err := readSnapshotConfigFiles(filepath.Join(serviceRoot, category.name), category.target)
 			if err != nil {
-				return nil, fmt.Errorf("read snapshot %s config %s for %s: %w", category, file.FilePath, snapshotServiceName(services[i], i), err)
+				return nil, fmt.Errorf("read snapshot config for %s: %w", snapshotServiceName(services[i], i), err)
 			}
-			file.Content = content
+			services[i].ConfigFiles = append(services[i].ConfigFiles, files...)
 		}
 	}
 	return services, nil
@@ -117,4 +114,37 @@ func readSnapshotManagedFile(root, relativePath string) (string, error) {
 		return "", err
 	}
 	return string(content), nil
+}
+
+// The private snapshot trees are also the file inventory, including historical
+// snapshots created before candidates could add or remove managed files.
+func readSnapshotConfigFiles(root, target string) ([]ConfigFile, error) {
+	var files []ConfigFile
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return files, nil
+	} else if err != nil {
+		return nil, err
+	}
+	err := filepath.WalkDir(root, func(filePath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("snapshot contains symlink %s", filePath)
+		}
+		relative, err := filepath.Rel(root, filePath)
+		if err != nil {
+			return err
+		}
+		content, err := readSnapshotManagedFile(root, relative)
+		if err != nil {
+			return err
+		}
+		files = append(files, ConfigFile{FilePath: filepath.ToSlash(relative), Target: target, Content: content})
+		return nil
+	})
+	return files, err
 }
