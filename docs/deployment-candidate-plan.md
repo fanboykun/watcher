@@ -122,6 +122,22 @@ Provide a dedicated view for managing releases and configurations safely.
 
 `GET /api/services/:id/snapshots/:version/env` inspects a trusted historical snapshot using the same path and service naming rules as rollback. Historical inspection is read-only: draft saves never alter rollback snapshots. A missing snapshot is reported as missing, rather than replaced with current environment content.
 
+The dashboard uses `GET /api/watchers/:id/snapshots/:version/config` to inspect
+the complete historical inventory. It returns version/source/capture time and
+`services: [{service_name, files: [{file_path, target, content}]}]`, where target
+is `env`, `app_dir`, or `release_dir`. Names and paths come from snapshot trees,
+not current service definitions, so renamed paths and removed services remain
+visible. The old env-only endpoint stays available for compatibility. Genuine
+env-only historical snapshots remain env-only; missing historical files are not
+reconstructed from active configuration.
+
+The watcher Candidates tab is the single editor for both env and managed files.
+The service Candidates tab and existing `?tab=candidates` links navigate to that
+editor and focus the service. Saved target discovery and per-service draft
+deletion are retained there. `saved_targets` lists that watcher's revision targets,
+and each service's `candidate_target` identifies the actual resolved revision,
+including `next` fallback, so a fallback is not mistaken for an exact draft.
+
 Snapshots retain the complete deployed managed path set and file contents,
 including an explicit empty set. Rollback replaces the running managed set with
 that trusted version's set, removes files introduced by the version being left,

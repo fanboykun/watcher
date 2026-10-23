@@ -4,6 +4,7 @@
 	import { api, type Watcher, type ServiceConfigFile } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import RequestLoading from '$lib/components/request-loading.svelte';
@@ -21,8 +22,9 @@
 		Trash2,
 		Zap
 	} from '@lucide/svelte';
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { afterNavigate } from '$app/navigation';
+	import { page } from '$app/state';
 
 	interface EditableServiceCandidate {
 		serviceId: number;
@@ -32,6 +34,7 @@
 		candidateEnv: string;
 		originalCandidateEnv: string;
 		hasCandidateEnv: boolean;
+		revisionTarget: string;
 		activeFiles: ServiceConfigFile[];
 		candidateFiles: ServiceConfigFile[];
 		originalCandidateFiles: ServiceConfigFile[];
@@ -76,6 +79,12 @@
 	let error = $state('');
 	let approving = $state(false);
 	let discarding = $state(false);
+	let savedTargets = $state<string[]>([]);
+	let deletingRevision = $state(false);
+	let confirmDelete = $state<{ serviceId: number; serviceName: string; target: string } | null>(
+		null
+	);
+	let deleteError = $state('');
 
 	const pendingSelection = $derived(
 		`${watcher.id}:${watcher.pending_catalog_id}:${watcher.pending_version}`
@@ -114,6 +123,13 @@
 
 	const hasAnyChanges = $derived(services.some(serviceChanged));
 
+	async function focusRequestedService() {
+		const serviceID = Number(page.url.searchParams.get('service'));
+		if (!Number.isSafeInteger(serviceID) || serviceID <= 0) return;
+		await tick();
+		document.getElementById(`candidate-service-${serviceID}`)?.scrollIntoView({ block: 'start' });
+	}
+
 	async function loadCandidateData(target: string) {
 		if (!target) return;
 		const generation = ++loadGeneration;
@@ -127,6 +143,7 @@
 			if (generation !== loadGeneration || selection !== pendingSelection) return;
 			loadedTarget = target;
 			loadedSelection = selection;
+			savedTargets = res.saved_targets ?? [];
 			services = res.services.map((s) => ({
 				serviceId: s.service_id,
 				serviceName: s.service_name,
@@ -135,6 +152,7 @@
 				candidateEnv: s.candidate_env,
 				originalCandidateEnv: s.candidate_env,
 				hasCandidateEnv: s.has_candidate_env,
+				revisionTarget: s.candidate_target ?? (s.has_candidate_env ? target : ''),
 				activeFiles: copyFiles(s.active_config_files),
 				candidateFiles: copyFiles(s.candidate_config_files ?? s.active_config_files),
 				originalCandidateFiles: copyFiles(s.candidate_config_files ?? s.active_config_files),
@@ -142,6 +160,7 @@
 				originalFilesExplicit: s.has_candidate_config_files ?? false,
 				viewMode: 'edit'
 			}));
+			void focusRequestedService();
 		} catch (e) {
 			if (generation === loadGeneration)
 				error = e instanceof Error ? e.message : 'Failed to load candidate configuration';
@@ -169,13 +188,16 @@
 		void loadCandidateData(selectedTarget);
 	}
 	onMount(syncPendingSelection);
-	afterNavigate(syncPendingSelection);
+	afterNavigate(() => {
+		syncPendingSelection();
+		void focusRequestedService();
+	});
 	onDestroy(() => {
 		++loadGeneration;
 	});
 
 	async function selectTarget(target: string, custom = false) {
-		if (saving || approving || discarding) return;
+		if (saving || approving || discarding || deletingRevision) return;
 		isCustom = custom;
 		selectedTarget = target;
 		if (custom) {
@@ -194,6 +216,7 @@
 	}
 
 	async function saveAllCandidates() {
+		if (busy || saving || approving || discarding || deletingRevision) return;
 		if (loading || effectiveTarget !== loadedTarget) {
 			error = 'Load the selected target before saving';
 			return;
@@ -210,9 +233,12 @@
 			for (const s of services) {
 				s.originalCandidateEnv = s.candidateEnv;
 				s.hasCandidateEnv = true;
+				s.revisionTarget = effectiveTarget;
 				s.originalCandidateFiles = copyFiles(s.candidateFiles);
 				s.originalFilesExplicit = s.filesExplicit;
 			}
+			if (!savedTargets.includes(effectiveTarget))
+				savedTargets = [...savedTargets, effectiveTarget].sort();
 			saveSuccess = `Candidate configuration saved for version "${effectiveTarget}"!`;
 			setTimeout(() => {
 				saveSuccess = '';
@@ -237,8 +263,25 @@
 		service.filesExplicit = service.originalFilesExplicit;
 	}
 
+	async function deleteSavedRevision() {
+		const selected = confirmDelete;
+		if (!selected || busy || saving || approving || discarding || deletingRevision || hasAnyChanges)
+			return;
+		deletingRevision = true;
+		deleteError = '';
+		try {
+			await api.deleteServiceConfigRevision(selected.serviceId, selected.target);
+			confirmDelete = null;
+			await loadCandidateData(effectiveTarget);
+		} catch (cause) {
+			deleteError = cause instanceof Error ? cause.message : 'Could not delete the saved draft';
+		} finally {
+			deletingRevision = false;
+		}
+	}
+
 	async function handleApprove() {
-		if (!onApprove) return;
+		if (!onApprove || deletingRevision) return;
 		if (
 			loading ||
 			loadedTarget !== watcher.pending_version ||
@@ -271,7 +314,7 @@
 	}
 
 	async function handleDiscard() {
-		if (!onDiscard) return;
+		if (!onDiscard || deletingRevision) return;
 		discarding = true;
 		error = '';
 		try {
@@ -353,7 +396,10 @@
 	}
 </script>
 
-<fieldset disabled={busy || saving || approving || discarding} class="min-w-0 space-y-4">
+<fieldset
+	disabled={busy || saving || approving || discarding || deletingRevision}
+	class="min-w-0 space-y-4"
+>
 	<!-- Top Alert / Callouts -->
 	<RequestError message={error} />
 
@@ -528,6 +574,19 @@
 					</div>
 				{/if}
 			</div>
+			{#if savedTargets.some((target) => target !== 'next' && target !== watcher.pending_version)}
+				<div class="mt-3 flex flex-wrap items-center gap-2" aria-label="Saved candidate targets">
+					<span class="text-xs text-muted-foreground">Saved drafts:</span>
+					{#each savedTargets.filter((target) => target !== 'next' && target !== watcher.pending_version) as target (target)}
+						<Button.Root
+							variant="outline"
+							size="sm"
+							type="button"
+							onclick={() => selectTarget(target)}>{target}</Button.Root
+						>
+					{/each}
+				</div>
+			{/if}
 		</Card.Header>
 	</Card.Root>
 
@@ -547,7 +606,10 @@
 				{@const hasModified =
 					svc.candidateEnv !== svc.activeEnv || !filesEqual(svc.candidateFiles, svc.activeFiles)}
 
-				<Card.Root class="border-border bg-card">
+				<Card.Root
+					id={`candidate-service-${svc.serviceId}`}
+					class="scroll-mt-6 border-border bg-card"
+				>
 					<Card.Header class="pb-3">
 						<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 							<div class="space-y-0.5">
@@ -643,6 +705,24 @@
 									>
 										<RefreshCw class="mr-1 h-3.5 w-3.5" /> Reset
 									</Button.Root>
+								{/if}
+								{#if svc.hasCandidateEnv && svc.revisionTarget === loadedTarget}
+									<Button.Root
+										variant="ghost"
+										size="sm"
+										disabled={hasAnyChanges || loading || loadedTarget !== effectiveTarget}
+										title={hasAnyChanges
+											? 'Save or reset your edits before deleting a saved draft'
+											: 'Delete this service draft; releases and snapshots remain available'}
+										onclick={() => {
+											deleteError = '';
+											confirmDelete = {
+												serviceId: svc.serviceId,
+												serviceName: svc.serviceName,
+												target: loadedTarget
+											};
+										}}><Trash2 class="mr-1 h-3.5 w-3.5" />Delete saved draft</Button.Root
+									>
 								{/if}
 							</div>
 						</div>
@@ -760,3 +840,33 @@
 		</div>
 	{/if}
 </fieldset>
+
+<Dialog.Root
+	open={confirmDelete !== null}
+	onOpenChange={(open) => {
+		if (!open && !deletingRevision) confirmDelete = null;
+	}}
+>
+	<Dialog.Content showCloseButton={!deletingRevision}>
+		<Dialog.Header>
+			<Dialog.Title>Delete saved draft?</Dialog.Title>
+			<Dialog.Description
+				>Delete the environment and managed file draft for {confirmDelete?.serviceName} at {confirmDelete?.target}?
+				Downloaded releases and historical snapshots stay unchanged.</Dialog.Description
+			>
+		</Dialog.Header>
+		<RequestError message={deleteError} />
+		<Dialog.Footer>
+			<Button.Root
+				variant="outline"
+				disabled={deletingRevision}
+				onclick={() => (confirmDelete = null)}>Cancel</Button.Root
+			>
+			<Button.Root
+				variant="destructive"
+				disabled={busy || saving || approving || discarding || hasAnyChanges || deletingRevision}
+				onclick={deleteSavedRevision}>{deletingRevision ? 'Deleting…' : 'Delete draft'}</Button.Root
+			>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>

@@ -242,6 +242,16 @@ inherit active managed files; a staged file set replaces them, including an empt
 set when all files are removed. Configuration edits remain isolated
 from live services until activation and health checks succeed.
 
+**Candidates** on a service page opens this same watcher editor, focused on that
+service. Saved draft targets and per-service draft deletion live here too; there
+is no separate env-only service editor.
+
+**View configuration** for a retained version shows its captured env, app-dir,
+and release-dir files with their original paths and contents. The read-only
+`GET /api/watchers/:id/snapshots/:version/config` endpoint reads the historical
+inventory, including services no longer present in the active configuration.
+Missing snapshots are reported as missing; active files are never substituted.
+
 **Deploy release…** queues the exact staged ZIP on the watcher's existing loop,
 including for paused watchers. The deployment reuses the normal service stop,
 activation, health-check, snapshot, and rollback pipeline. Missing or modified

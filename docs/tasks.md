@@ -1,6 +1,6 @@
 # Watcher Tasks
 
-Tasks 1–5 are implemented locally. Checked items indicate source completion;
+Tasks 1–6 are implemented locally. Checked items indicate source completion;
 local verification and remaining acceptance work are recorded below. Managed
 pool relocation remains a separate planned feature.
 Updated: 2026-10-23.
@@ -147,6 +147,31 @@ not create the destination, and do not partially save other submitted settings.
 - [ ] Implement [managed pool relocation](watcher-relocation-plan.md), including
       recovery for pools whose directory was changed by older builds. Blocking
       unsafe edits does not move or repair an already affected pool.
+
+## 6. Consolidate candidate editing and show complete configuration snapshots
+
+- [x] Remove the duplicate env-only service candidate editor.
+- [x] Display captured app-dir and release-dir files alongside env in snapshot history.
+
+**Confirmed gap:** Managed-file candidates existed in the watcher editor, while
+the service page still used an older env-only editor. The version snapshot page
+also requested only each current service's env snapshot. Storage already captured
+managed app-dir/release-dir files, but the dashboard did not expose them.
+
+**Fix:** Service candidate navigation opens the single watcher editor and focuses
+the selected service. Saved targets and per-service draft deletion remain in that
+editor. The new watcher snapshot API and viewer read every historical service
+tree and show file targets, paths, and contents, including services removed from
+the current configuration. The env-only API remains compatible. Missing history
+is never replaced with active files.
+
+**Verification:** Focused API/agent tests cover all captured file categories,
+empty/env-only snapshots, historical paths and removed services, encoded tags and
+the reverse-proxy prefix, missing snapshots, symlink rejection, read-only
+inspection, saved-target ownership, and exact-versus-next draft identity. Static
+Svelte compilation and autofixer checks passed for the changed components. No
+browser or full application build ran for this follow-up. The repository linter
+hit the 256 MB Node heap cap; it was not retried with more memory.
 
 ## Verification record and remaining acceptance
 

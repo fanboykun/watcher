@@ -541,7 +541,13 @@ func (h *Handler) GetWatcherCandidate(c *gin.Context) {
 		serviceIDs = append(serviceIDs, svc.ID)
 	}
 	var revisions []database.ServiceConfigRevision
+	savedTargets := []string{}
 	if len(serviceIDs) > 0 {
+		if err := h.db.Model(&database.ServiceConfigRevision{}).Where("service_id IN ?", serviceIDs).
+			Distinct("target_version").Order("target_version ASC").Pluck("target_version", &savedTargets).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+			return
+		}
 		if err := h.db.Where("service_id IN ? AND target_version IN ?", serviceIDs, []string{target, "next"}).Find(&revisions).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 			return
@@ -591,6 +597,7 @@ func (h *Handler) GetWatcherCandidate(c *gin.Context) {
 			ActiveEnv:               svc.EnvContent,
 			CandidateEnv:            candidateEnv,
 			HasCandidateEnv:         hasCandidate,
+			CandidateTarget:         rev.TargetVersion,
 			IsModified:              candidateEnv != svc.EnvContent || !reflect.DeepEqual(activeFiles, candidateFiles),
 			ActiveConfigFiles:       activeFiles,
 			CandidateConfigFiles:    candidateFiles,
@@ -605,6 +612,7 @@ func (h *Handler) GetWatcherCandidate(c *gin.Context) {
 		InterceptNextRelease: watcher.InterceptNextRelease,
 		AutoDeploy:           watcher.AutoDeploy,
 		Services:             serviceInfos,
+		SavedTargets:         savedTargets,
 	})
 }
 

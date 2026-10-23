@@ -199,6 +199,7 @@ type ServiceCandidateInfo struct {
 	ActiveEnv               string                        `json:"active_env"`
 	CandidateEnv            string                        `json:"candidate_env"`
 	HasCandidateEnv         bool                          `json:"has_candidate_env"`
+	CandidateTarget         string                        `json:"candidate_target"`
 	IsModified              bool                          `json:"is_modified"`
 	ActiveConfigFiles       []database.RevisionConfigFile `json:"active_config_files"`
 	CandidateConfigFiles    []database.RevisionConfigFile `json:"candidate_config_files"`
@@ -212,6 +213,7 @@ type WatcherCandidateResponse struct {
 	InterceptNextRelease bool                   `json:"intercept_next_release"`
 	AutoDeploy           bool                   `json:"auto_deploy"`
 	Services             []ServiceCandidateInfo `json:"services"`
+	SavedTargets         []string               `json:"saved_targets"`
 }
 
 type UpdateWatcherCandidateService struct {

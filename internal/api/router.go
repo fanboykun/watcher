@@ -106,6 +106,7 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 
 		// Version management and rollback
 		watchers.GET("/:id/versions", h.ListAvailableVersions)
+		watchers.GET("/:id/snapshots/:version/config", h.GetWatcherConfigSnapshot)
 		watchers.POST("/:id/rollback", h.RollbackWatcher)
 		watchers.POST("/:id/resume", h.ResumeWatcherUpdates)
 		watchers.GET("/:id/webhook-events", h.ListWebhookEvents)

@@ -1,94 +1,143 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { afterNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api, type Watcher } from '$lib/api';
+	import { onMount } from 'svelte';
+	import { api, type ConfigSnapshot, type ConfigSnapshotFile } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import { Textarea } from '$lib/components/ui/textarea';
-	import { ArrowLeft, Archive, AlertCircle } from '@lucide/svelte';
+	import { ArrowLeft, Archive } from '@lucide/svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
-
-	interface ServiceEnvItem {
-		serviceId: number;
-		serviceName: string;
-		content: string;
-		error?: string;
-	}
+	import RequestError from '$lib/components/request-error.svelte';
 
 	const watcherId = $derived(Number(page.params.id));
 	const version = $derived(page.params.version || '');
-	let watcher = $state<Watcher | null>(null);
-	let envs = $state<ServiceEnvItem[]>([]);
+	let snapshot = $state<ConfigSnapshot | null>(null);
 	let loading = $state(true);
 	let error = $state('');
+	let loadedKey = '';
+	let generation = 0;
+	let requestAbort: AbortController | null = null;
 
-	$effect(() => {
-		const id = watcherId;
-		const target = version;
-		let disposed = false;
-		async function load() {
-			loading = true;
-			error = '';
-			watcher = null;
-			envs = [];
-			try {
-				const loaded = await api.getWatcher(id);
-				const results = await Promise.all(loaded.services.map(async (svc) => {
-					const item: ServiceEnvItem = {
-						serviceId: svc.id,
-						serviceName: svc.windows_service_name || svc.iis_site_name || svc.iis_app_pool || `Service ${svc.id}`,
-						content: ''
-					};
-					try {
-						item.content = (await api.getServiceSnapshotEnv(svc.id, target)).env_content;
-					} catch (e) {
-						item.error = e instanceof Error ? e.message : 'Could not load environment snapshot';
-					}
-					return item;
-				}));
-				if (!disposed) { watcher = loaded; envs = results; }
-			} catch (e) {
-				if (!disposed) error = e instanceof Error ? e.message : 'Failed to load version snapshot';
-			} finally {
-				if (!disposed) loading = false;
+	function targetLabel(target: ConfigSnapshotFile['target']) {
+		return target === 'env'
+			? 'Environment · app dir'
+			: target === 'app_dir'
+				? 'App dir'
+				: 'Release dir';
+	}
+
+	function sourceLabel(source: string) {
+		if (source === 'deployment') return 'Deployment';
+		if (source === 'active_config_update') return 'Active configuration change';
+		if (source === 'current_version_migration') return 'Current version migration';
+		return 'Historical snapshot';
+	}
+
+	async function loadSnapshot(force = false) {
+		const key = `${watcherId}:${version}`;
+		if (!force && loadedKey === key) return;
+		loadedKey = key;
+		const current = ++generation;
+		requestAbort?.abort();
+		const controller = new AbortController();
+		requestAbort = controller;
+		const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
+		loading = true;
+		error = '';
+		snapshot = null;
+		try {
+			const result = await api.getWatcherConfigSnapshot(watcherId, version, signal);
+			if (current === generation) snapshot = result;
+		} catch (cause) {
+			if (current === generation) {
+				error = signal.aborted
+					? 'Loading the configuration snapshot timed out. Check the connection and retry.'
+					: cause instanceof Error
+						? cause.message
+						: 'Failed to load configuration snapshot';
+			}
+		} finally {
+			if (current === generation) {
+				loading = false;
+				requestAbort = null;
 			}
 		}
-		void load();
-		return () => { disposed = true; };
+	}
+
+	onMount(() => {
+		void loadSnapshot();
+		return () => {
+			++generation;
+			requestAbort?.abort();
+		};
+	});
+	afterNavigate(() => {
+		void loadSnapshot();
 	});
 </script>
 
 <div class="space-y-6">
 	<div class="flex items-center gap-4">
-		<Button.Root href={resolve('/watchers/[id]', { id: String(watcherId) }) + '?tab=versions'} variant="ghost" size="icon" aria-label="Back to versions">
+		<Button.Root
+			href={resolve('/watchers/[id]', { id: String(watcherId) }) + '?tab=versions'}
+			variant="ghost"
+			size="icon"
+			aria-label="Back to versions"
+		>
 			<ArrowLeft class="h-4 w-4" />
 		</Button.Root>
 		<div>
 			<h1 class="text-2xl font-bold tracking-tight">Configuration snapshot: {version}</h1>
-			<p class="text-sm text-muted-foreground">Historical configuration used for rollback. Prepare future changes in Candidates.</p>
+			<p class="text-sm text-muted-foreground">
+				Captured environment and managed files used for rollback. Prepare future changes in
+				Candidates.
+			</p>
 		</div>
 	</div>
-	{#if error}
-		<p role="alert" class="flex items-center gap-2 text-sm text-red-400"><AlertCircle class="h-4 w-4" />{error}</p>
-	{/if}
+	<RequestError message={error} onRetry={() => loadSnapshot(true)} />
 	{#if loading}
 		<RequestLoading label="Loading configuration snapshot..." />
-	{:else if watcher}
-		{#if envs.length === 0}
-			<p class="text-sm text-muted-foreground">No services found for this watcher.</p>
+	{:else if snapshot}
+		<p class="text-xs text-muted-foreground">
+			Captured {new Date(snapshot.captured_at).toLocaleString()} · {sourceLabel(snapshot.source)}
+		</p>
+		{#if snapshot.services.length === 0}
+			<p class="text-sm text-muted-foreground">No managed files were captured for this version.</p>
 		{/if}
-		{#each envs as env (env.serviceId)}
+		{#each snapshot.services as service (service.service_name)}
 			<Card.Root>
-				<Card.Header>
-					<Card.Title class="flex items-center gap-2"><Archive class="h-4 w-4" />{env.serviceName}</Card.Title>
-					<Card.Description>Environment captured for {version}.</Card.Description>
+				<Card.Header class="flex flex-col items-stretch">
+					<Card.Title class="flex items-center gap-2"
+						><Archive class="h-4 w-4" />{service.service_name}</Card.Title
+					>
+					<Card.Description
+						>{service.files.length} captured file{service.files.length === 1 ? '' : 's'} · {version}</Card.Description
+					>
 				</Card.Header>
-				<Card.Content>
-					{#if env.error}
-						<p role="alert" class="text-sm text-amber-300">{env.error}</p>
+				<Card.Content class="space-y-4">
+					{#each service.files as file (`${file.target}:${file.file_path}`)}
+						<section
+							class="min-w-0 space-y-2"
+							aria-label={`${service.service_name} ${file.target} ${file.file_path}`}
+						>
+							<div class="flex flex-wrap items-center gap-2">
+								<span class="rounded bg-muted px-2 py-1 text-xs">{targetLabel(file.target)}</span>
+								<span class="font-mono text-sm break-all">{file.file_path}</span>
+							</div>
+							<Textarea
+								value={file.content}
+								readonly
+								aria-label={`${service.service_name} ${file.target}/${file.file_path} snapshot`}
+								class="min-h-[180px] font-mono text-sm"
+							/>
+						</section>
 					{:else}
-						<Textarea value={env.content} readonly aria-label={`${env.serviceName} environment snapshot`} class="min-h-[260px] font-mono text-sm" />
-					{/if}
+						<p class="text-sm text-muted-foreground">
+							No managed files were captured for this service.
+						</p>
+					{/each}
 				</Card.Content>
 			</Card.Root>
 		{/each}

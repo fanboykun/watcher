@@ -39,7 +39,6 @@
 	import DeploysTab from './components/deploys-tab.svelte';
 	import LogsTab from './components/logs-tab.svelte';
 	import EnvTab from './components/env-tab.svelte';
-	import CandidatesTab from './components/candidates-tab.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	let service = $state<Service | null>(null);
@@ -83,6 +82,12 @@
 	let activeTab = $state(page.url.searchParams.get('tab') || 'health');
 
 	const id = $derived(Number(page.params.id));
+	const candidateURL = $derived(
+		watcher
+			? resolve('/watchers/[id]', { id: String(watcher.id) }) +
+					`?tab=candidates&service=${id}#candidate-service-${id}`
+			: ''
+	);
 	let loadedID: number | null = null;
 	let mounted = false;
 	let detailGeneration = 0;
@@ -101,9 +106,21 @@
 	});
 
 	function loadCurrentService() {
-		if (loadedID === id) return;
+		if (loadedID === id) {
+			if (page.url.searchParams.get('tab') === 'candidates') void openCandidates(true);
+			return;
+		}
 		loadedID = id;
 		void loadDetail();
+	}
+
+	async function openCandidates(replaceState = false) {
+		if (!candidateURL) return;
+		try {
+			await goto(candidateURL, { replaceState });
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : 'Could not open deployment candidates';
+		}
 	}
 
 	async function loadDetail() {
@@ -128,6 +145,10 @@
 			if (generation === detailGeneration) loading = false;
 		}
 		if (generation !== detailGeneration || !mounted || !service) return;
+		if (page.url.searchParams.get('tab') === 'candidates') {
+			await openCandidates(true);
+			return;
+		}
 		void refreshStatus();
 		void loadHealthHistory();
 		void loadDeploys();
@@ -493,6 +514,10 @@
 			bind:value={activeTab}
 			onValueChange={(v) => {
 				if (v) {
+					if (v === 'candidates') {
+						void openCandidates();
+						return;
+					}
 					goto(resolve(`/services/[id]?tab=${v}`, { id: String(id) }), {
 						replaceState: true,
 						keepFocus: true,
@@ -566,12 +591,11 @@
 			</Tabs.Content>
 
 			<Tabs.Content value="candidates" class="mt-4">
-				<CandidatesTab
-					serviceId={id}
-					currentEnv={service?.env_content || ''}
-					watcherId={watcher?.id}
-					pendingVersion={watcher?.pending_version}
-				/>
+				<p class="text-sm text-muted-foreground">
+					Prepare environment and managed file changes together in this watcher's deployment
+					candidates.
+				</p>
+				<Button.Root class="mt-3" href={candidateURL}>Open deployment candidates</Button.Root>
 			</Tabs.Content>
 		</Tabs.Root>
 	{/if}

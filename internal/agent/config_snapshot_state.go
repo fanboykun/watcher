@@ -120,10 +120,12 @@ func readSnapshotManagedFile(root, relativePath string) (string, error) {
 // snapshots created before candidates could add or remove managed files.
 func readSnapshotConfigFiles(root, target string) ([]ConfigFile, error) {
 	var files []ConfigFile
-	if _, err := os.Stat(root); os.IsNotExist(err) {
+	if info, err := os.Lstat(root); os.IsNotExist(err) {
 		return files, nil
 	} else if err != nil {
 		return nil, err
+	} else if !info.IsDir() {
+		return nil, fmt.Errorf("snapshot category is not a directory: %s", root)
 	}
 	err := filepath.WalkDir(root, func(filePath string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {

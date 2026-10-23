@@ -414,6 +414,19 @@ export interface ServiceConfigRevision {
 	updated_at: string;
 }
 
+export interface ConfigSnapshotFile {
+	file_path: string;
+	target: 'env' | ConfigFileTarget;
+	content: string;
+}
+
+export interface ConfigSnapshot {
+	version: string;
+	source: string;
+	captured_at: string;
+	services: { service_name: string; files: ConfigSnapshotFile[] }[];
+}
+
 export interface ServiceCandidateInfo {
 	service_id: number;
 	service_name: string;
@@ -421,6 +434,7 @@ export interface ServiceCandidateInfo {
 	active_env: string;
 	candidate_env: string;
 	has_candidate_env: boolean;
+	candidate_target: string;
 	active_config_files: ServiceConfigFile[];
 	candidate_config_files: ServiceConfigFile[];
 	has_candidate_config_files: boolean;
@@ -434,6 +448,7 @@ export interface WatcherCandidateResponse {
 	intercept_next_release: boolean;
 	auto_deploy: boolean;
 	services: ServiceCandidateInfo[];
+	saved_targets: string[];
 }
 
 export interface DeployLog {
@@ -948,6 +963,10 @@ export const api = {
 		request<{ env_content: string }>(
 			`/services/${id}/snapshots/${encodeURIComponent(version)}/env`
 		),
+	getWatcherConfigSnapshot: async (id: number, version: string, signal?: AbortSignal) =>
+		request<ConfigSnapshot>(`/watchers/${id}/snapshots/${encodeURIComponent(version)}/config`, {
+			signal
+		}),
 
 	discardRelease: async (id: number) =>
 		request<{ message: string }>(`/watchers/${id}/discard`, { method: 'POST' }),
