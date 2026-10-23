@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -229,6 +230,13 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
+	// An install directory owns cached artifacts, snapshots and runtime service
+	// paths. Updating this field is not a relocation, even for a paused watcher:
+	// an existing worker may still be completing or compensating a deployment.
+	if req.InstallDir != nil && *req.InstallDir != watcher.InstallDir {
+		c.JSON(http.StatusConflict, ErrorResponse{Error: "The install directory cannot be changed after a watcher is created. Editing this path does not move downloaded releases, configuration snapshots, or service paths. Keep the existing directory; moving this pool requires a managed relocation operation."})
+		return
+	}
 	if req.WebhookSigningSecret != nil {
 		if err := validateOptionalWebhookSigningSecret(*req.WebhookSigningSecret); err != nil {
 			c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
@@ -277,9 +285,6 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	}
 	if req.DownloadRetries != nil {
 		updates["download_retries"] = *req.DownloadRetries
-	}
-	if req.InstallDir != nil {
-		updates["install_dir"] = *req.InstallDir
 	}
 	if req.HcEnabled != nil {
 		updates["hc_enabled"] = *req.HcEnabled
@@ -418,6 +423,14 @@ func (h *Handler) ApproveRelease(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
+	if watcher.PendingCatalogID != 0 {
+		if watcher.PendingVersion != req.Version {
+			c.JSON(http.StatusConflict, ErrorResponse{Error: "The selected candidate changed"})
+			return
+		}
+		h.queueCatalogDeploy(c, watcher, watcher.PendingCatalogID)
+		return
+	}
 	result := h.db.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", req.Version).
 		UpdateColumns(map[string]any{"status": "approved", "approved_version": req.Version})
 	if result.Error != nil {
@@ -440,7 +453,8 @@ func (h *Handler) DiscardRelease(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	if watcher.Status != "pending_approval" {
+	recoverableCatalog := watcher.PendingCatalogID != 0 && watcher.ApprovedVersion == "" && watcher.Status != "approved" && watcher.Status != "deploying"
+	if watcher.Status != "pending_approval" && !recoverableCatalog {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "No release pending approval"})
 		return
 	}
@@ -457,12 +471,23 @@ func (h *Handler) DiscardRelease(c *gin.Context) {
 		"intercept_next_release": false,
 	}
 	if discardedVersion != "" {
-		updates["max_ignored_version"] = discardedVersion
+		cmp, comparable := agent.CompareVersions(discardedVersion, watcher.MaxIgnoredVersion)
+		if watcher.MaxIgnoredVersion == "" || (comparable && cmp > 0) {
+			updates["max_ignored_version"] = discardedVersion
+		}
 	}
 
 	updates["approved_version"] = ""
+	updates["pending_catalog_id"] = 0
 	err = h.db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", discardedVersion).UpdateColumns(updates)
+		var active int64
+		if err := tx.Model(&database.DeployLog{}).Where("watcher_id = ? AND completed_at IS NULL", watcher.ID).Count(&active).Error; err != nil {
+			return err
+		}
+		if active != 0 {
+			return errCatalogConflict
+		}
+		result := tx.Model(watcher).Where("status = ? AND pending_version = ? AND pending_catalog_id = ? AND approved_version = ? AND max_ignored_version = ?", watcher.Status, discardedVersion, watcher.PendingCatalogID, watcher.ApprovedVersion, watcher.MaxIgnoredVersion).UpdateColumns(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -478,7 +503,7 @@ func (h *Handler) DiscardRelease(c *gin.Context) {
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, errCatalogConflict) {
 			status = http.StatusConflict
 		}
 		c.JSON(status, ErrorResponse{Error: err.Error()})
@@ -506,7 +531,7 @@ func (h *Handler) GetWatcherCandidate(c *gin.Context) {
 	}
 
 	var services []database.Service
-	if err := h.db.Where("watcher_id = ?", watcher.ID).Find(&services).Error; err != nil {
+	if err := h.db.Preload("ConfigFiles").Where("watcher_id = ?", watcher.ID).Find(&services).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -551,14 +576,25 @@ func (h *Handler) GetWatcherCandidate(c *gin.Context) {
 			candidateEnv = rev.EnvContent
 		}
 
+		activeFiles := make([]database.RevisionConfigFile, 0, len(svc.ConfigFiles))
+		for _, file := range svc.ConfigFiles {
+			activeFiles = append(activeFiles, database.RevisionConfigFile{FilePath: file.FilePath, Target: file.Target, Content: file.Content})
+		}
+		candidateFiles := activeFiles
+		if hasCandidate && rev.ConfigFiles != nil {
+			candidateFiles = append([]database.RevisionConfigFile{}, (*rev.ConfigFiles)...)
+		}
 		serviceInfos = append(serviceInfos, ServiceCandidateInfo{
-			ServiceID:       svc.ID,
-			ServiceName:     name,
-			ServiceType:     svc.ServiceType,
-			ActiveEnv:       svc.EnvContent,
-			CandidateEnv:    candidateEnv,
-			HasCandidateEnv: hasCandidate,
-			IsModified:      candidateEnv != svc.EnvContent,
+			ServiceID:               svc.ID,
+			ServiceName:             name,
+			ServiceType:             svc.ServiceType,
+			ActiveEnv:               svc.EnvContent,
+			CandidateEnv:            candidateEnv,
+			HasCandidateEnv:         hasCandidate,
+			IsModified:              candidateEnv != svc.EnvContent || !reflect.DeepEqual(activeFiles, candidateFiles),
+			ActiveConfigFiles:       activeFiles,
+			CandidateConfigFiles:    candidateFiles,
+			HasCandidateConfigFiles: hasCandidate && rev.ConfigFiles != nil,
 		})
 	}
 
@@ -600,7 +636,10 @@ func (h *Handler) UpdateWatcherCandidate(c *gin.Context) {
 			if err := tx.Where("id = ? AND watcher_id = ?", item.ServiceID, watcher.ID).First(&svc).Error; err != nil {
 				return err
 			}
-			if err := saveServiceConfigRevision(tx, svc.ID, target, item.EnvContent); err != nil {
+			if err := validateCandidateFiles(svc.EnvFile, item.ConfigFiles); err != nil {
+				return fmt.Errorf("%w: %v", errCandidateFiles, err)
+			}
+			if err := saveServiceConfigRevision(tx, svc.ID, target, item.EnvContent, item.ConfigFiles); err != nil {
 				return err
 			}
 		}
@@ -608,7 +647,7 @@ func (h *Handler) UpdateWatcherCandidate(c *gin.Context) {
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, errCandidateFiles) {
 			status = http.StatusBadRequest
 		}
 		c.JSON(status, ErrorResponse{Error: "Could not save candidate configuration: " + err.Error()})

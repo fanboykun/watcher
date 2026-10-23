@@ -5,6 +5,11 @@ const SELF_UPDATE_DISMISS_KEY = 'watcher.self-update.dismissed-version';
 const SELF_UPDATE_EVENT = 'watcher:self-update-changed';
 const SELF_UPDATE_TTL_MS = 30 * 60 * 1000;
 
+type UpdateStatus = 'idle' | 'updating' | 'applied' | 'failed';
+let updateStatus: UpdateStatus = 'idle';
+let updateMessage = '';
+let updateOperation: Promise<void> | null = null;
+
 type SelfUpdateCacheRecord = {
 	checked_at: string;
 	info: SelfUpdateCheckResponse;
@@ -15,6 +20,8 @@ export type SelfUpdateSnapshot = {
 	checkedAt: string | null;
 	dismissedVersion: string;
 	shouldNotify: boolean;
+	updateStatus: UpdateStatus;
+	updateMessage: string;
 };
 
 function canUseStorage() {
@@ -89,7 +96,9 @@ export function getSelfUpdateSnapshot(): SelfUpdateSnapshot {
 		info: record?.info ?? null,
 		checkedAt: record?.checked_at ?? null,
 		dismissedVersion,
-		shouldNotify: shouldNotify(record?.info ?? null, dismissedVersion)
+		shouldNotify: shouldNotify(record?.info ?? null, dismissedVersion),
+		updateStatus,
+		updateMessage
 	};
 }
 
@@ -146,4 +155,29 @@ export function subscribeSelfUpdate(callback: (snapshot: SelfUpdateSnapshot) => 
 		window.removeEventListener(SELF_UPDATE_EVENT, handleChange);
 		window.removeEventListener('storage', handleChange);
 	};
+}
+
+// Keep one operation across the banner, settings, and client-side navigation.
+export function performSelfUpdate(): Promise<void> {
+	if (updateOperation) return updateOperation;
+	if (updateStatus === 'applied') return Promise.resolve();
+	updateStatus = 'updating';
+	updateMessage = 'Downloading and applying the Watcher update…';
+	emitSelfUpdateChanged();
+	updateOperation = (async () => {
+		try {
+			const result = await api.selfUpdate();
+			updateStatus = 'applied';
+			updateMessage = `${result.message}. Reload the dashboard after Watcher restarts to confirm the running version.`;
+			clearSelfUpdateCache();
+			clearSelfUpdateDismissal();
+		} catch (error) {
+			updateStatus = 'failed';
+			updateMessage = error instanceof Error ? error.message : 'Update failed. Try again.';
+		} finally {
+			updateOperation = null;
+			emitSelfUpdateChanged();
+		}
+	})();
+	return updateOperation;
 }

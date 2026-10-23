@@ -52,6 +52,7 @@ type Watcher struct {
 
 	AutoDeploy           bool   `gorm:"not null;default:true" json:"auto_deploy"`
 	InterceptNextRelease bool   `gorm:"not null;default:false" json:"intercept_next_release"`
+	PendingCatalogID     uint   `gorm:"not null;default:0" json:"pending_catalog_id"`
 	PendingVersion       string `gorm:"not null;default:''" json:"pending_version"`
 	ApprovedVersion      string `gorm:"not null;default:''" json:"-"`
 
@@ -71,6 +72,7 @@ type Watcher struct {
 	NotifyServiceHealthChanged      bool       `gorm:"not null;default:false" json:"notify_service_health_changed"`
 
 	// Relations
+	CatalogArtifacts  []CatalogArtifact `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"-"`
 	Services          []Service         `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"services"`
 	DeployLogs        []DeployLog       `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"deploy_logs"`
 	PollEvents        []PollEvent       `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"poll_events"`
@@ -219,10 +221,37 @@ type WebhookDelivery struct {
 
 // ServiceConfigRevision holds configuration prepared for a specific target version.
 type ServiceConfigRevision struct {
-	ID            uint      `gorm:"primaryKey" json:"id"`
-	ServiceID     uint      `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"service_id"`
-	TargetVersion string    `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"target_version"` // e.g., "v1.2.0" or "next"
-	EnvContent    string    `gorm:"type:text" json:"env_content"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            uint   `gorm:"primaryKey" json:"id"`
+	ServiceID     uint   `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"service_id"`
+	TargetVersion string `gorm:"not null;uniqueIndex:idx_service_revision_target" json:"target_version"` // e.g., "v1.2.0" or "next"
+	EnvContent    string `gorm:"type:text" json:"env_content"`
+	// Nil inherits active files; an explicit empty slice removes all managed files.
+	ConfigFiles *[]RevisionConfigFile `gorm:"serializer:json;type:text" json:"config_files"`
+	CreatedAt   time.Time             `json:"created_at"`
+	UpdatedAt   time.Time             `json:"updated_at"`
+}
+
+// CatalogArtifact is an immutable, locally staged release asset. Paths are derived from its ID.
+type CatalogArtifact struct {
+	ServiceName  string     `json:"-"`
+	ID           uint       `gorm:"primaryKey" json:"id"`
+	WatcherID    uint       `gorm:"index;not null" json:"watcher_id"`
+	Repository   string     `json:"repository"`
+	InstallDir   string     `json:"-"`
+	ReleaseID    int64      `json:"release_id"`
+	AssetID      int64      `json:"asset_id"`
+	Tag          string     `json:"tag"`
+	Version      string     `json:"version"`
+	AssetName    string     `json:"asset_name"`
+	ArtifactURL  string     `json:"-"`
+	SHA256       string     `json:"sha256"`
+	DownloadedAt *time.Time `json:"downloaded_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+// RevisionConfigFile is a managed file staged without active row identities.
+type RevisionConfigFile struct {
+	FilePath string `json:"file_path"`
+	Target   string `json:"target"`
+	Content  string `json:"content"`
 }

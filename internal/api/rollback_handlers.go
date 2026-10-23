@@ -24,6 +24,9 @@ func (h *Handler) ListAvailableVersions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	if versions == nil {
+		versions = []agent.ReleaseInfo{}
+	}
 	currentVersion := strings.TrimSpace(watcher.CurrentVersion)
 	if currentVersion != "" {
 		for i := range versions {
@@ -31,7 +34,13 @@ func (h *Handler) ListAvailableVersions(c *gin.Context) {
 		}
 	}
 
+	downloads, err := h.catalogDownloads(watcher)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
+		"downloads":       downloads,
 		"watcher_id":      watcher.ID,
 		"current_version": watcher.CurrentVersion,
 		"versions":        versions,
@@ -42,6 +51,11 @@ func (h *Handler) ListAvailableVersions(c *gin.Context) {
 func (h *Handler) RollbackWatcher(c *gin.Context) {
 	watcher, err := h.findWatcher(c)
 	if err != nil {
+		return
+	}
+
+	if watcher.PendingCatalogID != 0 {
+		catalogError(c, errCatalogConflict)
 		return
 	}
 
@@ -92,8 +106,24 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 		Status:              "in_progress",
 		StartedAt:           &now,
 	}
-	if err := h.db.Create(&dlog).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		var live database.Watcher
+		if err := tx.First(&live, watcher.ID).Error; err != nil {
+			return err
+		}
+		if live.PendingCatalogID != 0 {
+			return errCatalogConflict
+		}
+		var active int64
+		if err := tx.Model(&database.DeployLog{}).Where("watcher_id = ? AND completed_at IS NULL", watcher.ID).Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return errCatalogConflict
+		}
+		return tx.Create(&dlog).Error
+	}); err != nil {
+		catalogError(c, err)
 		return
 	}
 	_ = h.db.Model(&dlog).Update("root_attempt_id", dlog.ID).Error

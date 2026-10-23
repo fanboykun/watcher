@@ -309,7 +309,7 @@ jobs:
         env:
           BUMP_TYPE: ${{ needs.tag.outputs.bump_type }}
           ZIP_NAME: ${{ steps.zip.outputs.zip_name }}
-          FALLBACK_CHANGELOG: ${{ needs.tag.outputs.changelog }}
+          CHANGELOG: ${{ needs.tag.outputs.changelog }}
         run: |
           python3 - <<'PY'
           import os
@@ -320,7 +320,16 @@ jobs:
           description = subprocess.check_output(
               ["git", "log", "-1", "--format=%b", "HEAD"], text=True
           ).strip("\r\n")
-          changes = description if description.strip() else os.environ["FALLBACK_CHANGELOG"].strip("\r\n")
+          subject = subprocess.check_output(
+              ["git", "log", "-1", "--format=%s", "HEAD"], text=True
+          ).strip("\r\n")
+          changes = os.environ["CHANGELOG"].strip("\r\n")
+          # Keep the title and PR reference even for forced bumps or merge commits.
+          title = f"* {subject}"
+          if title not in changes.splitlines():
+              changes = title + ("\n" + changes if changes else "")
+          if description.strip():
+              changes += "\n\n### Details\n\n" + description
           notes = fr"""## What's changed ({os.environ['BUMP_TYPE']} bump)
 
           {changes}

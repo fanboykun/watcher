@@ -1,6 +1,7 @@
 <script lang="ts">
 	import './layout.css';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import {
 		Activity,
 		LayoutDashboard,
@@ -40,11 +41,13 @@
 	let defaultPassword = $state('');
 	let selfUpdateInfo = $state<SelfUpdateCheckResponse | null>(null);
 	let showSelfUpdateBanner = $state(false);
+	let selfUpdateBusy = $state(false);
 
 	function syncSelfUpdateState() {
 		const snapshot = getSelfUpdateSnapshot();
 		selfUpdateInfo = snapshot.info;
 		showSelfUpdateBanner = snapshot.shouldNotify;
+		selfUpdateBusy = snapshot.updateStatus === 'updating' || snapshot.updateStatus === 'applied';
 	}
 
 	const navItems = [
@@ -62,6 +65,7 @@
 		const unsubscribe = subscribeSelfUpdate((snapshot) => {
 			selfUpdateInfo = snapshot.info;
 			showSelfUpdateBanner = snapshot.shouldNotify;
+			selfUpdateBusy = snapshot.updateStatus === 'updating' || snapshot.updateStatus === 'applied';
 		});
 		validateStoredAuth();
 		return unsubscribe;
@@ -342,12 +346,15 @@
 							</div>
 						</div>
 						<div class="flex flex-wrap gap-2">
-							<a href={resolve('/settings')}>
-								<Button.Root size="sm" class="bg-blue-600 text-white hover:bg-blue-700">
-									<Download class="mr-2 h-4 w-4" />
-									Update Watcher
-								</Button.Root>
-							</a>
+							<Button.Root
+								size="sm"
+								class="bg-blue-600 text-white hover:bg-blue-700"
+								disabled={selfUpdateBusy}
+								onclick={() => goto(resolve('/settings?tab=maintenance&action=update'))}
+							>
+								<Download class="mr-2 h-4 w-4" />
+								{selfUpdateBusy ? 'Updating…' : 'Update Watcher'}
+							</Button.Root>
 							<Button.Root size="sm" variant="outline" onclick={dismissUpdateBanner}>
 								Dismiss
 							</Button.Root>

@@ -38,6 +38,8 @@
 	import PollingTab from './components/polling-tab.svelte';
 	import WebhooksTab from './components/webhooks-tab.svelte';
 	import CandidateTab from './components/candidate-tab.svelte';
+	import ReleasesTab from './components/releases-tab.svelte';
+	import DownloadedVersions from './components/downloaded-versions.svelte';
 	import RollbackDialog from './components/rollback-dialog.svelte';
 	import ConfirmationDialog from './components/confirmation-dialog.svelte';
 
@@ -55,9 +57,17 @@
 		}
 	}
 	let watcher = $state<Watcher | null>(null);
+	const reviewableCandidate = $derived(
+		watcher &&
+			(watcher.status === 'pending_approval' ||
+				(watcher.pending_catalog_id > 0 &&
+					watcher.status !== 'approved' &&
+					watcher.status !== 'deploying'))
+	);
 	let deploys = $state<DeployLog[]>([]);
 	let polls = $state<import('$lib/api').PollEvent[]>([]);
 	let versions = $state<import('$lib/api').ReleaseInfo[]>([]);
+	let downloads = $state.raw<import('$lib/api').CatalogDownload[]>([]);
 	let webhookDeliveries = $state<WebhookDelivery[]>([]);
 	let deployPage = $state(1);
 	let deployPageSize = $state(10);
@@ -92,9 +102,60 @@
 
 	let watcherEventSource: AuthenticatedEventStream | null = null;
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+	let refreshVersions = false;
+	let refreshPolls = false;
 
 	const id = Number(page.params.id);
 
+	function fetchWatcher() {
+		const signal = AbortSignal.timeout(30_000);
+		return api.getWatcher(id, signal).catch((cause) => {
+			if (signal.aborted) {
+				throw new Error('Watcher details timed out. Check the agent connection and retry.');
+			}
+			throw cause;
+		});
+	}
+
+	async function loadVersions() {
+		const result = await api.watcherVersionCatalog(id);
+		versions = result.versions ?? [];
+		downloads = result.downloads ?? [];
+	}
+	async function configureDownload(download: import('$lib/api').CatalogDownload) {
+		try {
+			await api.selectCatalogCandidate(id, download.id);
+			watcher = await fetchWatcher();
+			activeTab = 'candidates';
+			await goto(resolve('/watchers/[id]?tab=candidates', { id: String(id) }), {
+				replaceState: true,
+				noScroll: true
+			});
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : 'Could not select candidate';
+		}
+	}
+	function deployDownload(download: import('$lib/api').CatalogDownload) {
+		openConfirmDialog({
+			title: `Deploy ${download.version}?`,
+			description: `Deploy the downloaded ${download.asset_name} using saved candidate configuration? Services will stop during activation, followed by health checks. Automatic polling keeps its configured release reference.`,
+			actionLabel: 'Deploy release',
+			action: async () => {
+				try {
+					await api.deployCatalogRelease(id, download.id);
+					watcher = await fetchWatcher();
+					await loadDeploys();
+					activeTab = 'deploys';
+					await goto(resolve('/watchers/[id]?tab=deploys', { id: String(id) }), {
+						replaceState: true,
+						noScroll: true
+					});
+				} catch (cause) {
+					error = cause instanceof Error ? cause.message : 'Could not queue deployment';
+				}
+			}
+		});
+	}
 	const loadPolls = async () => {
 		try {
 			const res = await api.watcherPolls(id, pollPage, pollPageSize, pollStatus);
@@ -129,7 +190,7 @@
 		dataError = '';
 		const results = await Promise.allSettled([
 			loadDeploys(),
-			api.watcherVersions(id).then((v) => (versions = v)),
+			loadVersions(),
 			loadPolls(),
 			loadWebhookDeliveries()
 		]);
@@ -140,16 +201,22 @@
 	}
 
 	function scheduleRefresh(includeVersions = false, includePolls = false) {
+		refreshVersions ||= includeVersions;
+		refreshPolls ||= includePolls;
 		if (refreshTimer) return;
 		refreshTimer = setTimeout(async () => {
 			refreshTimer = null;
+			const includeVersions = refreshVersions;
+			const includePolls = refreshPolls;
+			refreshVersions = false;
+			refreshPolls = false;
 			try {
 				const tasks: Array<Promise<unknown>> = [
-					api.getWatcher(id).then((w) => (watcher = w)),
+					fetchWatcher().then((w) => (watcher = w)),
 					loadDeploys()
 				];
 				if (includeVersions) {
-					tasks.push(api.watcherVersions(id).then((v) => (versions = v)));
+					tasks.push(loadVersions());
 				}
 				if (includePolls || activeTab === 'polling') {
 					tasks.push(loadPolls());
@@ -164,29 +231,43 @@
 		}, 200);
 	}
 
-	onMount(() => {
-		const init = async () => {
-			try {
-				watcher = await api.getWatcher(id);
+	async function loadWatcher() {
+		loading = true;
+		error = '';
+		try {
+			watcher = await fetchWatcher();
+			// History and catalog requests must not block a newly created watcher.
+			void refreshDetails();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load watcher';
+		} finally {
+			loading = false;
+		}
+	}
 
-				await refreshDetails();
-			} catch (e) {
-				error = e instanceof Error ? e.message : 'Failed to load watcher';
-			} finally {
-				loading = false;
-			}
-		};
-		init();
+	onMount(() => {
+		void loadWatcher();
 
 		watcherEventSource = api.streamWatcherEvents(
 			id,
-			(data) => {
+			async (data) => {
 				try {
-					const ev = JSON.parse(data) as { type?: string };
+					const ev = JSON.parse(data) as {
+						type?: string;
+						watcher_id?: number;
+						data?: { deploy_log_id?: number };
+					};
+					if (ev.watcher_id && ev.watcher_id !== id) return;
 					switch (ev.type) {
-						case 'deploy_started':
-							scheduleRefresh(false, false);
+						case 'deploy_started': {
+							const logId = ev.data?.deploy_log_id;
+							if (typeof logId === 'number' && Number.isSafeInteger(logId) && logId > 0) {
+								await goto(
+									resolve('/watchers/[id]/logs/[logId]', { id: String(id), logId: String(logId) })
+								);
+							} else scheduleRefresh(false, false);
 							break;
+						}
 						case 'deploy_finished':
 						case 'version_changed':
 							scheduleRefresh(true, false);
@@ -258,7 +339,7 @@
 			action: async () => {
 				try {
 					await api.deleteService(id, svcId);
-					watcher = await api.getWatcher(id);
+					watcher = await fetchWatcher();
 				} catch (e) {
 					error = e instanceof Error ? e.message : 'Delete failed';
 				}
@@ -286,10 +367,6 @@
 				try {
 					const res = await api.redeployWatcher(id);
 					const fallback = resolve(`/watchers/${id}/logs/${res.deploy_log_id}`);
-					if (res.log_url && /^https?:\/\//i.test(res.log_url)) {
-						window.location.href = res.log_url;
-						return;
-					}
 					await goto(fallback);
 				} catch (e) {
 					const msg = e instanceof Error ? e.message : 'Redeploy failed';
@@ -328,10 +405,6 @@
 			const res = await api.rollbackWatcher(id, version, reportGithub);
 			showRollbackDialog = false;
 			const fallback = resolve(`/watchers/${id}/logs/${res.deploy_log_id}`);
-			if (res.log_url && /^https?:\/\//i.test(res.log_url)) {
-				window.location.href = res.log_url;
-				return;
-			}
 			await goto(fallback);
 		} catch (e) {
 			error = e instanceof Error ? e.message : `Rollback to ${version} failed`;
@@ -347,7 +420,7 @@
 			action: async () => {
 				try {
 					await api.deleteWatcherVersion(id, version);
-					versions = await api.watcherVersions(id);
+					await loadVersions();
 				} catch (e) {
 					error = e instanceof Error ? e.message : `Delete ${version} failed`;
 				}
@@ -359,7 +432,7 @@
 		try {
 			await api.resumeWatcherUpdates(id);
 			triggerMsg = `Auto-deploy resumed!`;
-			watcher = await api.getWatcher(id);
+			watcher = await fetchWatcher();
 		} catch (e) {
 			error = e instanceof Error ? e.message : `Failed to resume auto deploy`;
 		}
@@ -392,17 +465,18 @@
 			const nextVal = !watcher.intercept_next_release;
 			await api.interceptWatcher(id, nextVal);
 			triggerMsg = nextVal ? 'Will intercept next release.' : 'Intercept disabled.';
-			watcher = await api.getWatcher(id);
+			watcher = await fetchWatcher();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to toggle intercept';
 		}
 	}
 
-	async function approveRelease(version?: string) {
+	async function approveRelease(version?: string, catalogId = 0) {
 		// The candidate editor owns approval errors and keeps its review state.
 		const target = version || watcher?.pending_version;
 		if (!target) return;
-		await api.approveRelease(id, target);
+		if (catalogId > 0) await api.deployCatalogRelease(id, catalogId);
+		else await api.approveRelease(id, target);
 		triggerMsg = 'Release approved! Deploying...';
 		scheduleRefresh();
 	}
@@ -417,7 +491,7 @@
 				try {
 					const res = await api.discardRelease(id);
 					triggerMsg = res.message;
-					watcher = await api.getWatcher(id);
+					watcher = await fetchWatcher();
 				} catch (e) {
 					error = e instanceof Error ? e.message : 'Failed to discard release';
 				}
@@ -499,7 +573,9 @@
 						>
 						<DropdownMenu.Item
 							class="text-amber-400"
-							disabled={actionBusy || watcher.status === 'pending_approval'}
+							disabled={actionBusy ||
+								!!watcher.pending_catalog_id ||
+								watcher.status === 'pending_approval'}
 							onSelect={triggerRedeploy}><RotateCcw />Redeploy</DropdownMenu.Item
 						>
 					</DropdownMenu.Content>
@@ -508,7 +584,10 @@
 		{/if}
 	</header>
 
-	{#if !showConfirmDialog && !showRollbackDialog}<RequestError message={error} />{/if}
+	{#if !showConfirmDialog && !showRollbackDialog}<RequestError
+			message={error}
+			onRetry={!watcher ? loadWatcher : undefined}
+		/>{/if}
 	<RequestError
 		message={dataError}
 		title="Details could not be refreshed"
@@ -530,14 +609,14 @@
 		<div class="rounded-xl border border-border bg-card p-4">
 			<WatcherPollingStatus {watcher} />
 		</div>
-		{#if watcher.status === 'pending_approval' && activeTab !== 'candidates'}
+		{#if reviewableCandidate && activeTab !== 'candidates'}
 			<div class="section-toolbar rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
 				<div class="min-w-0">
 					<p class="text-sm font-medium">
-						Release <span class="font-mono">{watcher.pending_version}</span> awaits approval
+						Release <span class="font-mono">{watcher.pending_version}</span> awaits review
 					</p>
 					<p class="mt-1 text-xs text-muted-foreground">
-						Review its configuration before deploying.
+						Review its configuration to deploy or discard this candidate.
 					</p>
 				</div>
 				<Button.Root
@@ -584,6 +663,10 @@
 			bind:value={activeTab}
 			onValueChange={(v) => {
 				if (v) {
+					if (v === 'versions')
+						void loadVersions().catch((cause) => {
+							dataError = cause instanceof Error ? cause.message : 'Could not load versions';
+						});
 					goto(resolve(`/watchers/[id]?tab=${v}`, { id: String(id) }), {
 						replaceState: true,
 						keepFocus: true,
@@ -595,14 +678,16 @@
 			<Tabs.List>
 				<Tabs.Trigger value="overview">Overview</Tabs.Trigger>
 				<Tabs.Trigger value="services">Services ({watcher.services.length})</Tabs.Trigger>
+				<Tabs.Trigger value="releases">GitHub releases</Tabs.Trigger>
 				<Tabs.Trigger value="candidates" class="relative">
 					Candidates
-					{#if watcher.status === 'pending_approval'}
+					{#if reviewableCandidate}
 						<span class="ml-1.5 flex h-2 w-2 rounded-full bg-purple-500"></span>
 					{/if}
 				</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploys ({deployTotal})</Tabs.Trigger>
-				<Tabs.Trigger value="versions">Versions ({versions.length})</Tabs.Trigger>
+				<Tabs.Trigger value="versions">Versions ({versions.length + downloads.length})</Tabs.Trigger
+				>
 				<Tabs.Trigger value="polling">Polls</Tabs.Trigger>
 				<Tabs.Trigger value="webhooks">Webhooks ({deliveryTotal})</Tabs.Trigger>
 			</Tabs.List>
@@ -619,14 +704,35 @@
 				/>
 			</Tabs.Content>
 
+			<Tabs.Content value="releases" class="mt-4">
+				{#if activeTab === 'releases'}
+					{#key id}
+						<ReleasesTab
+							{watcher}
+							onDownloaded={loadVersions}
+							onNavigate={async (tab) => {
+								watcher = await fetchWatcher();
+								await Promise.all([loadVersions(), loadDeploys()]);
+								activeTab = tab;
+								await goto(resolve(`/watchers/[id]?tab=${tab}`, { id: String(id) }), {
+									replaceState: true,
+									noScroll: true
+								});
+							}}
+						/>
+					{/key}
+				{/if}
+			</Tabs.Content>
+
 			<Tabs.Content value="candidates" class="mt-4">
 				<CandidateTab
 					{watcher}
 					busy={actionBusy}
-					onApprove={(version) => runPending('approve', () => approveRelease(version))}
+					onApprove={(version, catalogId) =>
+						runPending('approve', () => approveRelease(version, catalogId))}
 					onDiscard={discardRelease}
 					onRefreshWatcher={async () => {
-						watcher = await api.getWatcher(id);
+						watcher = await fetchWatcher();
 					}}
 				/>
 			</Tabs.Content>
@@ -650,7 +756,14 @@
 				/>
 			</Tabs.Content>
 
-			<Tabs.Content value="versions" class="mt-4">
+			<Tabs.Content value="versions" class="mt-4 space-y-4">
+				<DownloadedVersions
+					{downloads}
+					busy={actionBusy}
+					onConfigure={(download) =>
+						runPending('catalog_candidate', () => configureDownload(download))}
+					onDeploy={deployDownload}
+				/>
 				<VersionsTab
 					busy={actionBusy}
 					{versions}

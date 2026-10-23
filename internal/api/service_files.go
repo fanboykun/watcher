@@ -111,13 +111,18 @@ func (h *Handler) UpdateServiceConfigRevision(c *gin.Context) {
 	}
 
 	var req struct {
-		EnvContent *string `json:"env_content" binding:"required"`
+		EnvContent  *string                        `json:"env_content" binding:"required"`
+		ConfigFiles *[]database.RevisionConfigFile `json:"config_files"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
-	if err := saveServiceConfigRevision(h.db, svc.ID, targetVersion, *req.EnvContent); err != nil {
+	if err := validateCandidateFiles(svc.EnvFile, req.ConfigFiles); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	if err := saveServiceConfigRevision(h.db, svc.ID, targetVersion, *req.EnvContent, req.ConfigFiles); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -184,10 +189,35 @@ func (h *Handler) GetServiceSnapshotEnv(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"env_content": content})
 }
 
-func saveServiceConfigRevision(db *gorm.DB, serviceID uint, target, content string) error {
+func saveServiceConfigRevision(db *gorm.DB, serviceID uint, target, content string, files ...*[]database.RevisionConfigFile) error {
 	revision := database.ServiceConfigRevision{ServiceID: serviceID, TargetVersion: target, EnvContent: content}
+	columns := []string{"env_content", "updated_at"}
+	if len(files) > 0 && files[0] != nil {
+		revision.ConfigFiles = files[0]
+		columns = append(columns, "config_files")
+	}
 	return db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "service_id"}, {Name: "target_version"}},
-		DoUpdates: clause.AssignmentColumns([]string{"env_content", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns(columns),
 	}).Create(&revision).Error
+}
+
+var errCandidateFiles = errors.New("invalid candidate managed files")
+
+// validateCandidateFiles shares the deployer's normalization and safety rules.
+func validateCandidateFiles(envFile string, files *[]database.RevisionConfigFile) error {
+	if files == nil {
+		return nil
+	}
+	normalized := make([]agent.ConfigFile, 0, len(*files))
+	for _, file := range *files {
+		normalized = append(normalized, agent.ConfigFile{FilePath: file.FilePath, Target: file.Target, Content: file.Content})
+	}
+	if err := agent.NormalizeManagedConfigFiles(envFile, normalized); err != nil {
+		return err
+	}
+	for i, file := range normalized {
+		(*files)[i] = database.RevisionConfigFile{FilePath: file.FilePath, Target: file.Target, Content: file.Content}
+	}
+	return nil
 }

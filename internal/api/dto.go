@@ -1,5 +1,7 @@
 package api
 
+import "github.com/fanboykun/watcher/internal/database"
+
 // ── Watcher DTOs ──────────────────────────────────────────────
 
 // CreateWatcherRequest is the body for POST /api/watchers
@@ -191,13 +193,16 @@ type ResumeWebhookRequest struct {
 }
 
 type ServiceCandidateInfo struct {
-	ServiceID       uint   `json:"service_id"`
-	ServiceName     string `json:"service_name"`
-	ServiceType     string `json:"service_type"`
-	ActiveEnv       string `json:"active_env"`
-	CandidateEnv    string `json:"candidate_env"`
-	HasCandidateEnv bool   `json:"has_candidate_env"`
-	IsModified      bool   `json:"is_modified"`
+	ServiceID               uint                          `json:"service_id"`
+	ServiceName             string                        `json:"service_name"`
+	ServiceType             string                        `json:"service_type"`
+	ActiveEnv               string                        `json:"active_env"`
+	CandidateEnv            string                        `json:"candidate_env"`
+	HasCandidateEnv         bool                          `json:"has_candidate_env"`
+	IsModified              bool                          `json:"is_modified"`
+	ActiveConfigFiles       []database.RevisionConfigFile `json:"active_config_files"`
+	CandidateConfigFiles    []database.RevisionConfigFile `json:"candidate_config_files"`
+	HasCandidateConfigFiles bool                          `json:"has_candidate_config_files"`
 }
 
 type WatcherCandidateResponse struct {
@@ -210,8 +215,9 @@ type WatcherCandidateResponse struct {
 }
 
 type UpdateWatcherCandidateService struct {
-	ServiceID  uint   `json:"service_id"`
-	EnvContent string `json:"env_content"`
+	ServiceID   uint                           `json:"service_id"`
+	EnvContent  string                         `json:"env_content"`
+	ConfigFiles *[]database.RevisionConfigFile `json:"config_files"`
 }
 
 type UpdateWatcherCandidateRequest struct {

@@ -36,12 +36,20 @@ type ServiceMeta struct {
 
 // githubRelease is the subset of the GitHub releases API response we need
 type githubRelease struct {
+	ID          int64         `json:"id"`
+	Name        string        `json:"name"`
+	Body        string        `json:"body"`
+	HTMLURL     string        `json:"html_url"`
+	Draft       bool          `json:"draft"`
+	Prerelease  bool          `json:"prerelease"`
 	TagName     string        `json:"tag_name"`
 	PublishedAt string        `json:"published_at"`
 	Assets      []githubAsset `json:"assets"`
 }
 
 type githubAsset struct {
+	Size               int64  `json:"size"`
+	Digest             string `json:"digest"`
 	ID                 int64  `json:"id"`
 	Name               string `json:"name"`
 	URL                string `json:"url"`                  // API download URL — works for private repos

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import {
 		api,
@@ -10,8 +12,9 @@
 		type SelfConfigResponse
 	} from '$lib/api';
 	import {
-		clearSelfUpdateCache,
 		clearSelfUpdateDismissal,
+		performSelfUpdate,
+		subscribeSelfUpdate,
 		getSelfUpdateSnapshot,
 		lookupSelfUpdate
 	} from '$lib/self-update';
@@ -45,7 +48,10 @@
 	let maintenanceError = $state('');
 	let maintenanceSuccess = $state('');
 	let saveNotes = $state<string[]>([]);
-	let activeSection = $state('deployment');
+	let activeSection = $state(
+		page.url.searchParams.get('tab') === 'maintenance' ? 'maintenance' : 'deployment'
+	);
+	let updateState = $state(getSelfUpdateSnapshot());
 	let savedDraft = $state('');
 	const configDirty = $derived(Boolean(agentConfig) && draftKey() !== savedDraft);
 
@@ -88,7 +94,9 @@
 	}
 
 	let isChecking = $state(false);
-	let isUpdating = $state(false);
+	const isUpdating = $derived(
+		updateState.updateStatus === 'updating' || updateState.updateStatus === 'applied'
+	);
 	let isSavingConfig = $state(false);
 	let isSavingPassword = $state(false);
 	let isRestarting = $state(false);
@@ -124,7 +132,29 @@
 
 	onMount(() => {
 		void loadSettings();
+		return subscribeSelfUpdate((snapshot) => {
+			updateState = snapshot;
+		});
 	});
+
+	afterNavigate(() => {
+		if (page.url.searchParams.get('tab') === 'maintenance') activeSection = 'maintenance';
+		if (!loading && !loadError && page.url.searchParams.get('action') === 'update') {
+			void updateFromBanner();
+		}
+	});
+
+	async function updateFromBanner() {
+		activeSection = 'maintenance';
+		// Consume the action before issuing a mutation, including on refresh or retry.
+		await goto(resolve('/settings?tab=maintenance'), { replaceState: true, noScroll: true });
+		if (configDirty || isSavingPassword || agentBusy) {
+			if (!isUpdating)
+				maintenanceError = 'Save or discard your pending changes before updating Watcher.';
+			return;
+		}
+		await performUpdate();
+	}
 
 	async function loadSettings() {
 		loading = true;
@@ -144,6 +174,9 @@
 			loadError = e instanceof Error ? e.message : 'Global settings could not be loaded';
 		} finally {
 			loading = false;
+			if (!loadError && page.url.searchParams.get('action') === 'update') {
+				void updateFromBanner();
+			}
 		}
 	}
 
@@ -282,20 +315,9 @@
 
 	async function performUpdate() {
 		if (agentBusy || isSavingPassword || configDirty) return;
-		isUpdating = true;
 		maintenanceError = '';
-		try {
-			await api.selfUpdate();
-			clearSelfUpdateCache();
-			clearSelfUpdateDismissal();
-			showUpdateDialog = false;
-			setTimeout(() => {
-				window.location.reload();
-			}, 3000);
-		} catch (e) {
-			maintenanceError = e instanceof Error ? e.message : 'Update failed';
-			isUpdating = false;
-		}
+		showUpdateDialog = false;
+		await performSelfUpdate();
 	}
 
 	async function generateUninstall() {
@@ -833,6 +855,21 @@
 					{#if maintenanceSuccess}<p role="status" class="text-sm text-green-400">
 							{maintenanceSuccess}
 						</p>{/if}
+					{#if updateState.updateStatus === 'failed'}
+						<RequestError message={updateState.updateMessage} onRetry={performUpdate} />
+					{:else if updateState.updateStatus !== 'idle'}
+						<p
+							role="status"
+							class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200"
+						>
+							{updateState.updateMessage}
+						</p>
+						{#if updateState.updateStatus === 'applied'}
+							<Button.Root variant="outline" onclick={() => window.location.reload()}
+								>Reload dashboard</Button.Root
+							>
+						{/if}
+					{/if}
 					<Card.Root class="bg-card">
 						<Card.Header>
 							<Card.Title>Watcher Version</Card.Title>

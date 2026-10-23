@@ -54,6 +54,8 @@ Full installation guide: [INSTALL.md](INSTALL.md)
 The detailed agent ownership, NSSM state matrix, deployment sequencing, and
 compensation invariants are documented in [docs/agent.md](docs/agent.md).
 
+Open issues and requested improvements are tracked in [docs/tasks.md](docs/tasks.md).
+
 ```text
 cmd/watcher/main.go
   ├─ load .env config (Viper)
@@ -183,6 +185,10 @@ Base path: `/api`
 - `GET /watchers/:id/deploys/:did`
 - `GET /watchers/:id/deploys/:did/stream`
 - `GET /watchers/:id/events`
+- `GET /watchers/:id/releases?page=1`
+- `POST /watchers/:id/releases/download` (`release_id`, `asset_id`)
+- `POST /watchers/:id/releases/:cid/candidate`
+- `POST /watchers/:id/releases/:cid/deploy`
 - `GET /watchers/:id/polls`
 - `POST /watchers/:id/check`
 - `POST /watchers/:id/redeploy`
@@ -195,6 +201,58 @@ Base path: `/api`
 - `GET /watchers/:id/webhook-deliveries/:deliveryId`
 - `POST /watchers/:id/webhook/test`
 - `POST /watchers/:id/webhook/resume`
+
+### Managed watcher directories
+
+Choose each pool's `install_dir` when creating its watcher. The directory is
+read-only in Edit settings. `PUT /api/watchers/:id` rejects a different
+`install_dir` with HTTP 409 before saving any changes; omitting it or sending the
+existing value remains supported.
+
+Editing a path does not relocate a pool. Its downloads, extracted releases,
+`current` junction, configuration snapshots, and Windows service/IIS paths must
+stay consistent. Pausing a watcher alone does not move them or finish an active
+deployment's recovery. A managed relocation workflow is
+[planned separately](docs/watcher-relocation-plan.md); automatic relocation and
+repair of pools affected by earlier directory edits are not implemented.
+
+### GitHub release catalog
+
+Open **Watchers → watcher detail → GitHub releases** to browse the configured
+repository's releases, including prereleases and release notes. Pagination makes
+older releases accessible without blocking the watcher detail page. Drafts can
+be inspected when GitHub grants access, but cannot be downloaded or deployed.
+
+Choose a ZIP asset and use **Actions → Download artifact** to stage it on the
+Watcher host under `<install_dir>/downloads/catalog/<download-id>/artifact.zip`.
+Downloaded releases also appear as deployable targets in the **Versions** tab,
+where they can be configured and deployed without downloading the artifact again.
+Downloads use the watcher GitHub token first, then the global token. A successful
+download is recorded in SQLite with its version and SHA-256 checksum; GitHub's
+SHA-256 digest is verified when supplied. For `version.json` repositories, the
+selected asset must match the configured service's manifest entry, and the
+candidate uses that entry's version.
+
+Use **Configure candidate** to select that exact download and open the existing
+version-specific environment and managed-config editor. Selection holds automatic deployment until
+the operator deploys or discards the candidate. Finish or discard any existing
+candidate before selecting another one. Stage env content and config files with
+relative paths targeting the service/app dir or release dir. Env-only drafts
+inherit active managed files; a staged file set replaces them, including an empty
+set when all files are removed. Configuration edits remain isolated
+from live services until activation and health checks succeed.
+
+**Deploy release…** queues the exact staged ZIP on the watcher's existing loop,
+including for paused watchers. The deployment reuses the normal service stop,
+activation, health-check, snapshot, and rollback pipeline. Missing or modified
+cached artifacts are rejected before service operations. A failed or interrupted
+deployment retains its download for an explicit retry. The selected
+candidate remains available in **Candidates** after a failure or automatic rollback:
+review the error, retry deployment, or discard the candidate to choose another
+release. Discarding a candidate preserves its downloaded ZIP in **Versions**.
+The configured polling release reference remains unchanged after a manual deployment; automatic
+polling can subsequently deploy its configured release. Catalog ZIPs remain
+staged independently of retained deployed-version cleanup.
 
 ### Services (flat)
 - `GET /services`

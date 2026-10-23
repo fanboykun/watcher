@@ -1,11 +1,7 @@
 <script lang="ts">
+	import CandidateConfigFiles from './candidate-config-files.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
-	import {
-		api,
-		type Watcher,
-		type WatcherCandidateResponse,
-		type ServiceCandidateInfo
-	} from '$lib/api';
+	import { api, type Watcher, type ServiceConfigFile } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -25,7 +21,8 @@
 		Trash2,
 		Zap
 	} from '@lucide/svelte';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
 
 	interface EditableServiceCandidate {
 		serviceId: number;
@@ -35,6 +32,11 @@
 		candidateEnv: string;
 		originalCandidateEnv: string;
 		hasCandidateEnv: boolean;
+		activeFiles: ServiceConfigFile[];
+		candidateFiles: ServiceConfigFile[];
+		originalCandidateFiles: ServiceConfigFile[];
+		filesExplicit: boolean;
+		originalFilesExplicit: boolean;
 		viewMode: 'edit' | 'diff' | 'side-by-side';
 	}
 
@@ -55,7 +57,7 @@
 	}: {
 		watcher: Watcher;
 		busy?: boolean;
-		onApprove?: (version: string) => Promise<void>;
+		onApprove?: (version: string, catalogId: number) => Promise<void>;
 		onDiscard?: () => Promise<void>;
 		onRefreshWatcher?: () => Promise<void>;
 	} = $props();
@@ -67,6 +69,7 @@
 	let services = $state<EditableServiceCandidate[]>([]);
 	let loading = $state(true);
 	let loadedTarget = $state('');
+	let loadedSelection = $state('');
 	let loadGeneration = 0;
 	let saving = $state(false);
 	let saveSuccess = $state('');
@@ -74,22 +77,56 @@
 	let approving = $state(false);
 	let discarding = $state(false);
 
+	const pendingSelection = $derived(
+		`${watcher.id}:${watcher.pending_catalog_id}:${watcher.pending_version}`
+	);
 	const activeTargetChoice = $derived(selectedTarget || watcher.pending_version || 'next');
 	const effectiveTarget = $derived(isCustom ? customTarget.trim() : activeTargetChoice);
+	const retainedCatalog = $derived(
+		watcher.pending_catalog_id > 0 &&
+			watcher.status !== 'approved' &&
+			watcher.status !== 'deploying'
+	);
 
-	const hasAnyChanges = $derived(services.some((s) => s.candidateEnv !== s.originalCandidateEnv));
+	function copyFiles(files: ServiceConfigFile[] = []) {
+		return files.map(({ file_path, target, content }) => ({ file_path, target, content }));
+	}
 
-	const hasAnyDifferenceFromActive = $derived(services.some((s) => s.candidateEnv !== s.activeEnv));
+	function filesEqual(a: ServiceConfigFile[], b: ServiceConfigFile[]) {
+		return JSON.stringify(copyFiles(a)) === JSON.stringify(copyFiles(b));
+	}
+
+	function serviceChanged(service: EditableServiceCandidate) {
+		return (
+			service.candidateEnv !== service.originalCandidateEnv ||
+			service.filesExplicit !== service.originalFilesExplicit ||
+			!filesEqual(service.candidateFiles, service.originalCandidateFiles)
+		);
+	}
+
+	function candidatePayload() {
+		return services.map((service) => ({
+			service_id: service.serviceId,
+			env_content: service.candidateEnv,
+			...(service.filesExplicit ? { config_files: copyFiles(service.candidateFiles) } : {})
+		}));
+	}
+
+	const hasAnyChanges = $derived(services.some(serviceChanged));
 
 	async function loadCandidateData(target: string) {
 		if (!target) return;
 		const generation = ++loadGeneration;
+		const selection = pendingSelection;
+		loadedTarget = '';
+		loadedSelection = '';
 		loading = true;
 		error = '';
 		try {
 			const res = await api.getWatcherCandidate(watcher.id, target);
-			if (generation !== loadGeneration) return;
+			if (generation !== loadGeneration || selection !== pendingSelection) return;
 			loadedTarget = target;
+			loadedSelection = selection;
 			services = res.services.map((s) => ({
 				serviceId: s.service_id,
 				serviceName: s.service_name,
@@ -98,6 +135,11 @@
 				candidateEnv: s.candidate_env,
 				originalCandidateEnv: s.candidate_env,
 				hasCandidateEnv: s.has_candidate_env,
+				activeFiles: copyFiles(s.active_config_files),
+				candidateFiles: copyFiles(s.candidate_config_files ?? s.active_config_files),
+				originalCandidateFiles: copyFiles(s.candidate_config_files ?? s.active_config_files),
+				filesExplicit: s.has_candidate_config_files ?? false,
+				originalFilesExplicit: s.has_candidate_config_files ?? false,
 				viewMode: 'edit'
 			}));
 		} catch (e) {
@@ -108,9 +150,28 @@
 		}
 	}
 
-	onMount(() => {
+	// Tabs keep this editor mounted. Catalog selection refreshes the watcher before
+	// navigating here; routine watcher refreshes must preserve in-progress edits.
+	let navigatedSelection = '';
+	function syncPendingSelection() {
+		if (navigatedSelection === pendingSelection) return;
+		navigatedSelection = pendingSelection;
+		++loadGeneration;
+		loadedSelection = '';
+		if (hasAnyChanges) {
+			loading = false;
+			error =
+				'The pending release changed. Your edits are preserved; save them before loading the new candidate.';
+			return;
+		}
+		isCustom = false;
 		selectedTarget = watcher.pending_version || 'next';
 		void loadCandidateData(selectedTarget);
+	}
+	onMount(syncPendingSelection);
+	afterNavigate(syncPendingSelection);
+	onDestroy(() => {
+		++loadGeneration;
 	});
 
 	async function selectTarget(target: string, custom = false) {
@@ -145,17 +206,12 @@
 		error = '';
 		saveSuccess = '';
 		try {
-			await api.updateWatcherCandidate(
-				watcher.id,
-				effectiveTarget,
-				services.map((s) => ({
-					service_id: s.serviceId,
-					env_content: s.candidateEnv
-				}))
-			);
+			await api.updateWatcherCandidate(watcher.id, effectiveTarget, candidatePayload());
 			for (const s of services) {
 				s.originalCandidateEnv = s.candidateEnv;
 				s.hasCandidateEnv = true;
+				s.originalCandidateFiles = copyFiles(s.candidateFiles);
+				s.originalFilesExplicit = s.filesExplicit;
 			}
 			saveSuccess = `Candidate configuration saved for version "${effectiveTarget}"!`;
 			setTimeout(() => {
@@ -177,6 +233,8 @@
 
 	function resetCandidate(service: EditableServiceCandidate) {
 		service.candidateEnv = service.originalCandidateEnv;
+		service.candidateFiles = copyFiles(service.originalCandidateFiles);
+		service.filesExplicit = service.originalFilesExplicit;
 	}
 
 	async function handleApprove() {
@@ -184,27 +242,27 @@
 		if (
 			loading ||
 			loadedTarget !== watcher.pending_version ||
-			effectiveTarget !== watcher.pending_version
+			effectiveTarget !== watcher.pending_version ||
+			loadedSelection !== pendingSelection
 		) {
 			error = 'Select and load the pending release before approving';
 			return;
 		}
 		const version = watcher.pending_version;
+		const selection = pendingSelection;
+		const catalogId = watcher.pending_catalog_id;
 		approving = true;
 		error = '';
 		try {
 			// Save any unpersisted edits first
 			if (hasAnyChanges) {
-				await api.updateWatcherCandidate(
-					watcher.id,
-					effectiveTarget,
-					services.map((s) => ({
-						service_id: s.serviceId,
-						env_content: s.candidateEnv
-					}))
-				);
+				await api.updateWatcherCandidate(watcher.id, effectiveTarget, candidatePayload());
 			}
-			await onApprove(version);
+			if (selection !== pendingSelection || loadedSelection !== selection) {
+				error = 'The pending release changed. Load and review it before approving.';
+				return;
+			}
+			await onApprove(version, catalogId);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Approval failed';
 		} finally {
@@ -308,7 +366,7 @@
 		</div>
 	{/if}
 
-	{#if watcher.status === 'pending_approval'}
+	{#if watcher.status === 'pending_approval' || retainedCatalog}
 		<div class="section-toolbar rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
 			<div class="min-w-0">
 				<p class="text-sm font-medium">
@@ -317,6 +375,19 @@
 				<p class="mt-1 text-xs text-muted-foreground">
 					Approval saves your edits and restarts the services.
 				</p>
+				{#if !loading && loadedSelection !== pendingSelection}
+					<p class="mt-2 text-sm text-amber-400">
+						Load the pending candidate using its version below before approving.
+						{#if hasAnyChanges}Save your edits first to keep them for the displayed target.{/if}
+					</p>
+				{/if}
+				{#if retainedCatalog && watcher.last_error}
+					<p class="mt-2 text-sm text-destructive">{watcher.last_error}</p>
+					<p class="mt-1 text-xs text-muted-foreground">
+						Retry this download, or discard the candidate to select another release. The download
+						stays in Versions.
+					</p>
+				{/if}
 			</div>
 			<div class="page-actions">
 				<Button.Root
@@ -333,7 +404,8 @@
 						saving ||
 						loading ||
 						effectiveTarget !== watcher.pending_version ||
-						loadedTarget !== watcher.pending_version}
+						loadedTarget !== watcher.pending_version ||
+						loadedSelection !== pendingSelection}
 					loading={approving}
 					onclick={handleApprove}>Approve & deploy</Button.Root
 				>
@@ -348,7 +420,7 @@
 
 	<!-- Version Selector and Actions Bar -->
 	<Card.Root class="border-border bg-card">
-		<Card.Header class="pb-3">
+		<Card.Header class="flex flex-col items-stretch pb-3">
 			<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<div>
 					<Card.Title class="text-base font-semibold">Candidate configuration</Card.Title>
@@ -472,7 +544,8 @@
 		<div class="space-y-4">
 			{#each services as svc (svc.serviceId)}
 				{@const diffLines = computeEnvDiff(svc.activeEnv, svc.candidateEnv)}
-				{@const hasModified = svc.candidateEnv !== svc.activeEnv}
+				{@const hasModified =
+					svc.candidateEnv !== svc.activeEnv || !filesEqual(svc.candidateFiles, svc.activeFiles)}
 
 				<Card.Root class="border-border bg-card">
 					<Card.Header class="pb-3">
@@ -560,13 +633,13 @@
 										<Copy class="mr-1 h-3.5 w-3.5" /> Copy Active
 									</Button.Root>
 								{/if}
-								{#if svc.candidateEnv !== svc.originalCandidateEnv}
+								{#if serviceChanged(svc)}
 									<Button.Root
 										variant="ghost"
 										size="sm"
 										class="h-8 text-xs text-muted-foreground"
 										onclick={() => resetCandidate(svc)}
-										title="Reset candidate content"
+										title="Reset unsaved environment and managed file changes"
 									>
 										<RefreshCw class="mr-1 h-3.5 w-3.5" /> Reset
 									</Button.Root>
@@ -575,7 +648,7 @@
 						</div>
 					</Card.Header>
 
-					<Card.Content class="pt-0">
+					<Card.Content class="space-y-5 pt-0">
 						{#if svc.viewMode === 'edit'}
 							<div class="space-y-1">
 								<Textarea
@@ -674,6 +747,13 @@
 								{/if}
 							</div>
 						{/if}
+						<CandidateConfigFiles
+							serviceName={svc.serviceName}
+							activeFiles={svc.activeFiles}
+							bind:files={svc.candidateFiles}
+							explicit={svc.filesExplicit}
+							onChange={() => (svc.filesExplicit = true)}
+						/>
 					</Card.Content>
 				</Card.Root>
 			{/each}

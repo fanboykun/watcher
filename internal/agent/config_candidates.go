@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/fanboykun/watcher/internal/database"
 	"gorm.io/gorm"
@@ -29,8 +30,18 @@ func (r *RepoWatcher) prepareCandidateServices(version string) ([]database.Servi
 			return nil, fmt.Errorf("load candidate for service %d: %w", services[i].ID, err)
 		}
 		services[i].EnvContent = revision.EnvContent
+		if revision.ConfigFiles != nil {
+			services[i].ConfigFiles = make([]ConfigFile, 0, len(*revision.ConfigFiles))
+			for _, file := range *revision.ConfigFiles {
+				services[i].ConfigFiles = append(services[i].ConfigFiles, ConfigFile{FilePath: file.FilePath, Target: file.Target, Content: file.Content})
+			}
+		}
 		selected = append(selected, revision)
 	}
+	if err := validateDeploymentManagedFiles(services); err != nil {
+		return nil, err
+	}
+	r.deployer.previousServices = append([]ServiceConfig(nil), r.wcfg.Services...)
 	r.wcfg.Services = services
 	return selected, nil
 }
@@ -47,11 +58,37 @@ func (r *RepoWatcher) commitCandidateServices(selected []database.ServiceConfigR
 				Update("env_content", revision.EnvContent).Error; err != nil {
 				return err
 			}
-			if err := tx.Where("id = ? AND updated_at = ? AND env_content = ?", revision.ID, revision.UpdatedAt, revision.EnvContent).
-				Delete(&database.ServiceConfigRevision{}).Error; err != nil {
+			if revision.ConfigFiles != nil {
+				if err := replaceServiceManagedFiles(tx, revision.ServiceID, *revision.ConfigFiles); err != nil {
+					return err
+				}
+			}
+			var current database.ServiceConfigRevision
+			err := tx.First(&current, revision.ID).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			if err != nil {
 				return err
+			}
+			if current.UpdatedAt.Equal(revision.UpdatedAt) && current.EnvContent == revision.EnvContent && reflect.DeepEqual(current.ConfigFiles, revision.ConfigFiles) {
+				if err := tx.Delete(&current).Error; err != nil {
+					return err
+				}
 			}
 		}
 		return nil
 	})
+}
+
+func replaceServiceManagedFiles(tx *gorm.DB, serviceID uint, files []database.RevisionConfigFile) error {
+	if err := tx.Where("service_id = ?", serviceID).Delete(&database.ServiceConfigFile{}).Error; err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err := tx.Create(&database.ServiceConfigFile{ServiceID: serviceID, FilePath: file.FilePath, Target: file.Target, Content: file.Content}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

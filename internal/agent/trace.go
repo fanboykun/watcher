@@ -15,8 +15,10 @@ type Trace struct {
 }
 
 type CheckTrigger struct {
-	WatcherID uint
-	Trace     Trace
+	WatcherID   uint
+	CatalogID   uint
+	DeployLogID uint
+	Trace       Trace
 }
 
 type traceContextKey struct{}
