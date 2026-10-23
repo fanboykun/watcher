@@ -30,18 +30,18 @@
 	import { timeAgo, formatDate, formatDuration, statusColor, compareSemver } from '$lib/utils';
 
 	// Sub-components
-	import OverviewTab from './components/overview-tab.svelte';
-	import ServicesTab from './components/services-tab.svelte';
-	import DeploysTab from './components/deploys-tab.svelte';
-	import VersionsTab from './components/versions-tab.svelte';
+	import OverviewTab from '$lib/features/watchers/components/overview-tab.svelte';
+	import ServicesTab from '$lib/features/watchers/components/services-tab.svelte';
+	import DeploysTab from '$lib/features/watchers/components/deploys-tab.svelte';
+	import VersionsTab from '$lib/features/watchers/components/versions-tab.svelte';
 	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
-	import PollingTab from './components/polling-tab.svelte';
-	import WebhooksTab from './components/webhooks-tab.svelte';
-	import CandidateTab from './components/candidate-tab.svelte';
-	import ReleasesTab from './components/releases-tab.svelte';
-	import DownloadedVersions from './components/downloaded-versions.svelte';
-	import RollbackDialog from './components/rollback-dialog.svelte';
-	import ConfirmationDialog from './components/confirmation-dialog.svelte';
+	import PollingTab from '$lib/features/watchers/components/polling-tab.svelte';
+	import WebhooksTab from '$lib/features/watchers/components/webhooks-tab.svelte';
+	import CandidateTab from '$lib/features/watchers/components/candidate-tab.svelte';
+	import ReleasesTab from '$lib/features/watchers/components/releases-tab.svelte';
+	import DownloadedVersions from '$lib/features/watchers/components/downloaded-versions.svelte';
+	import RollbackDialog from '$lib/features/watchers/components/rollback-dialog.svelte';
+	import ConfirmationDialog from '$lib/features/watchers/components/confirmation-dialog.svelte';
 
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
@@ -508,7 +508,7 @@
 </script>
 
 <div class="space-y-6">
-	<header class="page-header">
+	<header class="page-header border-b border-border pb-6">
 		<div class="page-identity">
 			<Button.Root
 				href={resolve('/watchers')}
@@ -517,6 +517,7 @@
 				aria-label="Back to watchers"><ArrowLeft /></Button.Root
 			>
 			<div class="min-w-0">
+				<p class="eyebrow mb-2">Workspace / watcher</p>
 				<h1 class="text-2xl font-semibold tracking-tight">{watcher?.name || 'Watcher'}</h1>
 				{#if watcher && watcher.service_name !== watcher.name}<p
 						class="text-sm text-muted-foreground"
@@ -682,7 +683,7 @@
 				<Tabs.Trigger value="candidates" class="relative">
 					Candidates
 					{#if reviewableCandidate}
-						<span class="ml-1.5 flex h-2 w-2 rounded-full bg-purple-500"></span>
+						<span class="ml-1.5 flex h-2 w-2 rounded-full bg-primary"></span>
 					{/if}
 				</Tabs.Trigger>
 				<Tabs.Trigger value="deploys">Deploys ({deployTotal})</Tabs.Trigger>

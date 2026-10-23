@@ -1,4 +1,7 @@
 <script lang="ts">
+	import PageHeading from '$lib/components/console/page-heading.svelte';
+	import ListToolbar from '$lib/components/console/list-toolbar.svelte';
+	import EmptyState from '$lib/components/console/empty-state.svelte';
 	import ServiceStatus from '$lib/components/service-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
@@ -18,7 +21,27 @@
 	import { resolve } from '$app/paths';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
-	let services = $state<ServiceWithWatcher[]>([]);
+	let services = $state.raw<ServiceWithWatcher[]>([]);
+	let query = $state('');
+	let runtime = $state('all');
+	const filteredServices = $derived(
+		services.filter(
+			(service) =>
+				[
+					service.windows_service_name,
+					service.watcher_name,
+					service.binary_name,
+					service.iis_site_name
+				]
+					.join(' ')
+					.toLowerCase()
+					.includes(query.trim().toLowerCase()) &&
+				(runtime === 'all' ||
+					(runtime === 'iis'
+						? isIISService(service.service_type)
+						: !isIISService(service.service_type)))
+		)
+	);
 	let error = $state('');
 	let loading = $state(true);
 	let actionMsg = $state('');
@@ -118,11 +141,9 @@
 					disabled={pendingServiceID !== null}
 					onSelect={() => {
 						void serviceAction(svc.id, 'health', () =>
-							api
-								.serviceStatus(svc.id)
-								.then((h) => ({
-									message: `Runtime: ${h.last_service_status}; health: ${h.last_health_status}`
-								}))
+							api.serviceStatus(svc.id).then((h) => ({
+								message: `Runtime: ${h.last_service_status}; health: ${h.last_health_status}`
+							}))
 						);
 					}}><Heart />Check status</DropdownMenu.Item
 				>
@@ -143,10 +164,29 @@
 {/snippet}
 
 <div class="space-y-6">
-	<div>
-		<h1 class="text-2xl font-bold tracking-tight">Services</h1>
-		<p class="text-sm text-muted-foreground">All managed services across NSSM and IIS watchers</p>
-	</div>
+	<PageHeading
+		eyebrow="Workspace / Runtime"
+		title="Services"
+		description="The running parts of your infrastructure. Check health, inspect logs, and manage runtime state."
+	>
+		{#snippet actions()}<Button.Root variant="outline" size="sm" onclick={load} disabled={loading}
+				><RefreshCw class="size-3.5" />Refresh services</Button.Root
+			>{/snippet}
+	</PageHeading>
+	{#if !loading && services.length}
+		<ListToolbar
+			bind:value={query}
+			label="Search services or watchers…"
+			count={filteredServices.length}
+			total={services.length}
+		>
+			<select class="filter-select" aria-label="Filter services by runtime" bind:value={runtime}
+				><option value="all">All runtimes</option><option value="nssm">NSSM services</option><option
+					value="iis">IIS sites</option
+				></select
+			>
+		</ListToolbar>
+	{/if}
 
 	<RequestError message={error} onRetry={load} />
 
@@ -163,9 +203,9 @@
 
 	{#if loading}
 		<RequestLoading label="Loading services…" />
-	{:else if services.length > 0}
+	{:else if filteredServices.length > 0}
 		<div class="grid gap-4 lg:hidden">
-			{#each services as svc (svc.id)}
+			{#each filteredServices as svc (svc.id)}
 				<Card.Root
 					><Card.Content class="space-y-4">
 						<div class="section-toolbar">
@@ -209,7 +249,7 @@
 					></Table.Header
 				>
 				<Table.Body>
-					{#each services as svc (svc.id)}
+					{#each filteredServices as svc (svc.id)}
 						<Table.Row>
 							<Table.Cell
 								><a href={resolve(`/services/${svc.id}`)} class="font-medium hover:underline"
@@ -247,13 +287,30 @@
 			</Table.Root>
 		</Card.Root>
 	{:else if !error}
-		<Card.Root class="border-dashed border-border bg-card">
-			<Card.Content class="flex flex-col items-center justify-center py-16 text-center">
-				<Server class="mb-3 h-10 w-10 text-muted-foreground/40" />
-				<h3 class="text-sm font-medium text-muted-foreground">No services registered</h3>
-				<p class="mt-1 text-xs text-muted-foreground/60">Services are created under watchers</p>
-			</Card.Content>
-		</Card.Root>
+		{#if services.length}
+			<EmptyState
+				title="No matching services"
+				description="Try another name or select a different runtime."
+				icon={Server}
+				>{#snippet actions()}<Button.Root
+						variant="outline"
+						size="sm"
+						onclick={() => {
+							query = '';
+							runtime = 'all';
+						}}>Clear filters</Button.Root
+					>{/snippet}</EmptyState
+			>
+		{:else}
+			<EmptyState
+				title="A home for every service."
+				description="Services belong to a watcher. Open a watcher to register an NSSM service or an IIS site."
+				icon={Server}
+				>{#snippet actions()}<Button.Root href={resolve('/watchers')} size="sm"
+						>Go to watchers</Button.Root
+					>{/snippet}</EmptyState
+			>
+		{/if}
 	{/if}
 </div>
 

@@ -1,4 +1,8 @@
 <script lang="ts">
+	import ConfigWorkspace from '$lib/features/configuration/config-workspace.svelte';
+	import { configurationProblems } from '$lib/features/configuration/model';
+	import PageHeading from '$lib/components/console/page-heading.svelte';
+	import WizardProgress from '$lib/components/console/wizard-progress.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -20,7 +24,6 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import * as Select from '$lib/components/ui/select/index.js';
-	import { Textarea } from '$lib/components/ui/textarea';
 	import { webhookDocsHref, type WebhookSelectionState } from '$lib/webhooks';
 	import {
 		AlertCircle,
@@ -36,11 +39,11 @@
 	type WizardStep = 1 | 2 | 3 | 4;
 	type ServiceDraft = Partial<Service>;
 
-	const steps: Array<{ id: WizardStep; label: string }> = [
-		{ id: 1, label: 'Repository' },
-		{ id: 2, label: 'Watcher' },
-		{ id: 3, label: 'Services' },
-		{ id: 4, label: 'Webhook' }
+	const steps: Array<{ id: WizardStep; label: string; description: string }> = [
+		{ id: 1, label: 'Repository', description: 'Connect your source' },
+		{ id: 2, label: 'Watcher', description: 'Set delivery behavior' },
+		{ id: 3, label: 'Services', description: 'Define what runs' },
+		{ id: 4, label: 'Webhooks', description: 'Keep everyone informed' }
 	];
 
 	const iisAppKinds: Array<{ value: IISAppKind; label: string; hint: string }> = [
@@ -262,26 +265,6 @@
 		serviceDrafts = serviceDrafts.filter((_, i) => i !== index);
 	}
 
-	function addConfigFileDraft(serviceIndex: number) {
-		const next = [...serviceDrafts];
-		const svc = next[serviceIndex];
-		const configFiles = [
-			...(svc.config_files || []),
-			{ file_path: '', target: 'app_dir' as ConfigFileTarget, content: '' }
-		];
-		next[serviceIndex] = { ...svc, config_files: configFiles };
-		serviceDrafts = next;
-	}
-
-	function removeConfigFileDraft(serviceIndex: number, fileIndex: number) {
-		const next = [...serviceDrafts];
-		const svc = next[serviceIndex];
-		const configFiles = [...(svc.config_files || [])];
-		configFiles.splice(fileIndex, 1);
-		next[serviceIndex] = { ...svc, config_files: configFiles };
-		serviceDrafts = next;
-	}
-
 	function validateStep(step: WizardStep): boolean {
 		switch (step) {
 			case 1:
@@ -330,11 +313,10 @@
 						error = `Service #${index + 1} is missing its executable name.`;
 						return false;
 					}
-					for (const [fileIndex, file] of (svc.config_files || []).entries()) {
-						if (!(file.file_path || '').trim()) {
-							error = `Service #${index + 1} config file #${fileIndex + 1} is missing its path.`;
-							return false;
-						}
+					const problems = configurationProblems(svc.env_file || '', svc.config_files || []);
+					if (problems.length) {
+						error = `Service #${index + 1}: ${problems.join(' ')}`;
+						return false;
 					}
 				}
 				return true;
@@ -446,38 +428,21 @@
 </svelte:head>
 
 <div class="space-y-6">
-	<div class="flex items-center gap-4">
-		<a href={resolve('/watchers')}>
-			<Button.Root variant="ghost" size="icon" class="h-8 w-8">
-				<ArrowLeft class="h-4 w-4" />
-			</Button.Root>
-		</a>
-		<div>
-			<h1 class="text-2xl font-bold tracking-tight">Add Watcher</h1>
-			<p class="text-sm text-muted-foreground">
-				Inspect the source, configure watcher behavior, define one or more services, then enable
-				webhook delivery if needed.
-			</p>
-		</div>
-	</div>
-
-	<div class="flex flex-wrap gap-2">
-		{#each steps as step (step.id)}
-			<button
-				type="button"
-				class={`rounded-full border px-3 py-1 text-sm transition ${
-					step.id === currentStep
-						? 'border-primary bg-primary/10 text-primary'
-						: step.id < currentStep
-							? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-							: 'border-border/70 text-muted-foreground'
-				}`}
-				onclick={() => goToStep(step.id)}
-			>
-				{step.id}. {step.label}
-			</button>
-		{/each}
-	</div>
+	<PageHeading
+		eyebrow="Workspace / New watcher"
+		title="Connect. Configure. Deploy."
+		description="Bring a repository into your workspace. We'll take it one step at a time."
+	>
+		{#snippet actions()}<Button.Root href={resolve('/watchers')} variant="outline" size="sm"
+				><ArrowLeft class="size-3.5" />Back to watchers</Button.Root
+			>{/snippet}
+	</PageHeading>
+	<WizardProgress
+		{steps}
+		current={currentStep}
+		onselect={(step) => goToStep(step as WizardStep)}
+		disabled={inspecting || creating}
+	/>
 
 	<RequestError message={error} />
 
@@ -672,7 +637,7 @@
 				</div>
 			{:else if currentStep === 3}
 				<div class="space-y-4">
-					<div class="flex items-center justify-between gap-3">
+					<div class="wizard-footer">
 						<div>
 							<p class="font-medium">Managed services</p>
 							<p class="text-sm text-muted-foreground">
@@ -758,14 +723,6 @@
 												placeholder="http://localhost:3000/health"
 											/>
 										</div>
-										<div class="space-y-2 md:col-span-2">
-											<Label>Env Content</Label>
-											<Textarea
-												class="min-h-[140px] font-mono text-xs"
-												bind:value={svc.env_content}
-												placeholder="KEY=VALUE&#10;API_PORT=3000"
-											/>
-										</div>
 									{:else}
 										<div class="space-y-2 md:col-span-2">
 											<Label>IIS App Kind</Label>
@@ -817,71 +774,16 @@
 										</div>
 									{/if}
 
-									<div class="space-y-2 md:col-span-2">
-										<div class="flex items-center justify-between gap-3">
-											<Label>Additional managed config files</Label>
-											<Button.Root
-												variant="outline"
-												size="sm"
-												type="button"
-												onclick={() => addConfigFileDraft(i)}
-											>
-												<Plus class="mr-2 h-3 w-3" /> Add file
-											</Button.Root>
-										</div>
-										{#if (svc.config_files || []).length > 0}
-											<div
-												class="space-y-3 rounded-lg border border-border/70 bg-background/50 p-3"
-											>
-												{#each svc.config_files || [] as file, fileIndex (fileIndex)}
-													<div class="space-y-2 rounded-lg border border-border/60 bg-card/60 p-3">
-														<div class="flex items-center justify-between gap-3">
-															<Label>Config file #{fileIndex + 1}</Label>
-															<Button.Root
-																variant="ghost"
-																size="icon"
-																type="button"
-																class="h-8 w-8 text-red-400"
-																onclick={() => removeConfigFileDraft(i, fileIndex)}
-															>
-																<Trash2 class="h-4 w-4" />
-															</Button.Root>
-														</div>
-														<div class="grid gap-2 md:grid-cols-[1fr_180px]">
-															<Input
-																bind:value={file.file_path}
-																placeholder="web.config or config/appsettings.json"
-															/>
-															<Select.Root type="single" bind:value={file.target}>
-																<Select.Trigger>
-																	{file.target === 'release_dir'
-																		? 'Current dir'
-																		: 'Service/app dir'}
-																</Select.Trigger>
-																<Select.Content>
-																	<Select.Item value="app_dir" label="Service/app dir"
-																		>Service/app dir</Select.Item
-																	>
-																	<Select.Item value="release_dir" label="Current dir"
-																		>Current dir</Select.Item
-																	>
-																</Select.Content>
-															</Select.Root>
-														</div>
-														<Textarea
-															class="min-h-[120px] font-mono text-xs"
-															bind:value={file.content}
-															placeholder={'{\n  "port": 3000\n}'}
-														/>
-													</div>
-												{/each}
-											</div>
-										{:else}
-											<p class="text-xs text-muted-foreground">
-												Use <code>Current dir</code> for IIS files like <code>web.config</code> that must
-												sit beside deployed assets.
-											</p>
-										{/if}
+									<div class="min-w-0 md:col-span-2">
+										<ConfigWorkspace
+											serviceName={svc.windows_service_name || `Service ${i + 1}`}
+											context="Initial configuration"
+											mode="form"
+											envPath={svc.env_file || ''}
+											bind:envContent={svc.env_content}
+											bind:files={svc.config_files}
+											disabled={creating}
+										/>
 									</div>
 								</div>
 							</div>
@@ -998,11 +900,14 @@
 
 	<div class="flex items-center justify-between gap-3">
 		{#if currentStep === 1}
-			<a href={resolve('/watchers')}>
-				<Button.Root variant="outline" type="button">Cancel</Button.Root>
-			</a>
+			<Button.Root href={resolve('/watchers')} variant="outline">Cancel</Button.Root>
 		{:else}
-			<Button.Root variant="outline" type="button" onclick={goBack}>Back</Button.Root>
+			<Button.Root
+				variant="outline"
+				type="button"
+				onclick={goBack}
+				disabled={creating || inspecting}>Back</Button.Root
+			>
 		{/if}
 
 		{#if currentStep < 4}

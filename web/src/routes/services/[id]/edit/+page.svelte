@@ -1,4 +1,7 @@
 <script lang="ts">
+	import PageHeading from '$lib/components/console/page-heading.svelte';
+	import RequestLoading from '$lib/components/request-loading.svelte';
+	import RequestError from '$lib/components/request-error.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -13,27 +16,36 @@
 	let service = $state<Service | null>(null);
 	let watcher = $state<Watcher | null>(null);
 	let saving = $state(false);
+	let loading = $state(true);
 	let error = $state('');
 
-	onMount(async () => {
+	onMount(() => {
+		void load();
+	});
+	async function load() {
+		loading = true;
+		error = '';
 		try {
 			const detail = await api.getService(serviceId);
 			service = detail.service;
 			watcher = detail.watcher;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load service';
+		} finally {
+			loading = false;
 		}
-	});
+	}
 
 	async function updateService(payload: ServiceWritePayload) {
-		if (!service || !watcher) return;
+		if (!service || !watcher) return false;
 		saving = true;
 		error = '';
 		try {
 			await api.updateService(watcher.id, service.id, payload);
-			await goto(resolve(`/services/${service.id}`));
+			return true;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to update service';
+			return false;
 		} finally {
 			saving = false;
 		}
@@ -45,26 +57,25 @@
 </svelte:head>
 
 <div class="space-y-6">
-	<div class="flex items-center gap-4">
-		<Button.Root
-			href={resolve(`/services/${serviceId}`)}
-			variant="ghost"
-			size="icon"
-			class="h-8 w-8"
-			aria-label="Back to service"><ArrowLeft class="h-4 w-4" /></Button.Root
-		>
-		<div>
-			<h1 class="text-2xl font-bold tracking-tight">Edit Service</h1>
-			<p class="text-sm text-muted-foreground">
-				{service
-					? `Update how Watcher manages ${service.windows_service_name}.`
-					: 'Update this service configuration.'}
-			</p>
-		</div>
-	</div>
+	<PageHeading
+		eyebrow="Workspace / Service configuration"
+		title="Edit service"
+		description={service
+			? `Update how Watcher manages ${service.windows_service_name}.`
+			: 'Update service runtime, health checks, and managed files.'}
+	>
+		{#snippet actions()}<Button.Root
+				href={resolve(`/services/${serviceId}`)}
+				variant="outline"
+				size="sm"><ArrowLeft class="size-3.5" />Back to service</Button.Root
+			>{/snippet}
+	</PageHeading>
 
-	{#if service}
+	{#if loading}<RequestLoading label="Loading service configuration…" />
+	{:else if !service}<RequestError message={error} onRetry={load} />
+	{:else}
 		<ServiceWizardForm
+			layout="single"
 			showHeader={false}
 			title="Service Setup"
 			description="Edit service runtime details, IIS or NSSM settings, and managed files."

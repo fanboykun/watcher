@@ -1,0 +1,209 @@
+.config-workspace {
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	overflow: hidden;
+	background: var(--card);
+	min-width: 0;
+}
+.config-context {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 14px;
+	padding: 17px 20px;
+	border-bottom: 1px solid var(--border);
+}
+.config-body {
+	display: grid;
+	grid-template-columns: 210px minmax(0, 1fr);
+}
+.config-files {
+	min-width: 0;
+	padding: 16px 8px;
+	border-right: 1px solid var(--border);
+	background: #141819;
+}
+.config-file {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	text-align: left;
+	gap: 9px;
+	padding: 10px;
+	border-radius: 5px;
+	font: 11px var(--font-mono);
+	color: var(--muted-foreground);
+}
+.config-file:hover {
+	background: #ffffff06;
+	color: var(--foreground);
+}
+.config-file-selected {
+	color: var(--primary);
+	background: #e9b66a0d;
+}
+.config-change-dot {
+	flex-shrink: 0;
+	height: 5px;
+	width: 5px;
+	border-radius: 50%;
+	background: var(--primary);
+}
+.config-document {
+	min-width: 0;
+}
+.config-editor-toolbar {
+	padding: 9px 12px;
+	border-bottom: 1px solid var(--border);
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 9px;
+}
+.config-file-metadata {
+	display: flex;
+	gap: 12px;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--border);
+}
+.config-file-metadata > label:last-child {
+	width: 160px;
+}
+.code-editor {
+	min-width: 0;
+	max-width: 100%;
+}
+.code-editor .cm-editor {
+	min-height: 340px;
+	max-height: 560px;
+}
+.code-editor .cm-scroller {
+	overflow: auto;
+}
+.code-editor .cm-editor.cm-focused {
+	outline: none;
+}
+.code-editor .cm-content[contenteditable='false'] {
+	opacity: 0.92;
+}
+.config-editor-footer {
+	display: flex;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 8px;
+	font-size: 10px;
+	color: var(--muted-foreground);
+	padding: 10px 16px;
+	border-top: 1px solid var(--border);
+}
+.config-notice {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	font-size: 11px;
+	line-height: 1.7;
+	color: var(--muted-foreground);
+	padding: 12px 16px;
+	border-top: 1px solid var(--border);
+}
+.config-notice > svg {
+	margin-top: 3px;
+	color: var(--primary);
+}
+.review-step {
+	padding: 18px 20px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--card);
+}
+.review-step h3 {
+	font-size: 13px;
+	font-weight: 650;
+}
+.attempt-timeline {
+	position: relative;
+	display: grid;
+	gap: 0;
+}
+.attempt-timeline::before {
+	content: '';
+	position: absolute;
+	inset: 22px auto 30px 17px;
+	width: 1px;
+	background: var(--border);
+}
+.attempt {
+	position: relative;
+	display: grid;
+	grid-template-columns: 36px minmax(0, 1fr);
+	gap: 16px;
+	padding-block: 12px;
+}
+.attempt-icon {
+	position: relative;
+	z-index: 1;
+	display: grid;
+	place-items: center;
+	border: 1px solid var(--border);
+	border-radius: 50%;
+	width: 36px;
+	height: 36px;
+	background: var(--background);
+}
+.attempt-card {
+	min-width: 0;
+	border: 1px solid var(--border);
+	border-radius: 7px;
+	padding: 18px 20px;
+	background: var(--card);
+}
+.attempt-related {
+	margin-top: 12px;
+	padding-top: 12px;
+	border-top: 1px solid var(--border);
+}
+@media (max-width: 767px) {
+	.config-body {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.config-files {
+		border-right: 0;
+		border-bottom: 1px solid var(--border);
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 5px;
+		padding: 10px;
+	}
+	.config-files > :first-child {
+		padding: 0;
+		width: 100%;
+	}
+	.config-files > .config-file {
+		width: auto;
+		max-width: 100%;
+		border: 1px solid var(--border);
+		padding: 8px;
+	}
+	.config-files > div:last-child {
+		width: 100%;
+		margin-top: 5px;
+		padding-top: 8px;
+	}
+	.config-file-metadata {
+		flex-wrap: wrap;
+	}
+	.config-file-metadata > label:last-child {
+		width: 100%;
+	}
+	.config-editor-toolbar {
+		padding-inline: 8px;
+	}
+	.attempt {
+		gap: 10px;
+	}
+	.attempt-card {
+		padding: 15px;
+	}
+}
