@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports -- Standalone CommonJS browser verification. */
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const http = require('node:http');

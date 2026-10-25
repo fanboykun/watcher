@@ -56,3 +56,24 @@ Check populated, empty, failed-request, and filtered views in a browser at deskt
 and mobile widths. Test menus, confirmations, keyboard navigation, route refresh,
 and authentication. Browser API fixtures validate frontend behavior; live Windows
 deployment and NSSM checks remain separate integration gates.
+
+## Server state and file boundaries
+
+TanStack Query v6 owns server data, request progress, errors, polling, and mutations.
+The root layout provides one QueryClient behind the authentication gate. Logout
+cancels queries and clears the cache. `lib/query/` contains typed query options,
+keys, client defaults, operational commands, and shared self-update state. See
+[the migration architecture](query-state-migration.md) for cache contracts.
+
+Feature controllers compose queries and mutations. Their `ui` objects contain
+only local form, filter, confirmation, and notification state. Views use the
+controller's reactive getters and named sections; they do not maintain duplicate
+server-data caches. Draft models deliberately copy server configuration and are
+protected from background refetches. API endpoint clients and response types are
+split by domain; `lib/api.ts` remains the public compatibility facade.
+
+Every application source file under `web/src` has a hard **350 physical line**
+limit, including routes, TypeScript, components, and CSS. `check`, `build`, and
+`lint` run `check:structure` first. There is no per-file allowlist. Split growing
+files by responsibility and keep normal formatting; do not relocate or compress
+oversized files to evade the check. This rule is also in `web/AGENTS.md`.

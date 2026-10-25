@@ -4,7 +4,8 @@
 	import EmptyState from '$lib/components/console/empty-state.svelte';
 	import ServiceStatus from '$lib/components/service-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
-	import { onMount } from 'svelte';
+	import { queries } from '$lib/query/options';
+	import { message } from '$lib/query/client';
 	import {
 		api,
 		isIISService,
@@ -20,82 +21,9 @@
 	import { Server, Play, Square, RefreshCw, Heart, ChevronDown } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import RequestLoading from '$lib/components/request-loading.svelte';
+	import { createServiceList } from '$lib/features/services/list/list-controller.svelte';
 
-	let services = $state.raw<ServiceWithWatcher[]>([]);
-	let query = $state('');
-	let runtime = $state('all');
-	const filteredServices = $derived(
-		services.filter(
-			(service) =>
-				[
-					service.windows_service_name,
-					service.watcher_name,
-					service.binary_name,
-					service.iis_site_name
-				]
-					.join(' ')
-					.toLowerCase()
-					.includes(query.trim().toLowerCase()) &&
-				(runtime === 'all' ||
-					(runtime === 'iis'
-						? isIISService(service.service_type)
-						: !isIISService(service.service_type)))
-		)
-	);
-	let error = $state('');
-	let loading = $state(true);
-	let actionMsg = $state('');
-	let actionError = $state('');
-	let pendingServiceID = $state<number | null>(null);
-	let pendingServiceAction = $state<'start' | 'stop' | 'restart' | 'health' | null>(null);
-	const pendingLabels = {
-		start: 'Starting…',
-		stop: 'Stopping…',
-		restart: 'Restarting…',
-		health: 'Checking…'
-	};
-	let serviceConfirmation = $state<{ id: number; name: string; action: 'stop' | 'restart' } | null>(
-		null
-	);
-
-	onMount(load);
-
-	async function load() {
-		loading = true;
-		try {
-			services = await api.listServices();
-			error = '';
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load services';
-		} finally {
-			loading = false;
-		}
-	}
-
-	async function serviceAction(
-		id: number,
-		action: 'start' | 'stop' | 'restart' | 'health',
-		fn: () => Promise<{ message: string }>
-	) {
-		if (pendingServiceID !== null) return;
-		pendingServiceID = id;
-		pendingServiceAction = action;
-		actionError = '';
-		actionMsg = '';
-		try {
-			const res = await fn();
-			const status =
-				action === 'health' ? (await api.getService(id)).service : await api.serviceStatus(id);
-			services = services.map((svc) => (svc.id === id ? { ...svc, ...status } : svc));
-			actionMsg = `${services.find((service) => service.id === id)?.windows_service_name || 'Service'}: ${res.message}`;
-			setTimeout(() => (actionMsg = ''), 3000);
-		} catch (e) {
-			actionError = e instanceof Error ? e.message : 'Action failed';
-		} finally {
-			pendingServiceID = null;
-			pendingServiceAction = null;
-		}
-	}
+	const model = createServiceList();
 </script>
 
 {#snippet serviceControls(svc: ServiceWithWatcher, alignEnd = false)}
@@ -103,33 +31,35 @@
 		<DropdownMenu.Root>
 			<DropdownMenu.Trigger
 				class={Button.buttonVariants({ variant: 'outline', size: 'sm' })}
-				disabled={pendingServiceID !== null}
+				disabled={model.pendingServiceID !== null}
 				aria-label={`Actions for ${svc.windows_service_name}`}
-				aria-busy={pendingServiceID === svc.id}
+				aria-busy={model.pendingServiceID === svc.id}
 			>
-				{#if pendingServiceID === svc.id && pendingServiceAction}<RefreshCw
+				{#if model.pendingServiceID === svc.id && model.pendingServiceAction}<RefreshCw
 						class="size-4 animate-spin"
-					/>{pendingLabels[pendingServiceAction]}{:else}Actions<ChevronDown class="size-4" />{/if}
+					/>{model.pendingLabels[model.pendingServiceAction]}{:else}Actions<ChevronDown
+						class="size-4"
+					/>{/if}
 			</DropdownMenu.Trigger>
 			<DropdownMenu.Content
 				align="end"
 				class="w-44"
 				onCloseAutoFocus={(event) => {
-					if (serviceConfirmation) event.preventDefault();
+					if (model.ui.serviceConfirmation) event.preventDefault();
 				}}
 			>
 				{#if !isIISService(svc.service_type)}
 					<DropdownMenu.Item
-						disabled={pendingServiceID !== null}
+						disabled={model.pendingServiceID !== null}
 						onSelect={() => {
-							void serviceAction(svc.id, 'start', () => api.startService(svc.id));
+							void model.serviceAction(svc.id, 'start', () => api.startService(svc.id));
 						}}><Play />Start service</DropdownMenu.Item
 					>
 					<DropdownMenu.Item
-						disabled={pendingServiceID !== null}
+						disabled={model.pendingServiceID !== null}
 						onSelect={() => {
-							actionError = '';
-							serviceConfirmation = {
+							model.ui.actionError = '';
+							model.ui.serviceConfirmation = {
 								id: svc.id,
 								name: svc.windows_service_name,
 								action: 'restart'
@@ -138,10 +68,10 @@
 					>
 				{/if}
 				<DropdownMenu.Item
-					disabled={pendingServiceID !== null}
+					disabled={model.pendingServiceID !== null}
 					onSelect={() => {
-						void serviceAction(svc.id, 'health', () =>
-							api.serviceStatus(svc.id).then((h) => ({
+						void model.serviceAction(svc.id, 'health', () =>
+							model.client.fetchQuery(queries.serviceStatus(svc.id)).then((h) => ({
 								message: `Runtime: ${h.last_service_status}; health: ${h.last_health_status}`
 							}))
 						);
@@ -151,10 +81,14 @@
 					<DropdownMenu.Item
 						variant="destructive"
 						class="mt-1 border-t border-border pt-2"
-						disabled={pendingServiceID !== null}
+						disabled={model.pendingServiceID !== null}
 						onSelect={() => {
-							actionError = '';
-							serviceConfirmation = { id: svc.id, name: svc.windows_service_name, action: 'stop' };
+							model.ui.actionError = '';
+							model.ui.serviceConfirmation = {
+								id: svc.id,
+								name: svc.windows_service_name,
+								action: 'stop'
+							};
 						}}><Square />Stop service</DropdownMenu.Item
 					>
 				{/if}
@@ -169,18 +103,24 @@
 		title="Services"
 		description="The running parts of your infrastructure. Check health, inspect logs, and manage runtime state."
 	>
-		{#snippet actions()}<Button.Root variant="outline" size="sm" onclick={load} disabled={loading}
-				><RefreshCw class="size-3.5" />Refresh services</Button.Root
+		{#snippet actions()}<Button.Root
+				variant="outline"
+				size="sm"
+				onclick={model.load}
+				disabled={model.loading}><RefreshCw class="size-3.5" />Refresh services</Button.Root
 			>{/snippet}
 	</PageHeading>
-	{#if !loading && services.length}
+	{#if !model.loading && model.services.length}
 		<ListToolbar
-			bind:value={query}
+			bind:value={model.ui.query}
 			label="Search services or watchers…"
-			count={filteredServices.length}
-			total={services.length}
+			count={model.filteredServices.length}
+			total={model.services.length}
 		>
-			<select class="filter-select" aria-label="Filter services by runtime" bind:value={runtime}
+			<select
+				class="filter-select"
+				aria-label="Filter services by runtime"
+				bind:value={model.ui.runtime}
 				><option value="all">All runtimes</option><option value="nssm">NSSM services</option><option
 					value="iis">IIS sites</option
 				></select
@@ -188,24 +128,24 @@
 		</ListToolbar>
 	{/if}
 
-	<RequestError message={error} onRetry={load} />
+	<RequestError message={model.error} onRetry={model.load} />
 
-	{#if actionMsg}
+	{#if model.ui.actionMsg}
 		<div
 			role="status"
 			class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400"
 		>
-			{actionMsg}
+			{model.ui.actionMsg}
 		</div>
 	{/if}
 
-	{#if !serviceConfirmation}<RequestError message={actionError} />{/if}
+	{#if !model.ui.serviceConfirmation}<RequestError message={model.ui.actionError} />{/if}
 
-	{#if loading}
+	{#if model.loading}
 		<RequestLoading label="Loading services…" />
-	{:else if filteredServices.length > 0}
+	{:else if model.filteredServices.length > 0}
 		<div class="grid gap-4 lg:hidden">
-			{#each filteredServices as svc (svc.id)}
+			{#each model.filteredServices as svc (svc.id)}
 				<Card.Root
 					><Card.Content class="space-y-4">
 						<div class="section-toolbar">
@@ -249,7 +189,7 @@
 					></Table.Header
 				>
 				<Table.Body>
-					{#each filteredServices as svc (svc.id)}
+					{#each model.filteredServices as svc (svc.id)}
 						<Table.Row>
 							<Table.Cell
 								><a href={resolve(`/services/${svc.id}`)} class="font-medium hover:underline"
@@ -286,8 +226,8 @@
 				</Table.Body>
 			</Table.Root>
 		</Card.Root>
-	{:else if !error}
-		{#if services.length}
+	{:else if !model.error}
+		{#if model.services.length}
 			<EmptyState
 				title="No matching services"
 				description="Try another name or select a different runtime."
@@ -296,8 +236,8 @@
 						variant="outline"
 						size="sm"
 						onclick={() => {
-							query = '';
-							runtime = 'all';
+							model.ui.query = '';
+							model.ui.runtime = 'all';
 						}}>Clear filters</Button.Root
 					>{/snippet}</EmptyState
 			>
@@ -315,45 +255,47 @@
 </div>
 
 <Dialog.Root
-	open={serviceConfirmation !== null}
+	open={model.ui.serviceConfirmation !== null}
 	onOpenChange={(open) => {
-		if (!open && pendingServiceID === null) serviceConfirmation = null;
+		if (!open && model.pendingServiceID === null) model.ui.serviceConfirmation = null;
 	}}
 >
-	<Dialog.Content showCloseButton={pendingServiceID === null}>
+	<Dialog.Content showCloseButton={model.pendingServiceID === null}>
 		<Dialog.Header
 			><Dialog.Title
-				>{serviceConfirmation?.action === 'stop'
+				>{model.ui.serviceConfirmation?.action === 'stop'
 					? 'Stop service?'
 					: 'Restart service?'}</Dialog.Title
 			><Dialog.Description
-				>{serviceConfirmation?.name} will stop serving traffic{serviceConfirmation?.action ===
-				'restart'
+				>{model.ui.serviceConfirmation?.name} will stop serving traffic{model.ui.serviceConfirmation
+					?.action === 'restart'
 					? ' briefly while it restarts'
 					: ''}.</Dialog.Description
 			></Dialog.Header
 		>
-		<RequestError message={actionError} />
+		<RequestError message={model.ui.actionError} />
 		<Dialog.Footer
 			><Button.Root
 				variant="outline"
-				disabled={pendingServiceID !== null}
-				onclick={() => (serviceConfirmation = null)}>Cancel</Button.Root
+				disabled={model.pendingServiceID !== null}
+				onclick={() => (model.ui.serviceConfirmation = null)}>Cancel</Button.Root
 			><Button.Root
 				variant="destructive"
-				loading={pendingServiceID !== null}
-				disabled={pendingServiceID !== null}
+				loading={model.pendingServiceID !== null}
+				disabled={model.pendingServiceID !== null}
 				onclick={async () => {
-					const selected = serviceConfirmation;
+					const selected = model.ui.serviceConfirmation;
 					if (!selected) return;
-					await serviceAction(selected.id, selected.action, () =>
+					await model.serviceAction(selected.id, selected.action, () =>
 						selected.action === 'stop'
 							? api.stopService(selected.id)
 							: api.restartService(selected.id)
 					);
-					if (!actionError) serviceConfirmation = null;
+					if (!model.ui.actionError) model.ui.serviceConfirmation = null;
 				}}
-				>{serviceConfirmation?.action === 'stop' ? 'Stop service' : 'Restart service'}</Button.Root
+				>{model.ui.serviceConfirmation?.action === 'stop'
+					? 'Stop service'
+					: 'Restart service'}</Button.Root
 			></Dialog.Footer
 		>
 	</Dialog.Content>

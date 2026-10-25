@@ -1,7 +1,9 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { queries } from '$lib/query/options';
+	import { message } from '$lib/query/client';
 	import { resolve } from '$app/paths';
-	import { api, type SystemStatus, type Watcher } from '$lib/api';
+	import { type Watcher } from '$lib/api';
 	import {
 		ArrowUpRight,
 		ArrowRight,
@@ -25,47 +27,27 @@
 	import RequestLoading from '$lib/components/request-loading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 
-	let status = $state.raw<SystemStatus | null>(null);
-	let watchers = $state.raw<Watcher[]>([]);
-	let error = $state('');
-	let loading = $state(true);
-	let refreshing = $state(false);
-	let updatedAt = $state('');
-	let mounted = false;
+	const statusQuery = createQuery(() => ({ ...queries.status(), refetchInterval: 15000 }));
+	const watchersQuery = createQuery(() => ({ ...queries.watchers(), refetchInterval: 15000 }));
+	const status = $derived(statusQuery.data ?? null);
+	const watchers = $derived(watchersQuery.data ?? []);
+	const error = $derived(message(statusQuery.error || watchersQuery.error));
+	const loading = $derived(statusQuery.isPending || watchersQuery.isPending);
+	const refreshing = $derived(statusQuery.isFetching || watchersQuery.isFetching);
+	const updatedAt = $derived(
+		statusQuery.dataUpdatedAt
+			? new Date(statusQuery.dataUpdatedAt).toLocaleTimeString([], {
+					hour: '2-digit',
+					minute: '2-digit'
+				})
+			: ''
+	);
 	const attention = $derived(watchers.filter(needsAttention));
 	const active = $derived(watchers.filter((w) => !w.paused).length);
 	const awaitingReview = $derived(watchers.filter((w) => w.status === 'pending_approval').length);
-
 	async function load() {
-		if (refreshing) return;
-		refreshing = true;
-		try {
-			const [nextStatus, nextWatchers] = await Promise.all([api.status(), api.listWatchers()]);
-			if (!mounted) return;
-			status = nextStatus;
-			watchers = nextWatchers;
-			error = '';
-			updatedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-		} catch (cause) {
-			if (mounted) error = cause instanceof Error ? cause.message : 'Could not load your workspace';
-		} finally {
-			if (mounted) {
-				loading = false;
-				refreshing = false;
-			}
-		}
+		await Promise.all([statusQuery.refetch(), watchersQuery.refetch()]);
 	}
-	onMount(() => {
-		mounted = true;
-		void load();
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') void load();
-		}, 15000);
-		return () => {
-			mounted = false;
-			clearInterval(timer);
-		};
-	});
 </script>
 
 <div class="space-y-7">

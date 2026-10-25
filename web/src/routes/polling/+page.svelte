@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { invalidate } from '$app/navigation';
+	import { onDestroy } from 'svelte';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { queries, keys } from '$lib/query/options';
+	import { invalidate, message } from '$lib/query/client';
 	import { resolve } from '$app/paths';
 	import { api, type Watcher } from '$lib/api';
 	import * as Button from '$lib/components/ui/button';
@@ -11,14 +13,21 @@
 	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { Clock, Pause, Play, RefreshCw, Radio } from '@lucide/svelte';
-	let { data } = $props();
-	const watchers = $derived(data.watchers);
+	const client = useQueryClient();
+	const list = createQuery(() => ({ ...queries.watchers(), refetchInterval: 5000 }));
+	const watchers = $derived(list.data ?? []);
+	const pauseMutation = createMutation(() => ({
+		mutationFn: (w: Watcher) => api.updateWatcher(w.id, { paused: !w.paused }),
+		onSuccess: (_data, w) => invalidate(client, keys.watchers, keys.watcher(w.id))
+	}));
 	let query = $state('');
 	let filter = $state('all');
 	let error = $state('');
 	let success = $state('');
-	let pendingID = $state<number | null>(null);
-	let refreshing = $state(false);
+	const pendingID = $derived(
+		pauseMutation.isPending ? (pauseMutation.variables?.id ?? null) : null
+	);
+	const refreshing = $derived(list.isFetching);
 	let successTimer: ReturnType<typeof setTimeout> | undefined;
 	const filtered = $derived(
 		watchers.filter(
@@ -28,38 +37,22 @@
 		)
 	);
 	async function refresh() {
-		if (refreshing) return;
-		refreshing = true;
-		try {
-			await invalidate('app:watchers');
-		} finally {
-			refreshing = false;
-		}
+		await list.refetch();
 	}
-	onMount(() => {
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') void refresh();
-		}, 5000);
-		return () => {
-			clearInterval(timer);
-			clearTimeout(successTimer);
-		};
-	});
+	onDestroy(() => clearTimeout(successTimer));
+
 	async function togglePause(watcher: Watcher) {
 		if (pendingID !== null) return;
-		pendingID = watcher.id;
 		error = '';
 		success = '';
 		try {
-			await api.updateWatcher(watcher.id, { paused: !watcher.paused });
+			await pauseMutation.mutateAsync(watcher);
 			await refresh();
 			success = `${watcher.name}: polling ${watcher.paused ? 'resumed' : 'paused'}.`;
 			clearTimeout(successTimer);
 			successTimer = setTimeout(() => (success = ''), 4000);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not change polling state';
-		} finally {
-			pendingID = null;
 		}
 	}
 </script>
@@ -86,7 +79,7 @@
 			><strong class="font-mono text-primary">{watchers.filter((w) => w.paused).length}</strong> paused</span
 		><span class="ml-auto font-mono text-[10px]">REFRESHES EVERY 5S</span>
 	</div>
-	<RequestError message={data.loadError} onRetry={refresh} />
+	<RequestError message={message(list.error)} onRetry={refresh} />
 	<RequestError message={error} />
 	{#if success}<p
 			role="status"
@@ -152,7 +145,7 @@
 				</Table.Body></Table.Root
 			>
 		</div>
-	{:else if !data.loadError}
+	{:else if !message(list.error)}
 		<EmptyState
 			title={watchers.length ? 'No matching repositories' : 'Nothing on watch. Yet.'}
 			description={watchers.length

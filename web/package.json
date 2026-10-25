@@ -5,13 +5,14 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
-		"build": "vite build",
+		"build": "bun run check:structure && vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check": "bun run check:structure && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"lint": "prettier --check . && eslint .",
-		"format": "prettier --write ."
+		"lint": "bun run check:structure && prettier --check . && eslint .",
+		"format": "prettier --write .",
+		"check:structure": "bun scripts/check-structure.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.2",
@@ -55,6 +56,8 @@
 		"@codemirror/state": "^6.7.6",
 		"@codemirror/view": "^6.43.15",
 		"@lezer/highlight": "^1.2.5",
+		"@tanstack/query-core": "5.104.5",
+		"@tanstack/svelte-query": "^6.3.5",
 		"codemirror": "^6.0.2",
 		"filesize": "^11.0.13"
 	}

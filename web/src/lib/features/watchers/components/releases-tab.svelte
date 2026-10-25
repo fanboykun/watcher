@@ -1,12 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import {
-		api,
-		type Watcher,
-		type ReleaseCatalogResponse,
-		type CatalogRelease,
-		type CatalogDownload
-	} from '$lib/api';
+	import { onDestroy, tick } from 'svelte';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { queries, keys } from '$lib/query/options';
+	import { invalidate } from '$lib/query/client';
+
+	import { api, type Watcher, type CatalogRelease, type CatalogDownload } from '$lib/api';
 	import * as Button from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -32,16 +30,30 @@
 		onDownloaded: () => Promise<void>;
 		onNavigate: (tab: 'candidates' | 'deploys') => Promise<void>;
 	} = $props();
-	let catalog = $state.raw<ReleaseCatalogResponse | null>(null);
-	let loading = $state(true);
+	const client = useQueryClient();
+	let catalogPage = $state(1);
+	const catalogQuery = createQuery(() => queries.releases(watcher.id, catalogPage));
+	const catalog = $derived(catalogQuery.data ?? null);
+	const operation = createMutation(() => ({
+		mutationFn: (v: { id: number; run: () => Promise<unknown> }) => v.run(),
+		onSuccess: () =>
+			invalidate(
+				client,
+				[...keys.watcher(watcher.id), 'releases'],
+				[...keys.watcher(watcher.id), 'versions']
+			)
+	}));
+	const loading = $derived(catalogQuery.isFetching);
 	let error = $state('');
 	let message = $state('');
-	let busyRelease = $state<number | null>(null);
+	const busyRelease = $derived(operation.isPending ? (operation.variables?.id ?? null) : null);
 	let selectedAssets = $state<Record<number, string>>({});
 	let deployTarget = $state<CatalogDownload | null>(null);
 	let confirmOpen = $state(false);
-	let controller: AbortController | undefined;
-	let mounted = false;
+	let mounted = true;
+	onDestroy(() => {
+		mounted = false;
+	});
 
 	function zipAssets(release: CatalogRelease) {
 		return release.assets.filter((asset) => asset.name.toLowerCase().endsWith('.zip'));
@@ -61,60 +73,56 @@
 		);
 	}
 	async function load(page = 1) {
-		controller?.abort();
-		const requestController = new AbortController();
-		controller = requestController;
-		loading = true;
-		error = '';
-		try {
-			const result = await api.getReleaseCatalog(watcher.id, page, requestController.signal);
-			if (mounted && !requestController.signal.aborted) catalog = result;
-		} catch (cause) {
-			if (mounted && !requestController.signal.aborted)
-				error = cause instanceof Error ? cause.message : 'Could not load releases.';
-		} finally {
-			if (mounted && !requestController.signal.aborted) loading = false;
-		}
+		catalogPage = page;
+		await tick();
+		await catalogQuery.refetch({ cancelRefetch: false });
 	}
+
 	async function download(release: CatalogRelease) {
 		const asset = selectedAsset(release);
 		if (!asset || busyRelease !== null) return;
-		busyRelease = release.id;
 		error = '';
 		message = '';
 		try {
-			const result = await api.downloadCatalogRelease(watcher.id, release.id, asset.id);
+			const result = (await operation.mutateAsync({
+				id: release.id,
+				run: () => api.downloadCatalogRelease(watcher.id, release.id, asset.id)
+			})) as CatalogDownload;
 			if (mounted && catalog) {
-				catalog = { ...catalog, downloads: [result, ...catalog.downloads] };
+				client.setQueryData(queries.releases(watcher.id, catalogPage).queryKey, {
+					...catalog,
+					downloads: [result, ...catalog.downloads.filter((entry) => entry.id !== result.id)]
+				});
 				message = `${result.asset_name} downloaded to Watcher. Ready to configure.`;
 			}
 			await onDownloaded();
 		} catch (cause) {
 			if (mounted) error = cause instanceof Error ? cause.message : 'Download failed.';
-		} finally {
-			if (mounted) busyRelease = null;
 		}
 	}
 	async function selectCandidate(release: CatalogRelease) {
 		const download = downloadFor(release);
 		if (!download || busyRelease !== null) return;
-		busyRelease = release.id;
 		error = '';
 		try {
-			await api.selectCatalogCandidate(watcher.id, download.id);
+			await operation.mutateAsync({
+				id: release.id,
+				run: () => api.selectCatalogCandidate(watcher.id, download.id)
+			});
 			if (mounted) await onNavigate('candidates');
 		} catch (cause) {
 			if (mounted) error = cause instanceof Error ? cause.message : 'Could not select candidate.';
-		} finally {
-			if (mounted) busyRelease = null;
 		}
 	}
 	async function deploy() {
 		if (!deployTarget || busyRelease !== null) return;
-		busyRelease = deployTarget.release_id;
 		error = '';
 		try {
-			await api.deployCatalogRelease(watcher.id, deployTarget.id);
+			const selected = deployTarget;
+			await operation.mutateAsync({
+				id: selected.release_id,
+				run: () => api.deployCatalogRelease(watcher.id, selected.id)
+			});
 			confirmOpen = false;
 			if (mounted) await onNavigate('deploys');
 		} catch (cause) {
@@ -122,18 +130,8 @@
 				confirmOpen = false;
 				error = cause instanceof Error ? cause.message : 'Could not queue deployment.';
 			}
-		} finally {
-			if (mounted) busyRelease = null;
 		}
 	}
-	onMount(() => {
-		mounted = true;
-		void load();
-		return () => {
-			mounted = false;
-			controller?.abort();
-		};
-	});
 </script>
 
 <section
@@ -163,11 +161,11 @@
 		Downloads are staged on Watcher’s host. Selecting a candidate holds automatic deployment while
 		you review its configuration. Deployment uses the exact downloaded ZIP.
 	</div>
-	{#if error}<p
+	{#if error || catalogQuery.error}<p
 			role="alert"
 			class="m-5 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
 		>
-			{error}
+			{error || catalogQuery.error?.message}
 		</p>{/if}
 	{#if message}<p role="status" class="mx-5 mt-4 text-sm text-emerald-500">{message}</p>{/if}
 	{#if loading && !catalog}

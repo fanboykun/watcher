@@ -6,6 +6,8 @@ Svelte 5 + SvelteKit static SPA, embedded in the Go agent.
 bun install
 bun run dev
 bun run check
+bun run check:structure
+bun test src scripts/check-structure.test.ts
 bun run build
 ```
 
@@ -19,3 +21,8 @@ from `$lib/api`; it re-exports response types and authentication helpers for
 existing consumers. Domain UI lives under `src/lib/features`, shared console
 components under `src/lib/components/console`, and navigation under
 `src/lib/components/shell`.
+
+TanStack Query owns server-state fetching, polling, mutation progress, and cache
+invalidation. Feature controllers keep editable drafts separate from query data.
+All application source files have an enforced maximum of 350 physical lines;
+`check`, `build`, and `lint` reject oversized files.

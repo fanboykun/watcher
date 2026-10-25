@@ -1,8 +1,6 @@
 <script lang="ts">
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
-	import { Label } from '$lib/components/ui/label';
-	import { Checkbox } from '$lib/components/ui/checkbox';
 
 	interface Props {
 		open: boolean;

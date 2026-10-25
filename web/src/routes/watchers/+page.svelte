@@ -12,7 +12,9 @@
 	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { queries, keys } from '$lib/query/options';
+	import { invalidate, message } from '$lib/query/client';
 	import { api, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
@@ -22,58 +24,35 @@
 	import { resolve } from '$app/paths';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
-	let watchers = $state.raw<Watcher[]>([]);
+	const client = useQueryClient();
+	const list = createQuery(() => ({ ...queries.watchers(), refetchInterval: 5000 }));
+	const watchers = $derived(list.data ?? []);
+	const deleteMutation = createMutation(() => ({
+		mutationFn: api.deleteWatcher,
+		onSuccess: () => invalidate(client, keys.watchers, keys.services, keys.status)
+	}));
+	const checkMutation = createMutation(() => ({
+		mutationFn: api.triggerCheck,
+		onSuccess: () => invalidate(client, keys.watchers)
+	}));
 	let query = $state('');
 	let filter = $state<WatcherFilter>('all');
-	let checkingID = $state<number | null>(null);
+	const checkingID = $derived(checkMutation.isPending ? (checkMutation.variables ?? null) : null);
 	const filteredWatchers = $derived(watchers.filter((w) => matchesWatcher(w, query, filter)));
 	const attentionCount = $derived(watchers.filter(needsAttention).length);
-	let error = $state('');
-	let loading = $state(true);
+	const error = $derived(message(list.error || deleteMutation.error));
+	const loading = $derived(list.isPending);
 	let triggerMsg = $state('');
 	let triggerError = $state('');
 	let showDeleteDialog = $state(false);
-	let deleting = $state(false);
+	const deleting = $derived(deleteMutation.isPending);
 	let deleteWatcherID = $state<number | null>(null);
 	let deleteWatcherName = $state('');
-	let loadController: AbortController | null = null;
-
-	onMount(() => {
-		void load();
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') void load(true);
-		}, 5000);
-		return () => {
-			clearInterval(timer);
-			loadController?.abort();
-		};
-	});
-
-	async function load(background = false) {
-		if (background && loadController) return;
-		loadController?.abort();
-		const request = new AbortController();
-		loadController = request;
-		if (!background) loading = true;
-		try {
-			const result = await api.listWatchers(request.signal);
-			if (!request.signal.aborted) {
-				watchers = result;
-				error = '';
-			}
-		} catch (e) {
-			if (!request.signal.aborted)
-				error = e instanceof Error ? e.message : 'Failed to load watchers';
-		} finally {
-			if (loadController === request) {
-				loading = false;
-				loadController = null;
-			}
-		}
+	async function load() {
+		await list.refetch();
 	}
 
 	function openDeleteWatcherDialog(id: number, name: string) {
-		error = '';
 		deleteWatcherID = id;
 		deleteWatcherName = name;
 		showDeleteDialog = true;
@@ -81,30 +60,24 @@
 
 	async function confirmDeleteWatcher() {
 		if (!deleteWatcherID || deleting) return;
-		deleting = true;
 		try {
-			await api.deleteWatcher(deleteWatcherID);
+			await deleteMutation.mutateAsync(deleteWatcherID);
 			await load();
 			showDeleteDialog = false;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Delete failed';
-		} finally {
-			deleting = false;
+		} catch {
+			/* Mutation error remains visible. */
 		}
 	}
 
 	async function triggerCheck(id: number) {
 		if (checkingID !== null) return;
-		checkingID = id;
 		triggerError = '';
 		try {
-			const res = await api.triggerCheck(id);
+			const res = await checkMutation.mutateAsync(id);
 			triggerMsg = res.message;
 			setTimeout(() => (triggerMsg = ''), 3000);
 		} catch (e) {
 			triggerError = e instanceof Error ? e.message : 'Trigger failed';
-		} finally {
-			checkingID = null;
 		}
 	}
 </script>

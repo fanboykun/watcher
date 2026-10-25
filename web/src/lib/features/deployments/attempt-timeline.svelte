@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { api, type DeployLog } from '$lib/api';
+	import { createQueries } from '@tanstack/svelte-query';
+	import { queries } from '$lib/query/options';
+	import { type DeployLog } from '$lib/api';
 	import { resolve } from '$app/paths';
 	import { formatDate, formatDuration, statusColor } from '$lib/utils';
 	import * as Button from '$lib/components/ui/button';
@@ -21,11 +23,41 @@
 		onpage: (page: number) => void | Promise<void>;
 		onsize: (size: number) => void | Promise<void>;
 	} = $props();
-	let related = $state<Record<number, DeployLog>>({});
 	let expanded = $state<number[]>([]);
-	let loading = $state<number[]>([]);
-	let errors = $state<Record<number, string>>({});
-	let paging = $state(false);
+	const relatedIDs = $derived(
+		[
+			...new Set(attempts.filter((attempt) => expanded.includes(attempt.id)).flatMap(relationIDs))
+		].filter((id) => !attempts.some((attempt) => attempt.id === id))
+	);
+	const lookups = createQueries(() => ({
+		queries: relatedIDs.map((id) => ({ ...queries.attempt(watcherId, id), staleTime: 30000 }))
+	}));
+	const related = $derived(
+		Object.fromEntries(
+			lookups.flatMap((query) =>
+				query.data?.watcher_id === watcherId ? [[query.data.id, query.data]] : []
+			)
+		)
+	);
+	const loading = $derived(
+		attempts
+			.filter((attempt) =>
+				relationIDs(attempt).some((id) => lookups[relatedIDs.indexOf(id)]?.isPending)
+			)
+			.map((attempt) => attempt.id)
+	);
+	const errors = $derived(
+		Object.fromEntries(
+			attempts.map((attempt) => [
+				attempt.id,
+				relationIDs(attempt)
+					.map((id) => lookups[relatedIDs.indexOf(id)]?.error?.message)
+					.find(Boolean) ?? ''
+			])
+		)
+	);
+	const paging = false;
+
 	const ordered = $derived(
 		[...attempts].sort(
 			(a, b) => Date.parse(b.started_at || '') - Date.parse(a.started_at || '') || b.id - a.id
@@ -49,34 +81,15 @@
 			return;
 		}
 		expanded = [...expanded, attempt.id];
-		await loadRelated(attempt);
 	}
 	async function loadRelated(attempt: DeployLog) {
-		if (loading.includes(attempt.id)) return;
-		loading = [...loading, attempt.id];
-		errors[attempt.id] = '';
-		try {
-			const missing = relationIDs(attempt).filter((id) => !find(id));
-			const results = await Promise.all(missing.map((id) => api.watcherDeployLog(watcherId, id)));
-			for (const result of results)
-				if (result.watcher_id === watcherId) related[result.id] = result;
-		} catch (error) {
-			errors[attempt.id] =
-				error instanceof Error ? error.message : 'Related attempt could not be loaded';
-		} finally {
-			loading = loading.filter((id) => id !== attempt.id);
-		}
+		await Promise.all(relationIDs(attempt).map((id) => lookups[relatedIDs.indexOf(id)]?.refetch()));
 	}
 	async function paginate(next: number) {
-		if (paging) return;
-		paging = true;
-		try {
-			await onpage(next);
-			expanded = [];
-		} finally {
-			paging = false;
-		}
+		await onpage(next);
+		expanded = [];
 	}
+
 	function reason(attempt: DeployLog) {
 		return (
 			attempt.reason?.replaceAll('_', ' ') ||
@@ -103,13 +116,8 @@
 				value={pageSize}
 				disabled={paging}
 				onchange={async (event) => {
-					paging = true;
-					try {
-						await onsize(Number(event.currentTarget.value));
-						expanded = [];
-					} finally {
-						paging = false;
-					}
+					await onsize(Number(event.currentTarget.value));
+					expanded = [];
 				}}
 				><option value="10">10 / page</option><option value="25">25 / page</option><option
 					value="50">50 / page</option

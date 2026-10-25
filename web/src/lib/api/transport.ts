@@ -73,10 +73,17 @@ export function errorMessageFromResponse(
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
 	const normalizedPath = path.startsWith('/api/') ? path.slice(4) : path;
 	let res: Response;
+	const timeout =
+		!options?.method || options.method === 'GET' ? AbortSignal.timeout(30_000) : undefined;
+	const signal =
+		timeout && options?.signal
+			? AbortSignal.any([timeout, options.signal])
+			: (timeout ?? options?.signal);
 	const clientRequestId = globalThis.crypto?.randomUUID?.();
 	try {
 		res = await fetch(`${API_BASE}${normalizedPath}`, {
 			...options,
+			signal,
 			headers: {
 				'Content-Type': 'application/json',
 				...(clientRequestId ? { 'X-Request-ID': clientRequestId } : {}),
@@ -85,6 +92,12 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
 			}
 		});
 	} catch (error) {
+		if (timeout?.aborted && !options?.signal?.aborted)
+			throw new APIRequestError(
+				'Watcher details timed out. Check the agent connection and retry.',
+				0,
+				error
+			);
 		if (error instanceof Error && error.name === 'AbortError') throw error;
 		throw new APIRequestError(
 			'The dashboard could not reach Watcher. Check your connection and that the agent service is running. For a deployment action, refresh its history before retrying: the request may already have been accepted.',

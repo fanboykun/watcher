@@ -71,6 +71,20 @@ horizontal overflow. Set `SCREENSHOT_DIR` to retain dashboard screenshots.
 Set `CAPTURE_ONLY=1` with `SCREENSHOT_DIR` to refresh only the visual previews.
 Use one browser suite at a time.
 
+## Query cache and source boundaries
+
+```sh
+rtk proxy bun test src scripts/check-structure.test.ts
+rtk proxy bun run check:structure
+```
+
+Unit tests cover shared-read deduplication, exact candidate/target/resource keys,
+pagination and filter isolation, targeted invalidation, cancellation and logout,
+and disabled operational mutation retries. Source tests prove that all 351 lines
+count toward the enforced limit, including blank lines and comments. The redesign
+suite additionally switches between service and watcher edit routes using SPA
+navigation and checks that each form loads the new resource's data.
+
 ## Configuration and deployment workflows
 
 `verify-configuration.cjs` checks the shared CodeMirror workspace, single-page

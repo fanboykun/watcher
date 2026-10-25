@@ -1,0 +1,62 @@
+@media (min-width: 1024px) {
+	.console-workspace {
+		margin-left: 236px;
+	}
+}
+@media (max-width: 1279px) {
+	.console-metric {
+		padding: 18px;
+	}
+	.console-content {
+		padding-inline: 26px;
+	}
+}
+@media (max-width: 767px) {
+	.console-topbar {
+		padding-inline: 16px;
+		height: 60px;
+	}
+	.console-content {
+		padding: 25px 18px 40px;
+	}
+	.console-metrics {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.console-metric:nth-child(2) {
+		border-right: 0;
+	}
+	.console-metric:nth-child(-n + 2) {
+		border-bottom: 1px solid var(--border);
+	}
+	.console-metric .eyebrow {
+		font-size: 9px;
+	}
+	.metric-value {
+		font-size: 28px;
+	}
+	.console-footer {
+		padding-inline: 18px;
+	}
+	.console-footer > :last-child,
+	.topbar-tag {
+		display: none;
+	}
+	.console-heading {
+		gap: 18px;
+	}
+	.console-heading .page-actions {
+		width: auto;
+	}
+	.search-field {
+		max-width: none;
+	}
+	.list-toolbar > p {
+		margin-left: 0;
+	}
+	.login-panel {
+		padding: 28px;
+	}
+	.skip-link {
+		left: 16px;
+	}
+}

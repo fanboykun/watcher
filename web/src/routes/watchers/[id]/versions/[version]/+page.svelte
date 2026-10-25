@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { afterNavigate } from '$app/navigation';
+
 	import { resolve } from '$app/paths';
-	import { onMount } from 'svelte';
-	import { api, type ConfigSnapshot, type ConfigSnapshotFile } from '$lib/api';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { queries } from '$lib/query/options';
+	import { message } from '$lib/query/client';
+	import { type ConfigSnapshotFile } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import { Textarea } from '$lib/components/ui/textarea';
@@ -13,12 +15,10 @@
 
 	const watcherId = $derived(Number(page.params.id));
 	const version = $derived(page.params.version || '');
-	let snapshot = $state<ConfigSnapshot | null>(null);
-	let loading = $state(true);
-	let error = $state('');
-	let loadedKey = '';
-	let generation = 0;
-	let requestAbort: AbortController | null = null;
+	const snapshotQuery = createQuery(() => queries.snapshot(watcherId, version));
+	const snapshot = $derived(snapshotQuery.data ?? null);
+	const loading = $derived(snapshotQuery.isPending);
+	const error = $derived(message(snapshotQuery.error));
 
 	function targetLabel(target: ConfigSnapshotFile['target']) {
 		return target === 'env'
@@ -35,47 +35,9 @@
 		return 'Historical snapshot';
 	}
 
-	async function loadSnapshot(force = false) {
-		const key = `${watcherId}:${version}`;
-		if (!force && loadedKey === key) return;
-		loadedKey = key;
-		const current = ++generation;
-		requestAbort?.abort();
-		const controller = new AbortController();
-		requestAbort = controller;
-		const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-		loading = true;
-		error = '';
-		snapshot = null;
-		try {
-			const result = await api.getWatcherConfigSnapshot(watcherId, version, signal);
-			if (current === generation) snapshot = result;
-		} catch (cause) {
-			if (current === generation) {
-				error = signal.aborted
-					? 'Loading the configuration snapshot timed out. Check the connection and retry.'
-					: cause instanceof Error
-						? cause.message
-						: 'Failed to load configuration snapshot';
-			}
-		} finally {
-			if (current === generation) {
-				loading = false;
-				requestAbort = null;
-			}
-		}
+	async function loadSnapshot(_force = false) {
+		await snapshotQuery.refetch();
 	}
-
-	onMount(() => {
-		void loadSnapshot();
-		return () => {
-			++generation;
-			requestAbort?.abort();
-		};
-	});
-	afterNavigate(() => {
-		void loadSnapshot();
-	});
 </script>
 
 <div class="space-y-6">

@@ -2,8 +2,10 @@
 	import PageHeading from '$lib/components/console/page-heading.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
-	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { queries, keys } from '$lib/query/options';
+	import { invalidate, message } from '$lib/query/client';
+
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { api, type Service, type ServiceWritePayload, type Watcher } from '$lib/api';
@@ -11,43 +13,29 @@
 	import ServiceWizardForm from '$lib/components/service-wizard-form.svelte';
 	import { ArrowLeft } from '@lucide/svelte';
 
-	const serviceId = Number(page.params.id);
+	const serviceId = $derived(Number(page.params.id));
 
-	let service = $state<Service | null>(null);
-	let watcher = $state<Watcher | null>(null);
-	let saving = $state(false);
-	let loading = $state(true);
-	let error = $state('');
-
-	onMount(() => {
-		void load();
-	});
+	const client = useQueryClient();
+	const detail = createQuery(() => queries.service(serviceId));
+	const service = $derived(detail.data?.service ?? null);
+	const watcher = $derived(detail.data?.watcher ?? null);
+	const mutation = createMutation(() => ({
+		mutationFn: (payload: ServiceWritePayload) =>
+			api.updateService(watcher!.id, serviceId, payload),
+		onSuccess: () => invalidate(client, keys.services, keys.watchers, keys.watcher(watcher!.id))
+	}));
+	const loading = $derived(detail.isPending);
+	const saving = $derived(mutation.isPending);
+	const error = $derived(message(detail.error || mutation.error));
 	async function load() {
-		loading = true;
-		error = '';
-		try {
-			const detail = await api.getService(serviceId);
-			service = detail.service;
-			watcher = detail.watcher;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load service';
-		} finally {
-			loading = false;
-		}
+		await detail.refetch();
 	}
-
 	async function updateService(payload: ServiceWritePayload) {
-		if (!service || !watcher) return false;
-		saving = true;
-		error = '';
 		try {
-			await api.updateService(watcher.id, service.id, payload);
+			const result = await mutation.mutateAsync(payload);
 			return true;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to update service';
+		} catch {
 			return false;
-		} finally {
-			saving = false;
 		}
 	}
 </script>

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports -- Standalone CommonJS browser runner, consistent with the existing verification scripts. */
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -67,7 +66,10 @@ async function serveBuild() {
 				const page = await browser.newPage({ viewport: { width, height: 1050 } });
 				page.setDefaultTimeout(8000);
 				const errors = [];
-				page.on('pageerror', (error) => errors.push(error.message));
+				page.on('pageerror', (error) => {
+					errors.push(error.message);
+					console.error('Browser error:', error.message);
+				});
 				await page.addInitScript(() => localStorage.setItem('watcher.auth.password', 'fixture'));
 				let empty = false,
 					failed = false,
@@ -138,6 +140,15 @@ async function serveBuild() {
 				].map((w) => ({
 					...w,
 					check_interval_sec: 60,
+					max_kept_versions: 3,
+					hc_enabled: false,
+					hc_url: '',
+					notify_version_found: false,
+					notify_deployment_succeeded: false,
+					notify_deployment_failed: false,
+					notify_rollback_succeeded: false,
+					notify_rollback_failed: false,
+					notify_service_health_changed: false,
 					install_dir: 'D:\\apps\\' + w.service_name,
 					last_deployed: new Date(Date.now() - 3600000).toISOString(),
 					last_poll_at: new Date().toISOString(),
@@ -228,6 +239,17 @@ async function serveBuild() {
 					if (/\/(deploys|polls|webhook-deliveries)$/.test(pathname))
 						return json({ data: [], total: 0 });
 					if (pathname === '/api/services/1') return json({ service, watcher: watchers[0] });
+					if (pathname === '/api/services/2')
+						return json({
+							service: {
+								...service,
+								id: 2,
+								watcher_id: 2,
+								windows_service_name: 'portal-api',
+								binary_name: 'portal.exe'
+							},
+							watcher: watchers[1]
+						});
 					if (pathname.endsWith('/health/history')) return json([]);
 					if (pathname === '/api/logs')
 						return json({
@@ -355,6 +377,29 @@ async function serveBuild() {
 				assert.equal(await page.getByRole('navigation', { name: 'Setup progress' }).count(), 0);
 				assert.equal(await page.getByLabel('Binary Name', { exact: true }).inputValue(), 'api.exe');
 				await noOverflow();
+				async function navigateInApp(href) {
+					await page.evaluate((href) => {
+						const link = document.createElement('a');
+						link.href = href;
+						link.textContent = 'Switch fixture resource';
+						document.querySelector('main').append(link);
+					}, prefix + href);
+					await page.getByRole('link', { name: 'Switch fixture resource', exact: true }).click();
+				}
+				await navigateInApp('/services/2/edit');
+				await page.waitForFunction(
+					() => document.querySelector('#binaryName')?.value === 'portal.exe'
+				);
+				await page.goto(origin + prefix + '/watchers/1/edit');
+				await page.waitForFunction(
+					() =>
+						document.querySelector('#editMetadataURL')?.value === 'https://github.com/acme/commerce'
+				);
+				await navigateInApp('/watchers/2/edit');
+				await page.waitForFunction(
+					() =>
+						document.querySelector('#editMetadataURL')?.value === 'https://github.com/acme/portal'
+				);
 				await page.goto(origin + prefix + '/watchers/1/services/new');
 				await page.getByRole('navigation', { name: 'Setup progress' }).waitFor();
 				await noOverflow();
@@ -395,7 +440,7 @@ async function serveBuild() {
 				await visible('3 / 3 shown');
 				assert.deepEqual(errors, []);
 				console.log(
-					`PASS redesign ${prefix || '/'} ${width}px: dashboard attention, search/filter/reset, actions, cancel, polling, details, empty, retry, refresh, auth, overflow`
+					`PASS redesign ${prefix || '/'} ${width}px: dashboard attention, search/filter/reset, actions, cancel, polling, details, resource navigation, empty, retry, refresh, auth, overflow`
 				);
 				await page.close();
 			}

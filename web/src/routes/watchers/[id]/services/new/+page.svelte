@@ -2,7 +2,9 @@
 	import PageHeading from '$lib/components/console/page-heading.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
-	import { onMount } from 'svelte';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { queries, keys } from '$lib/query/options';
+	import { invalidate, message } from '$lib/query/client';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
@@ -11,41 +13,29 @@
 	import ServiceWizardForm from '$lib/components/service-wizard-form.svelte';
 	import { ArrowLeft } from '@lucide/svelte';
 
-	const watcherId = Number(page.params.id);
+	const watcherId = $derived(Number(page.params.id));
 
-	let watcher = $state<Watcher | null>(null);
-	let saving = $state(false);
+	const client = useQueryClient();
+	const detail = createQuery(() => queries.watcher(watcherId));
+	const watcher = $derived(detail.data ?? null);
+	const mutation = createMutation(() => ({
+		mutationFn: (payload: ServiceWritePayload) => api.createService(watcherId, payload),
+		onSuccess: () => invalidate(client, keys.services, keys.watchers, keys.watcher(watcherId))
+	}));
 	let createdServiceID = 0;
-	let loading = $state(true);
-	let error = $state('');
-
-	onMount(() => {
-		void load();
-	});
+	const loading = $derived(detail.isPending);
+	const saving = $derived(mutation.isPending);
+	const error = $derived(message(detail.error || mutation.error));
 	async function load() {
-		loading = true;
-		error = '';
-		try {
-			watcher = await api.getWatcher(watcherId);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load watcher';
-		} finally {
-			loading = false;
-		}
+		await detail.refetch();
 	}
-
 	async function createService(payload: ServiceWritePayload) {
-		saving = true;
-		error = '';
 		try {
-			const service = await api.createService(watcherId, payload);
-			createdServiceID = service.id;
+			const result = await mutation.mutateAsync(payload);
+			createdServiceID = result.id;
 			return true;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to create service';
+		} catch {
 			return false;
-		} finally {
-			saving = false;
 		}
 	}
 </script>
