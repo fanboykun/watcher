@@ -98,8 +98,8 @@
 					bind:deployPage={model.ui.deployPage}
 					bind:deployPageSize={model.ui.deployPageSize}
 					deployTotal={model.deployTotal}
+					paging={model.deploysPaging}
 					watcher={model.watcher}
-					onLoadDeploys={model.loadDeploys}
 				/>
 			{/if}
 		</Tabs.Content>

@@ -1,10 +1,10 @@
 <script lang="ts">
 	import PageHeading from '$lib/components/console/page-heading.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
-	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-	import { queries, keys } from '$lib/query/options';
-	import { invalidate, message } from '$lib/query/client';
+	import { queries } from '$lib/query/options';
+	import { invalidate, message, watcherScope } from '$lib/query/client';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
@@ -20,7 +20,7 @@
 	const watcher = $derived(detail.data ?? null);
 	const mutation = createMutation(() => ({
 		mutationFn: (payload: ServiceWritePayload) => api.createService(watcherId, payload),
-		onSuccess: () => invalidate(client, keys.services, keys.watchers, keys.watcher(watcherId))
+		onSuccess: () => invalidate(client, ...watcherScope(watcherId))
 	}));
 	let createdServiceID = 0;
 	const loading = $derived(detail.isPending);
@@ -60,7 +60,7 @@
 	</PageHeading>
 
 	{#if loading}<RequestLoading label="Loading watcher configuration…" />
-	{:else if !watcher}<RequestError message={error} onRetry={load} />
+	{:else if !watcher}<ErrorScreen error={detail.error} onRetry={load} />
 	{:else}
 		<ServiceWizardForm
 			showHeader={false}

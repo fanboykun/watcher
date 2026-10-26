@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-	import { queries, keys } from '$lib/query/options';
-	import { invalidate, message } from '$lib/query/client';
+	import { queries } from '$lib/query/options';
+	import { invalidate, message, watcherScope } from '$lib/query/client';
 	import { resolve } from '$app/paths';
 	import { api, type Watcher } from '$lib/api';
 	import * as Button from '$lib/components/ui/button';
@@ -12,13 +12,14 @@
 	import EmptyState from '$lib/components/console/empty-state.svelte';
 	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 	import { Clock, Pause, Play, RefreshCw, Radio } from '@lucide/svelte';
 	const client = useQueryClient();
 	const list = createQuery(() => ({ ...queries.watchers(), refetchInterval: 5000 }));
 	const watchers = $derived(list.data ?? []);
 	const pauseMutation = createMutation(() => ({
 		mutationFn: (w: Watcher) => api.updateWatcher(w.id, { paused: !w.paused }),
-		onSuccess: (_data, w) => invalidate(client, keys.watchers, keys.watcher(w.id))
+		onSuccess: (_data, w) => invalidate(client, ...watcherScope(w.id))
 	}));
 	let query = $state('');
 	let filter = $state('all');
@@ -28,6 +29,7 @@
 		pauseMutation.isPending ? (pauseMutation.variables?.id ?? null) : null
 	);
 	const refreshing = $derived(list.isFetching);
+	const blocking = $derived(list.isError && !list.data ? list.error : null);
 	let successTimer: ReturnType<typeof setTimeout> | undefined;
 	const filtered = $derived(
 		watchers.filter(
@@ -47,7 +49,6 @@
 		success = '';
 		try {
 			await pauseMutation.mutateAsync(watcher);
-			await refresh();
 			success = `${watcher.name}: polling ${watcher.paused ? 'resumed' : 'paused'}.`;
 			clearTimeout(successTimer);
 			successTimer = setTimeout(() => (success = ''), 4000);
@@ -79,7 +80,7 @@
 			><strong class="font-mono text-primary">{watchers.filter((w) => w.paused).length}</strong> paused</span
 		><span class="ml-auto font-mono text-[10px]">REFRESHES EVERY 5S</span>
 	</div>
-	<RequestError message={message(list.error)} onRetry={refresh} />
+	<RequestError message={blocking ? '' : message(list.error)} onRetry={refresh} />
 	<RequestError message={error} />
 	{#if success}<p
 			role="status"
@@ -145,6 +146,8 @@
 				</Table.Body></Table.Root
 			>
 		</div>
+	{:else if blocking}
+		<ErrorScreen error={blocking} onRetry={refresh} />
 	{:else if !message(list.error)}
 		<EmptyState
 			title={watchers.length ? 'No matching repositories' : 'Nothing on watch. Yet.'}

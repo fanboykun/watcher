@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/svelte-query';
 import { api, type AgentLogSource } from '$lib/api';
+import { keepWithin } from './client';
 
 // Hierarchies make invalidation explicit; all server-side parameters belong in keys.
 import { keys } from './keys';
@@ -28,7 +29,8 @@ export const queries = {
 	deploys: (id: number, page = 1, size = 10) =>
 		queryOptions({
 			queryKey: [...keys.watcher(id), 'deploys', page, size],
-			queryFn: ({ signal }) => api.watcherDeploys(id, page, size, signal)
+			queryFn: ({ signal }) => api.watcherDeploys(id, page, size, signal),
+			placeholderData: keepWithin([...keys.watcher(id), 'deploys'])
 		}),
 	attempt: (id: number, attempt: number) =>
 		queryOptions({
@@ -43,12 +45,14 @@ export const queries = {
 	polls: (id: number, page = 1, size = 10, status = 'all') =>
 		queryOptions({
 			queryKey: keys.polls(id, page, size, status),
-			queryFn: ({ signal }) => api.watcherPolls(id, page, size, status, signal)
+			queryFn: ({ signal }) => api.watcherPolls(id, page, size, status, signal),
+			placeholderData: keepWithin([...keys.watcher(id), 'polls', status])
 		}),
 	deliveries: (id: number, page = 1, size = 20) =>
 		queryOptions({
 			queryKey: [...keys.watcher(id), 'deliveries', page, size],
-			queryFn: ({ signal }) => api.watcherWebhookDeliveries(id, page, size, signal)
+			queryFn: ({ signal }) => api.watcherWebhookDeliveries(id, page, size, signal),
+			placeholderData: keepWithin([...keys.watcher(id), 'deliveries'])
 		}),
 	delivery: (id: number, delivery: number) =>
 		queryOptions({
@@ -58,13 +62,13 @@ export const queries = {
 	releases: (id: number, page = 1) =>
 		queryOptions({
 			queryKey: [...keys.watcher(id), 'releases', page],
-			queryFn: ({ signal }) => api.getReleaseCatalog(id, page, signal)
+			queryFn: ({ signal }) => api.getReleaseCatalog(id, page, signal),
+			placeholderData: keepWithin([...keys.watcher(id), 'releases'])
 		}),
 	candidate: (id: number, target: string, selection: string) =>
 		queryOptions({
 			queryKey: keys.candidate(id, target, selection),
-			queryFn: ({ signal }) => api.getWatcherCandidate(id, target, signal),
-			refetchOnWindowFocus: false
+			queryFn: ({ signal }) => api.getWatcherCandidate(id, target, signal)
 		}),
 	snapshot: (id: number, version: string) =>
 		queryOptions({
@@ -91,18 +95,23 @@ export const queries = {
 	serviceDeploys: (id: number, page = 1, size = 10) =>
 		queryOptions({
 			queryKey: [...keys.service(id), 'deploys', page, size],
-			queryFn: ({ signal }) => api.serviceDeploys(id, page, size, signal)
+			queryFn: ({ signal }) => api.serviceDeploys(id, page, size, signal),
+			placeholderData: keepWithin([...keys.service(id), 'deploys'])
 		}),
 	serviceLogs: (id: number, lines = 100, type = 'out') =>
 		queryOptions({
-			queryKey: [...keys.service(id), 'logs', lines, type],
-			queryFn: ({ signal }) => api.serviceLogs(id, lines, type, signal)
+			queryKey: [...keys.service(id), 'logs', type, lines],
+			queryFn: ({ signal }) => api.serviceLogs(id, lines, type, signal),
+			placeholderData: keepWithin([...keys.service(id), 'logs', type])
 		}),
 	logs: (id: number | undefined, lines: number, source: AgentLogSource, trace: string) =>
 		queryOptions({
 			queryKey: keys.logs(id, lines, source, trace),
 			queryFn: ({ signal }) =>
-				id ? api.watcherLogs(id, lines, signal, trace) : api.agentLogs(lines, source, signal, trace)
+				id
+					? api.watcherLogs(id, lines, signal, trace)
+					: api.agentLogs(lines, source, signal, trace),
+			placeholderData: keepWithin(keys.logs(id, lines, source, trace).slice(0, -1))
 		}),
 	selfVersion: () =>
 		queryOptions({

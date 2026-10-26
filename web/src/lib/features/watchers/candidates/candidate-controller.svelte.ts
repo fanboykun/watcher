@@ -44,6 +44,8 @@ export function createCandidate(getProps: () => CandidateProps) {
 
 	const client = useQueryClient();
 
+	// Reads go through fetchQuery with their exact key and are copied into an editable draft.
+	// This disabled observer never fetches; it only reports the in-flight request's state.
 	const candidateQuery = createQuery(() => ({
 		...queries.candidate(watcher.id, ui.requestTarget, ui.requestSelection),
 		enabled: false
@@ -51,7 +53,8 @@ export function createCandidate(getProps: () => CandidateProps) {
 	const loading = $derived(candidateQuery.isFetching);
 	const saveMutation = createMutation(() => ({
 		mutationFn: (v: { target: string; services: ReturnType<typeof candidatePayload> }) =>
-			api.updateWatcherCandidate(watcher.id, v.target, v.services)
+			api.updateWatcherCandidate(watcher.id, v.target, v.services),
+		onSuccess: () => invalidate(client, [...keys.watcher(watcher.id), 'candidate'])
 	}));
 	const deleteMutation = createMutation(() => ({
 		mutationFn: (v: { serviceId: number; target: string }) =>
@@ -115,9 +118,7 @@ export function createCandidate(getProps: () => CandidateProps) {
 		try {
 			ui.requestTarget = target;
 			ui.requestSelection = selection;
-			await tick();
-			const result = await candidateQuery.refetch({ throwOnError: true, cancelRefetch: false });
-			const res = result.data!;
+			const res = await client.fetchQuery(queries.candidate(watcher.id, target, selection));
 			if (generation !== loadGeneration || selection !== pendingSelection) return;
 			ui.loadedTarget = target;
 			ui.loadedSelection = selection;

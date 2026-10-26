@@ -30,7 +30,6 @@
 		onValueChange={(v) => {
 			if (v === 'out' || v === 'err') {
 				logType = v;
-				onLoadLogs();
 			}
 		}}
 	>
@@ -49,7 +48,6 @@
 		onValueChange={(v) => {
 			if (v) {
 				logCount = Number(v);
-				onLoadLogs();
 			}
 		}}
 	>

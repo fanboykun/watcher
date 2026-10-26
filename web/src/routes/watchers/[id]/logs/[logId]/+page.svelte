@@ -7,8 +7,9 @@
 	import { resolve } from '$app/paths';
 	import { formatDate, formatDuration, statusColor } from '$lib/utils';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
-	import { queries, keys } from '$lib/query/options';
-	import { invalidate, message } from '$lib/query/client';
+	import { queries } from '$lib/query/options';
+	import { invalidate, message, watcherScope } from '$lib/query/client';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 
 	const id = $derived(Number(page.params.id));
 	const logId = $derived(Number(page.params.logId));
@@ -20,23 +21,28 @@
 	const deployLog = $derived(attemptQuery.data ?? null);
 	const liveLogs = $derived(deployLog?.logs ?? '');
 	let copyError = $state('');
-	const error = $derived(copyError || message(watcherQuery.error || attemptQuery.error));
+	const error = $derived(
+		copyError || message(watcherQuery.error || (deployLog ? attemptQuery.error : null))
+	);
 	const completedAt = $derived(deployLog?.completed_at);
+	// The stream only sends lines written after it connects, so it must start from a snapshot
+	// fetched for this view. Any refetch closes it; it reopens on the new snapshot.
 	$effect(() => {
-		if (!attemptQuery.isSuccess || completedAt) return;
+		if (
+			!attemptQuery.isSuccess ||
+			!attemptQuery.isFetchedAfterMount ||
+			attemptQuery.isFetching ||
+			completedAt
+		)
+			return;
 		const watcherID = id,
 			attemptID = logId;
 		const options = queries.attempt(watcherID, attemptID);
 		const stream = api.streamDeployLog(watcherID, attemptID, async (data) => {
 			if (data === 'DONE') {
 				stream.close();
-				await client.fetchQuery({ ...options, staleTime: 0 });
-				void invalidate(
-					client,
-					queries.watcher(watcherID).queryKey,
-					[...keys.watcher(watcherID), 'deploys'],
-					keys.watchers
-				);
+				// Refreshes this attempt's final record along with the watcher it changed.
+				await invalidate(client, ...watcherScope(watcherID));
 				return;
 			}
 			client.setQueryData(options.queryKey, (current) =>
@@ -245,6 +251,8 @@
 				</div>
 			</Card.Content>
 		</Card.Root>
+	{:else if attemptQuery.isError}
+		<ErrorScreen error={attemptQuery.error} onRetry={() => attemptQuery.refetch()} />
 	{:else if !error}
 		<div class="flex flex-1 items-center justify-center text-muted-foreground">
 			<Loader2 class="h-8 w-8 animate-spin" />

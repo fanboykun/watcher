@@ -11,10 +11,11 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 	import { goto } from '$app/navigation';
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { queries, keys } from '$lib/query/options';
-	import { invalidate, message } from '$lib/query/client';
+	import { forget, invalidate, message } from '$lib/query/client';
 	import { api, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
@@ -40,7 +41,9 @@
 	const checkingID = $derived(checkMutation.isPending ? (checkMutation.variables ?? null) : null);
 	const filteredWatchers = $derived(watchers.filter((w) => matchesWatcher(w, query, filter)));
 	const attentionCount = $derived(watchers.filter(needsAttention).length);
-	const error = $derived(message(list.error || deleteMutation.error));
+	// Without any rows a failed read blocks the page; with rows it is only a stale warning.
+	const blocking = $derived(list.isError && !list.data ? list.error : null);
+	const error = $derived(message((blocking ? null : list.error) || deleteMutation.error));
 	const loading = $derived(list.isPending);
 	let triggerMsg = $state('');
 	let triggerError = $state('');
@@ -62,7 +65,7 @@
 		if (!deleteWatcherID || deleting) return;
 		try {
 			await deleteMutation.mutateAsync(deleteWatcherID);
-			await load();
+			forget(client, keys.watcher(deleteWatcherID));
 			showDeleteDialog = false;
 		} catch {
 			/* Mutation error remains visible. */
@@ -164,6 +167,8 @@
 
 	{#if loading}
 		<RequestLoading label="Loading watchers…" />
+	{:else if blocking}
+		<ErrorScreen error={blocking} onRetry={load} />
 	{:else if filteredWatchers.length > 0}
 		<div class="grid gap-4 lg:hidden">
 			{#each filteredWatchers as watcher (watcher.id)}<div>

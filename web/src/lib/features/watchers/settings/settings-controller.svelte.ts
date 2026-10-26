@@ -1,6 +1,6 @@
 import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 import { queries, keys } from '$lib/query/options';
-import { invalidate, message } from '$lib/query/client';
+import { forget, invalidate, message, watcherScope } from '$lib/query/client';
 import { untrack } from 'svelte';
 import { createCommand } from '$lib/query/command.svelte';
 import { page } from '$app/state';
@@ -17,11 +17,14 @@ export function createWatcherSettings() {
 		mutationFn: (payload: import('$lib/api').WatcherWritePayload) => api.updateWatcher(id, payload),
 		onSuccess: (value) => {
 			client.setQueryData(queries.watcher(value.id).queryKey, value);
-			return invalidate(client, keys.watchers);
+			return invalidate(client, ...watcherScope(value.id));
 		}
 	}));
-	const testMutation = createMutation(() => ({ mutationFn: () => api.sendWatcherWebhookTest(id) }));
-	const confirmMutation = createCommand(() => [keys.watcher(id), keys.services, keys.watchers]);
+	const testMutation = createMutation(() => ({
+		mutationFn: () => api.sendWatcherWebhookTest(id),
+		onSuccess: () => invalidate(client, keys.watcher(id))
+	}));
+	const confirmMutation = createCommand(() => watcherScope(id));
 	const ui = $state({
 		error: '',
 		success: '',
@@ -61,7 +64,8 @@ export function createWatcherSettings() {
 	});
 
 	const saving = $derived(saveMutation.isPending);
-	const loading = $derived(detail.isPending);
+	// The draft is seeded from a response fetched for this view, never a stale cache entry.
+	const loading = $derived(detail.isPending || !detail.isFetchedAfterMount);
 
 	const sendingTest = $derived(testMutation.isPending);
 
@@ -72,7 +76,7 @@ export function createWatcherSettings() {
 	let initializedID: number | undefined;
 	$effect(() => {
 		const value = detail.data;
-		if (value && value.id !== initializedID)
+		if (value && detail.isFetchedAfterMount && value.id !== initializedID)
 			untrack(() => {
 				initializedID = value.id;
 				syncEditForm();
@@ -157,7 +161,6 @@ export function createWatcherSettings() {
 		try {
 			const res = await testMutation.mutateAsync();
 			ui.success = res.message;
-			await detail.refetch();
 		} catch (err) {
 			ui.error = err instanceof Error ? err.message : 'Failed to send webhook test';
 		}
@@ -204,6 +207,7 @@ export function createWatcherSettings() {
 			action: async () => {
 				try {
 					await api.deleteService(id, svcId);
+					forget(client, keys.service(svcId));
 					await loadWatcher(false);
 					ui.success = 'Service deleted.';
 				} catch (err) {

@@ -22,6 +22,15 @@ filtered collections. Operational actions retain pending states, server errors,
 and confirmation dialogs. A filtered list has a different empty state from a new
 installation. Navigation must use SvelteKit's base-aware path helpers.
 
+Failures that leave a view with nothing to show render `ErrorScreen`
+(`lib/components/errors/`): a missing primary resource, a list that never loaded,
+router 404s (`routes/+error.svelte`), and render crashes caught by the root
+`<svelte:boundary>`s. Inside the shell it keeps navigation available; outside it
+(agent unreachable at sign-in, shell crash) it fills the viewport. A failed refresh
+of data that is already on screen stays an inline `RequestError`. `describeError`
+maps API statuses, timeouts and crashes to copy and keeps technical details and
+the request id copyable.
+
 The dashboard prioritizes pending releases and errors, followed by the deployment
 fleet. It displays observed state without inventing monitoring data. Update notices
 belong to the application shell so they appear once on every route.

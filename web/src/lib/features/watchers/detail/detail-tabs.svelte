@@ -70,8 +70,7 @@
 						watcher={model.watcher}
 						onDownloaded={model.loadVersions}
 						onNavigate={async (tab) => {
-							await model.fetchWatcher();
-							await Promise.all([model.loadVersions(), model.loadDeploys()]);
+							// The release operation already awaited its invalidation of this watcher.
 							model.ui.activeTab = tab;
 							await goto(resolve(`/watchers/[id]?tab=${tab}`, { id: String(model.id) }), {
 								replaceState: true,
@@ -102,14 +101,13 @@
 				bind:deployPage={model.ui.deployPage}
 				bind:deployPageSize={model.ui.deployPageSize}
 				deployTotal={model.deployTotal}
-				onPageChange={async (p) => {
+				paging={model.deploysPaging}
+				onPageChange={(p) => {
 					model.ui.deployPage = p;
-					await model.loadDeploys();
 				}}
-				onPageSizeChange={async (size) => {
+				onPageSizeChange={(size) => {
 					model.ui.deployPageSize = size;
 					model.ui.deployPage = 1;
-					await model.loadDeploys();
 				}}
 				watcherId={model.id}
 			/>
@@ -139,14 +137,12 @@
 				pollPageSize={model.ui.pollPageSize}
 				pollTotal={model.pollTotal}
 				bind:pollStatus={model.ui.pollStatus}
-				onPageChange={async (p) => {
+				onPageChange={(p) => {
 					model.ui.pollPage = p;
-					await model.loadPolls();
 				}}
-				onStatusChange={async (status) => {
+				onStatusChange={(status) => {
 					model.ui.pollStatus = status;
 					model.ui.pollPage = 1;
-					await model.loadPolls();
 				}}
 			/>
 		</Tabs.Content>
@@ -158,14 +154,12 @@
 				bind:deliveryPage={model.ui.deliveryPage}
 				bind:deliveryPageSize={model.ui.deliveryPageSize}
 				deliveryTotal={model.deliveryTotal}
-				onPageChange={async (p) => {
+				onPageChange={(p) => {
 					model.ui.deliveryPage = p;
-					await model.loadWebhookDeliveries();
 				}}
-				onPageSizeChange={async (size) => {
+				onPageSizeChange={(size) => {
 					model.ui.deliveryPageSize = size;
 					model.ui.deliveryPage = 1;
-					await model.loadWebhookDeliveries();
 				}}
 				busy={model.actionBusy}
 				onSendTest={() => model.runPending('webhook-test', model.sendWebhookTest)}

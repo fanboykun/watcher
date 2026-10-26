@@ -4,6 +4,7 @@
 	import EmptyState from '$lib/components/console/empty-state.svelte';
 	import ServiceStatus from '$lib/components/service-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 	import { queries } from '$lib/query/options';
 	import { message } from '$lib/query/client';
 	import {
@@ -143,6 +144,8 @@
 
 	{#if model.loading}
 		<RequestLoading label="Loading services…" />
+	{:else if model.blocking}
+		<ErrorScreen error={model.blocking} onRetry={model.load} />
 	{:else if model.filteredServices.length > 0}
 		<div class="grid gap-4 lg:hidden">
 			{#each model.filteredServices as svc (svc.id)}

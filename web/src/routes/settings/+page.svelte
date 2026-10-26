@@ -6,6 +6,7 @@
 	import DeploymentSection from '$lib/features/settings/deployment-section.svelte';
 	import PageHeading from '$lib/components/console/page-heading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 
 	import { message } from '$lib/query/client';
 
@@ -32,7 +33,7 @@
 	{#if model.loading}
 		<RequestLoading label="Loading global settings…" />
 	{:else if model.loadError}
-		<RequestError message={model.loadError} onRetry={model.loadSettings} />
+		<ErrorScreen error={model.loadError} onRetry={model.loadSettings} />
 	{:else}
 		<Tabs.Root bind:value={model.ui.activeSection}>
 			<Tabs.List>

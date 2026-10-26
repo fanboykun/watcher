@@ -2,7 +2,7 @@ import { draftKey } from './settings-draft';
 import { untrack } from 'svelte';
 import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 import { queries, keys } from '$lib/query/options';
-import { invalidate, message } from '$lib/query/client';
+import { invalidate } from '$lib/query/client';
 import { createSelfUpdate } from '$lib/query/self-update.svelte';
 import { page } from '$app/state';
 import { afterNavigate, goto } from '$app/navigation';
@@ -12,14 +12,23 @@ export function createSettings() {
 	const client = useQueryClient();
 	const versionQuery = createQuery(() => queries.selfVersion());
 	const configQuery = createQuery(() => queries.selfConfig());
-	const authQuery = createQuery(() => queries.auth());
+	// The auth gate owns session freshness; this view only reads the default-password flag.
+	const authQuery = createQuery(() => ({ ...queries.auth(), staleTime: Infinity }));
 	const update = createSelfUpdate();
 	const versionInfo = $derived(versionQuery.data ?? null);
 	const updateInfo = $derived(update.check.data ?? null);
 	const agentConfig = $derived(configQuery.data ?? null);
 	const authStatus = $derived(authQuery.data ?? null);
-	const loading = $derived(versionQuery.isPending || configQuery.isPending || authQuery.isPending);
-	const loadError = $derived(message(versionQuery.error || configQuery.error || authQuery.error));
+	// The editable draft must start from the agent's current file, never a cached copy.
+	const loading = $derived(
+		versionQuery.isPending ||
+			configQuery.isPending ||
+			!configQuery.isFetchedAfterMount ||
+			authQuery.isPending
+	);
+	const loadError = $derived(
+		[versionQuery, configQuery, authQuery].find((q) => q.isError && !q.data)?.error ?? null
+	);
 	const configMutation = createMutation(() => ({
 		mutationFn: api.updateSelfConfig,
 		onSuccess: (value) => {
@@ -75,7 +84,7 @@ export function createSettings() {
 
 	const updateState = $derived(update.snapshot);
 
-	const configDirty = $derived(Boolean(agentConfig) && draftKey(ui) !== ui.savedDraft);
+	const configDirty = $derived(Boolean(ui.savedDraft) && draftKey(ui) !== ui.savedDraft);
 
 	function resetConfig() {
 		syncConfigForm();
@@ -100,7 +109,7 @@ export function createSettings() {
 
 	let initialized = false;
 	$effect(() => {
-		if (configQuery.data && !initialized)
+		if (configQuery.data && configQuery.isFetchedAfterMount && !initialized)
 			untrack(() => {
 				initialized = true;
 				resetConfig();

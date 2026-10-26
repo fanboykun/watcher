@@ -40,6 +40,26 @@ refresh affected lists/details without resetting local drafts. Polling uses quer
 refetch intervals and stops with observer disposal. Log streams retain bounded
 buffers and base-aware navigation.
 
+## Lifecycle rules
+
+- Only a 401 ends the session; the auth gate signs out on any 401 read. Timeouts,
+  5xx and restarts keep the stored credential and the mounted workspace.
+- Mutations invalidate through `watcherScope(id)` / `serviceScope(id, watcherId)`
+  so list rows, the resource tree and fleet status stay consistent. Deleted
+  resources are removed with `forget` so history navigation cannot show them.
+- Paged and filtered reads use `keepWithin(prefix)` placeholders: the previous rows
+  stay visible while another page loads, but never across resources, filters or
+  log sources. Page, filter and size changes fetch through the key; never pair a
+  state change with `tick()` and `refetch()`.
+- Edit drafts are seeded only from data fetched after the view mounted
+  (`isFetchedAfterMount`), never from a stale cache entry, and once per resource.
+- The deploy-log stream only sends lines written after it connects, so it opens on
+  a fresh snapshot and reopens after any refetch.
+- The root layout keys pages by pathname, so a parameter change remounts the page
+  and resets per-resource UI state.
+- `@tanstack/svelte-query` and `@tanstack/query-core` are pinned to matching exact
+  versions; bump them together (a cache test enforces this).
+
 ## Verification
 
 Run focused query-cache tests, Svelte checks, lint/formatting, and a production

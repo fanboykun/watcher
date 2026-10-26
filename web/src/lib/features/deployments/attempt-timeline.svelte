@@ -12,6 +12,7 @@
 		total,
 		page,
 		pageSize,
+		paging = false,
 		onpage,
 		onsize
 	}: {
@@ -20,6 +21,8 @@
 		total: number;
 		page: number;
 		pageSize: number;
+		/** True while the shown rows are the previous page's placeholder. */
+		paging?: boolean;
 		onpage: (page: number) => void | Promise<void>;
 		onsize: (size: number) => void | Promise<void>;
 	} = $props();
@@ -56,7 +59,6 @@
 			])
 		)
 	);
-	const paging = false;
 
 	const ordered = $derived(
 		[...attempts].sort(
@@ -136,7 +138,11 @@
 		</div>
 	</div>
 	{#if ordered.length}
-		<ol class="attempt-timeline" aria-label="Deployment attempts">
+		<ol
+			class={['attempt-timeline transition-opacity', paging && 'opacity-60']}
+			aria-label="Deployment attempts"
+			aria-busy={paging}
+		>
 			{#each ordered as attempt (attempt.id)}
 				<li class="attempt" id={`attempt-${attempt.id}`}>
 					<span

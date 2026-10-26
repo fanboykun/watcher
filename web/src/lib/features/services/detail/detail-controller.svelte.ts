@@ -3,10 +3,10 @@ import {
 	configFingerprint,
 	configurationProblems
 } from '$lib/features/configuration/model';
-import { untrack, tick } from 'svelte';
+import { untrack } from 'svelte';
 import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 import { queries, keys } from '$lib/query/options';
-import { invalidate, message } from '$lib/query/client';
+import { forget, invalidate, message, serviceScope, watcherScope } from '$lib/query/client';
 import { createCommand } from '$lib/query/command.svelte';
 import { page } from '$app/state';
 import { api, type Service, type ServiceConfigFile } from '$lib/api';
@@ -67,12 +67,14 @@ export function createServiceDetail() {
 	const logsLoading = $derived(logsQuery.isFetching);
 	const healthLoading = $derived(healthQuery.isFetching);
 	const healthError = $derived(message(healthQuery.error));
-	const deploysLoading = $derived(deployQuery.isFetching);
+	// Paging keeps the previous rows as a placeholder; only a first load replaces the list.
+	const deploysLoading = $derived(deployQuery.isPending);
+	const deploysPaging = $derived(deployQuery.isPlaceholderData);
 	const deploysError = $derived(message(deployQuery.error));
-	const actionMutation = createCommand<{ message: string }>(() => [
-		queries.service(id).queryKey,
-		keys.services
-	]);
+	// Runtime actions change status, health, logs and the owning watcher's service view.
+	const actionMutation = createCommand<{ message: string }>(() =>
+		watcher ? serviceScope(id, watcher.id) : [keys.service(id), keys.services]
+	);
 	const saveMutation = createMutation(() => ({
 		mutationFn: (v: import('$lib/api').ServiceWritePayload) =>
 			api.updateService(watcher!.id, id, v),
@@ -80,13 +82,12 @@ export function createServiceDetail() {
 			const target = queries.service(value.id).queryKey;
 			const owner = client.getQueryData(target)?.watcher;
 			if (owner) client.setQueryData(target, { service: value, watcher: owner });
-			return invalidate(client, keys.services, keys.watcher(value.watcher_id));
+			return invalidate(client, ...watcherScope(value.watcher_id));
 		}
 	}));
 	const deleteMutation = createMutation(() => ({
 		mutationFn: () => api.deleteService(watcher!.id, id),
-		onSuccess: () =>
-			invalidate(client, keys.services, keys.watchers, keys.watcher(watcher!.id), keys.status)
+		onSuccess: () => invalidate(client, ...watcherScope(watcher!.id))
 	}));
 	const restartMutation = createCommand<boolean>();
 
@@ -156,16 +157,12 @@ export function createServiceDetail() {
 	async function loadHealthHistory() {
 		await healthQuery.refetch();
 	}
+	// Page, size, stream and line-count changes fetch through their keys.
 	async function loadDeploys() {
-		await tick();
-		await deployQuery.refetch({ cancelRefetch: false });
+		await deployQuery.refetch();
 	}
 	async function loadLogs() {
-		await tick();
-		await logsQuery.refetch({ cancelRefetch: false });
-	}
-	async function refreshServiceDetail() {
-		await detail.refetch({ throwOnError: true });
+		await logsQuery.refetch();
 	}
 
 	function resetConfiguration(value = service) {
@@ -183,10 +180,6 @@ export function createServiceDetail() {
 			const res = await actionMutation.mutateAsync({ name, run: fn });
 			ui.actionMsg = res.message;
 			setTimeout(() => (ui.actionMsg = ''), 4000);
-			if (service) {
-				await refreshServiceDetail();
-				void refreshStatus(true);
-			}
 		} catch (e) {
 			ui.error = e instanceof Error ? e.message : 'Action failed';
 		}
@@ -223,6 +216,7 @@ export function createServiceDetail() {
 			await deleteMutation.mutateAsync();
 			ui.showDeleteDialog = false;
 			await goto(resolve(`/watchers/${watcher.id}/edit#services`));
+			forget(client, keys.service(id));
 		} catch (e) {
 			ui.error = e instanceof Error ? e.message : 'Failed to delete service';
 			setTimeout(() => (ui.actionMsg = ''), 5000);
@@ -309,6 +303,9 @@ export function createServiceDetail() {
 		loadDeploys,
 		get deploysLoading() {
 			return deploysLoading;
+		},
+		get deploysPaging() {
+			return deploysPaging;
 		},
 		get deploys() {
 			return deploys;

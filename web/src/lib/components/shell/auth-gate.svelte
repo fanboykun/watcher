@@ -1,29 +1,30 @@
 <script lang="ts">
-	import { Eye, ShieldCheck, ArrowRight, AlertCircle } from '@lucide/svelte';
+	import { Eye, ShieldCheck, ArrowRight, AlertCircle, LogOut } from '@lucide/svelte';
 	import * as Button from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { asset } from '$app/paths';
 	import AppShell from '$lib/components/shell/app-shell.svelte';
 	import UpdateNotice from '$lib/components/shell/update-notice.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
+	import { isUnauthorized } from '$lib/components/errors/error-model';
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { api, auth } from '$lib/api';
 	import { queries } from '$lib/query/options';
 	import { createSelfUpdate } from '$lib/query/self-update.svelte';
-	import { untrack } from 'svelte';
 	let { children } = $props();
 	const client = useQueryClient();
 	let credentials = $state(auth.hasPassword());
 	let loginPassword = $state('');
 	let validationError = $state('');
 	const session = createQuery(() => ({ ...queries.auth(), enabled: credentials, gcTime: 0 }));
-	const authenticated = $derived(
-		credentials && session.data?.authenticated === true && !session.isError
-	);
+	// Only a 401 ends the session. Outages, timeouts and restarts keep the stored
+	// credential and the mounted workspace, including any unsaved drafts.
+	const authenticated = $derived(credentials && session.data?.authenticated === true);
 	const checkingAuth = $derived(credentials && session.isPending);
-	const bootstrap = createQuery(() => ({
-		...queries.bootstrap(),
-		enabled: !checkingAuth && !authenticated
-	}));
+	const unreachable = $derived(
+		credentials && !session.data && session.isError && !isUnauthorized(session.error)
+	);
+	const bootstrap = createQuery(() => ({ ...queries.bootstrap(), enabled: !credentials }));
 	const defaultPassword = $derived(
 		bootstrap.data?.using_default_password ? (bootstrap.data.default_password ?? '') : ''
 	);
@@ -58,13 +59,18 @@
 		client.clear();
 		loginMutation.reset();
 	}
-	$effect(() => {
-		if (session.isError && credentials)
-			untrack(() => {
-				auth.clearPassword();
-				credentials = false;
-			});
-	});
+	// Any read Watcher answers with 401 means the stored credential stopped working.
+	$effect(() =>
+		client.getQueryCache().subscribe((event) => {
+			if (
+				event.type === 'updated' &&
+				event.action.type === 'error' &&
+				isUnauthorized(event.action.error) &&
+				credentials
+			)
+				queueMicrotask(() => void logout());
+		})
+	);
 	function dismissUpdateBanner() {
 		if (selfUpdateInfo?.latest_version) update.dismiss(selfUpdateInfo.latest_version);
 	}
@@ -84,6 +90,12 @@
 			class="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"
 		></div>
 	</div>
+{:else if unreachable}
+	<ErrorScreen error={session.error} scope="app" onRetry={() => session.refetch()}>
+		{#snippet actions()}
+			<Button.Root variant="ghost" onclick={logout}><LogOut class="size-4" />Sign out</Button.Root>
+		{/snippet}
+	</ErrorScreen>
 {:else if !authenticated}
 	<div class="login-screen">
 		<form

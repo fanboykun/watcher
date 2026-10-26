@@ -7,6 +7,7 @@
 		deployPage = $bindable(1),
 		deployPageSize = $bindable(10),
 		deployTotal,
+		paging = false,
 		onPageChange,
 		onPageSizeChange,
 		watcherId
@@ -15,6 +16,7 @@
 		deployPage: number;
 		deployPageSize: number;
 		deployTotal: number;
+		paging?: boolean;
 		onPageChange: (page: number) => void;
 		onPageSizeChange: (size: number) => void;
 		watcherId: number;
@@ -27,6 +29,7 @@
 	total={deployTotal}
 	page={deployPage}
 	pageSize={deployPageSize}
+	{paging}
 	onpage={onPageChange}
 	onsize={onPageSizeChange}
 />

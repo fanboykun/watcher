@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { onDestroy, tick } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-	import { queries, keys } from '$lib/query/options';
-	import { invalidate } from '$lib/query/client';
+	import { queries } from '$lib/query/options';
+	import { invalidate, watcherScope } from '$lib/query/client';
 
 	import { api, type Watcher, type CatalogRelease, type CatalogDownload } from '$lib/api';
 	import * as Button from '$lib/components/ui/button';
@@ -36,12 +36,8 @@
 	const catalog = $derived(catalogQuery.data ?? null);
 	const operation = createMutation(() => ({
 		mutationFn: (v: { id: number; run: () => Promise<unknown> }) => v.run(),
-		onSuccess: () =>
-			invalidate(
-				client,
-				[...keys.watcher(watcher.id), 'releases'],
-				[...keys.watcher(watcher.id), 'versions']
-			)
+		// Downloads, selections and deployments change the catalog, versions and watcher state.
+		onSuccess: () => invalidate(client, ...watcherScope(watcher.id))
 	}));
 	const loading = $derived(catalogQuery.isFetching);
 	let error = $state('');
@@ -73,9 +69,9 @@
 		);
 	}
 	async function load(page = 1) {
-		catalogPage = page;
-		await tick();
-		await catalogQuery.refetch({ cancelRefetch: false });
+		// A different page fetches through its key; the current page needs an explicit refresh.
+		if (page !== catalogPage) catalogPage = page;
+		else await catalogQuery.refetch();
 	}
 
 	async function download(release: CatalogRelease) {
@@ -88,13 +84,8 @@
 				id: release.id,
 				run: () => api.downloadCatalogRelease(watcher.id, release.id, asset.id)
 			})) as CatalogDownload;
-			if (mounted && catalog) {
-				client.setQueryData(queries.releases(watcher.id, catalogPage).queryKey, {
-					...catalog,
-					downloads: [result, ...catalog.downloads.filter((entry) => entry.id !== result.id)]
-				});
-				message = `${result.asset_name} downloaded to Watcher. Ready to configure.`;
-			}
+			// The awaited invalidation already refreshed the catalog with this download.
+			if (mounted) message = `${result.asset_name} downloaded to Watcher. Ready to configure.`;
 			await onDownloaded();
 		} catch (cause) {
 			if (mounted) error = cause instanceof Error ? cause.message : 'Download failed.';

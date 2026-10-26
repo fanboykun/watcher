@@ -1,6 +1,7 @@
 import { api, type Watcher, type CatalogDownload } from '$lib/api';
 import type { QueryClient } from '@tanstack/svelte-query';
-import { queries } from '$lib/query/options';
+import { queries, keys } from '$lib/query/options';
+import { forget } from '$lib/query/client';
 import { resolve } from '$app/paths';
 import { goto } from '$app/navigation';
 export type ConfirmationOptions = {
@@ -23,12 +24,10 @@ type Context = {
 		showRollbackDialog: boolean;
 	};
 	fetchWatcher: () => Promise<Watcher>;
-	loadDeploys: () => Promise<void>;
-	loadVersions: () => Promise<void>;
-	loadWebhookDeliveries: () => Promise<void>;
-	scheduleRefresh: (versions?: boolean, polls?: boolean) => void;
 	openConfirmDialog: (options: ConfirmationOptions) => void;
 };
+// Every action runs inside a detail command that invalidates the watcher's scope afterwards,
+// so actions only refresh explicitly when they navigate based on the new state.
 export function createWatcherActions(context: Context) {
 	async function configureDownload(download: import('$lib/api').CatalogDownload) {
 		try {
@@ -51,8 +50,6 @@ export function createWatcherActions(context: Context) {
 			action: async () => {
 				try {
 					await api.deployCatalogRelease(context.id, download.id);
-					await context.fetchWatcher();
-					await context.loadDeploys();
 					context.ui.activeTab = 'deploys';
 					await goto(resolve('/watchers/[id]?tab=deploys', { id: String(context.id) }), {
 						replaceState: true,
@@ -73,7 +70,7 @@ export function createWatcherActions(context: Context) {
 			action: async () => {
 				try {
 					await api.deleteService(context.id, svcId);
-					await context.fetchWatcher();
+					forget(context.client, keys.service(svcId));
 				} catch (e) {
 					context.ui.error = e instanceof Error ? e.message : 'Delete failed';
 				}
@@ -150,7 +147,6 @@ export function createWatcherActions(context: Context) {
 			action: async () => {
 				try {
 					await api.deleteWatcherVersion(context.id, version);
-					await context.loadVersions();
 				} catch (e) {
 					context.ui.error = e instanceof Error ? e.message : `Delete ${version} failed`;
 				}
@@ -161,7 +157,6 @@ export function createWatcherActions(context: Context) {
 		try {
 			await api.resumeWatcherUpdates(context.id);
 			context.ui.triggerMsg = `Auto-deploy resumed!`;
-			await context.fetchWatcher();
 		} catch (e) {
 			context.ui.error = e instanceof Error ? e.message : `Failed to resume auto deploy`;
 		}
@@ -170,7 +165,6 @@ export function createWatcherActions(context: Context) {
 		try {
 			const res = await api.sendWatcherWebhookTest(context.id);
 			context.ui.triggerMsg = res.message;
-			await context.loadWebhookDeliveries();
 		} catch (e) {
 			context.ui.error = e instanceof Error ? e.message : 'Failed to send webhook test';
 		}
@@ -179,7 +173,6 @@ export function createWatcherActions(context: Context) {
 		try {
 			const res = await api.resumeWatcherWebhook(context.id, replaySuppressed);
 			context.ui.triggerMsg = res.message;
-			context.scheduleRefresh();
 		} catch (e) {
 			if (replaySuppressed) throw e;
 			context.ui.error = e instanceof Error ? e.message : 'Failed to resume webhook delivery';
@@ -191,7 +184,6 @@ export function createWatcherActions(context: Context) {
 			const nextVal = !context.watcher.intercept_next_release;
 			await api.interceptWatcher(context.id, nextVal);
 			context.ui.triggerMsg = nextVal ? 'Will intercept next release.' : 'Intercept disabled.';
-			await context.fetchWatcher();
 		} catch (e) {
 			context.ui.error = e instanceof Error ? e.message : 'Failed to toggle intercept';
 		}
@@ -203,7 +195,6 @@ export function createWatcherActions(context: Context) {
 		if (catalogId > 0) await api.deployCatalogRelease(context.id, catalogId);
 		else await api.approveRelease(context.id, target);
 		context.ui.triggerMsg = 'Release approved! Deploying...';
-		context.scheduleRefresh();
 	}
 	async function discardRelease() {
 		context.openConfirmDialog({
@@ -215,7 +206,6 @@ export function createWatcherActions(context: Context) {
 				try {
 					const res = await api.discardRelease(context.id);
 					context.ui.triggerMsg = res.message;
-					await context.fetchWatcher();
 				} catch (e) {
 					context.ui.error = e instanceof Error ? e.message : 'Failed to discard release';
 				}

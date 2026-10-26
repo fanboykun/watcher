@@ -1,8 +1,7 @@
-import { tick } from 'svelte';
 import { createWatcherActions } from './detail-actions';
 import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 import { queries, keys } from '$lib/query/options';
-import { invalidate, message } from '$lib/query/client';
+import { invalidate, message, watcherScope } from '$lib/query/client';
 import { createCommand } from '$lib/query/command.svelte';
 import { page } from '$app/state';
 import { api, type Watcher } from '$lib/api';
@@ -16,8 +15,8 @@ export function createWatcherDetail() {
 	const id = $derived(Number(page.params.id));
 	const detail = createQuery(() => queries.watcher(id));
 	const watcher = $derived(detail.data ?? null);
-	const operation = createCommand(() => [keys.watchers, keys.services, keys.status]);
-	const confirmation = createCommand(() => [keys.watchers, keys.services, keys.status]);
+	const operation = createCommand(() => watcherScope(id));
+	const confirmation = createCommand(() => watcherScope(id));
 	const pendingAction = $derived(operation.isPending ? (operation.variables?.name ?? '') : '');
 	async function runPending(name: string, action: () => Promise<void>) {
 		if (operation.isPending) return;
@@ -81,6 +80,7 @@ export function createWatcherDetail() {
 	const downloads = $derived(versionQuery.data?.downloads ?? []);
 	const webhookDeliveries = $derived(deliveryQuery.data?.data ?? []);
 	const deliveryTotal = $derived(deliveryQuery.data?.total ?? 0);
+	const deploysPaging = $derived(deployQuery.isPlaceholderData);
 	const loading = $derived(detail.isPending);
 	const dataError = $derived(
 		message(deployQuery.error || pollQuery.error || versionQuery.error || deliveryQuery.error)
@@ -93,17 +93,15 @@ export function createWatcherDetail() {
 		await versionQuery.refetch();
 	}
 
+	// Page and filter changes fetch through their keys; these only refresh the current view.
 	async function loadPolls() {
-		await tick();
-		await pollQuery.refetch({ cancelRefetch: false });
+		await pollQuery.refetch();
 	}
 	async function loadDeploys() {
-		await tick();
-		await deployQuery.refetch({ cancelRefetch: false });
+		await deployQuery.refetch();
 	}
 	async function loadWebhookDeliveries() {
-		await tick();
-		await deliveryQuery.refetch({ cancelRefetch: false });
+		await deliveryQuery.refetch();
 	}
 	async function refreshDetails() {
 		await Promise.all([loadDeploys(), loadVersions(), loadPolls(), loadWebhookDeliveries()]);
@@ -236,10 +234,6 @@ export function createWatcherDetail() {
 		ui,
 		client,
 		fetchWatcher,
-		loadDeploys,
-		loadVersions,
-		loadWebhookDeliveries,
-		scheduleRefresh,
 		openConfirmDialog
 	});
 
@@ -281,6 +275,9 @@ export function createWatcherDetail() {
 		loadVersions,
 		get deployTotal() {
 			return deployTotal;
+		},
+		get deploysPaging() {
+			return deploysPaging;
 		},
 		get versions() {
 			return versions;

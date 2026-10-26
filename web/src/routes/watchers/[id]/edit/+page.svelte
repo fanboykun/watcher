@@ -7,6 +7,7 @@
 	import * as Tabs from '$lib/components/ui/tabs';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 	import { message } from '$lib/query/client';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
@@ -47,7 +48,7 @@
 	</header>
 
 	{#if !model.ui.showConfirmDialog}<RequestError
-			message={model.ui.error || message(model.detail.error)}
+			message={model.ui.error || (model.watcher ? message(model.detail.error) : '')}
 		/>{/if}
 
 	{#if model.ui.success}
@@ -132,6 +133,8 @@
 				><Save />Save changes</Button.Root
 			>
 		</div>
+	{:else}
+		<ErrorScreen error={model.detail.error} onRetry={() => model.detail.refetch()} />
 	{/if}
 </div>
 

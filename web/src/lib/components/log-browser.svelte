@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack, tick } from 'svelte';
+	import { untrack } from 'svelte';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { queries } from '$lib/query/options';
 	import { message } from '$lib/query/client';
@@ -48,9 +48,9 @@
 		entries.filter((entry) => entry.level === 'error' || entry.level === 'fatal').length
 	);
 
+	// Source, line-count and trace changes fetch through the query key; this only refreshes.
 	async function loadLogs() {
-		await tick();
-		await logQuery.refetch({ cancelRefetch: false });
+		await logQuery.refetch();
 	}
 </script>
 
@@ -63,7 +63,6 @@
 				onValueChange={(v) => {
 					if (v) {
 						source = v as AgentLogSource;
-						void loadLogs();
 					}
 				}}
 			>
@@ -91,7 +90,6 @@
 				onValueChange={(v) => {
 					if (v) {
 						lineCount = v;
-						void loadLogs();
 					}
 				}}
 			>
@@ -128,10 +126,7 @@
 						)
 							? value
 							: '';
-						if (nextTrace !== traceId) {
-							traceId = nextTrace;
-							void loadLogs();
-						}
+						if (nextTrace !== traceId) traceId = nextTrace;
 					}}
 					class="h-9 w-full min-w-0 pl-9 text-xs"
 				/>
@@ -191,7 +186,6 @@
 					onclick={() => {
 						search = '';
 						traceId = '';
-						void loadLogs();
 					}}>Clear</Button.Root
 				>
 			</div>{/if}

@@ -26,12 +26,15 @@
 	import { needsAttention } from '$lib/features/watchers/presentation';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 
 	const statusQuery = createQuery(() => ({ ...queries.status(), refetchInterval: 15000 }));
 	const watchersQuery = createQuery(() => ({ ...queries.watchers(), refetchInterval: 15000 }));
 	const status = $derived(statusQuery.data ?? null);
 	const watchers = $derived(watchersQuery.data ?? []);
-	const error = $derived(message(statusQuery.error || watchersQuery.error));
+	// The overview cannot render without fleet status; other failures are stale warnings.
+	const blocking = $derived(statusQuery.isError && !statusQuery.data ? statusQuery.error : null);
+	const error = $derived(message((blocking ? null : statusQuery.error) || watchersQuery.error));
 	const loading = $derived(statusQuery.isPending || watchersQuery.isPending);
 	const refreshing = $derived(statusQuery.isFetching || watchersQuery.isFetching);
 	const updatedAt = $derived(
@@ -210,5 +213,7 @@
 				>
 			{/if}
 		</section>
+	{:else if blocking}
+		<ErrorScreen error={blocking} onRetry={load} />
 	{/if}
 </div>

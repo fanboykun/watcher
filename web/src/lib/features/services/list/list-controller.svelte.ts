@@ -1,6 +1,6 @@
 import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 import { queries, keys } from '$lib/query/options';
-import { invalidate, message } from '$lib/query/client';
+import { invalidate, message, serviceScope } from '$lib/query/client';
 import { isIISService } from '$lib/api';
 export function createServiceList() {
 	const client = useQueryClient();
@@ -12,7 +12,10 @@ export function createServiceList() {
 			action: 'start' | 'stop' | 'restart' | 'health';
 			run: () => Promise<{ message: string }>;
 		}) => v.run(),
-		onSuccess: (_data, v) => invalidate(client, keys.services, keys.service(v.id))
+		onSuccess: (_data, v) => {
+			const owner = services.find((service) => service.id === v.id)?.watcher_id;
+			return invalidate(client, ...(owner ? serviceScope(v.id, owner) : [keys.service(v.id)]));
+		}
 	}));
 	const ui = $state({
 		query: '',
@@ -40,7 +43,9 @@ export function createServiceList() {
 						: !isIISService(service.service_type)))
 		)
 	);
-	const error = $derived(message(list.error));
+	// Without any rows a failed read blocks the page; with rows it is only a stale warning.
+	const blocking = $derived(list.isError && !list.data ? list.error : null);
+	const error = $derived(blocking ? '' : message(list.error));
 	const loading = $derived(list.isPending);
 
 	const pendingServiceID = $derived(
@@ -103,6 +108,9 @@ export function createServiceList() {
 		},
 		get error() {
 			return error;
+		},
+		get blocking() {
+			return blocking;
 		}
 	};
 }

@@ -12,6 +12,7 @@
 	import { ArrowLeft, Archive } from '@lucide/svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 
 	const watcherId = $derived(Number(page.params.id));
 	const version = $derived(page.params.version || '');
@@ -58,7 +59,7 @@
 			</p>
 		</div>
 	</div>
-	<RequestError message={error} onRetry={() => loadSnapshot(true)} />
+	{#if snapshot}<RequestError message={error} onRetry={() => loadSnapshot(true)} />{/if}
 	{#if loading}
 		<RequestLoading label="Loading configuration snapshot..." />
 	{:else if snapshot}
@@ -103,5 +104,7 @@
 				</Card.Content>
 			</Card.Root>
 		{/each}
+	{:else}
+		<ErrorScreen error={snapshotQuery.error} onRetry={() => loadSnapshot(true)} />
 	{/if}
 </div>

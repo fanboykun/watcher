@@ -1,3 +1,4 @@
+// Filters precede page and size so a resource's filtered history shares one prefix.
 export const keys = {
 	auth: ['auth'] as const,
 	status: ['system', 'status'] as const,
@@ -9,8 +10,8 @@ export const keys = {
 	candidate: (id: number, target: string, selection: string) =>
 		['watcher', id, 'candidate', target, selection] as const,
 	polls: (id: number, page: number, size: number, status: string) =>
-		['watcher', id, 'polls', page, size, status] as const,
+		['watcher', id, 'polls', status, page, size] as const,
 	snapshot: (id: number, version: string) => ['watcher', id, 'snapshot', version] as const,
 	logs: (id: number | undefined, lines: number, source: string, trace: string) =>
-		['logs', id ?? 'agent', lines, source, trace] as const
+		['logs', id ?? 'agent', source, trace, lines] as const
 };

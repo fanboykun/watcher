@@ -2,19 +2,19 @@
 	import AttemptTimeline from '$lib/features/deployments/attempt-timeline.svelte';
 	import type { DeployLog, Watcher } from '$lib/api';
 	let {
-		deploys = $bindable([]),
+		deploys = [],
 		deployPage = $bindable(1),
 		deployPageSize = $bindable(10),
 		deployTotal = 0,
-		watcher,
-		onLoadDeploys
+		paging = false,
+		watcher
 	}: {
 		deploys: DeployLog[];
 		deployPage: number;
 		deployPageSize: number;
 		deployTotal: number;
+		paging?: boolean;
 		watcher: Watcher | null;
-		onLoadDeploys: () => Promise<void>;
 	} = $props();
 </script>
 
@@ -24,13 +24,12 @@
 		total={deployTotal}
 		page={deployPage}
 		pageSize={deployPageSize}
-		onpage={async (page) => {
+		{paging}
+		onpage={(page) => {
 			deployPage = page;
-			await onLoadDeploys();
 		}}
-		onsize={async (size) => {
+		onsize={(size) => {
 			deployPageSize = size;
 			deployPage = 1;
-			await onLoadDeploys();
 		}}
 	/>{/if}
