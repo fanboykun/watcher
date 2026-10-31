@@ -250,7 +250,8 @@ func (r *RepoWatcher) RunCatalog(ctx context.Context, catalogID, deployLogID uin
 		return err
 	}
 	cycle.log.Info("catalog deployment started", "catalog_id", catalogID, "version", artifact.Version, "asset", artifact.AssetName)
-	gh := NewGitHubClient(cycle.resolveGitHubToken(), cycle.log)
+	cycle.github = r.github
+	gh := cycle.githubClient(cycle.log)
 	err := cycle.deploy(ctx, gh, ServiceMeta{Version: artifact.Version, Artifact: artifact.AssetName, ArtifactURL: artifact.ArtifactURL}, artifact.Version, watcher.CurrentVersion)
 	if err != nil {
 		return err

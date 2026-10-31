@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
@@ -36,7 +37,9 @@ func newRateLimitedWatcher(t *testing.T, server *httptest.Server) (*RepoWatcher,
 	if err := db.Create(&watcher).Error; err != nil {
 		t.Fatal(err)
 	}
-	return NewRepoWatcher(&watcher, db, &config.AppConfig{}, newTestLogger(), nil, nil), db, watcher.ID
+	rw := NewRepoWatcher(&watcher, db, &config.AppConfig{}, newTestLogger(), nil, nil)
+	rw.github = NewGitHubPool() // keep this test's rate-limit blocks out of the process-wide pool
+	return rw, db, watcher.ID
 }
 
 func TestDeploy_RateLimitedDownloadOpensNoGitHubDeployment(t *testing.T) {
@@ -68,15 +71,22 @@ func TestDeploy_RateLimitedDownloadOpensNoGitHubDeployment(t *testing.T) {
 }
 
 func TestRepoWatcherRun_RateLimitedMetadataSkipsPoll(t *testing.T) {
+	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		w.Header().Set("Retry-After", "3600")
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer server.Close()
 	rw, db, watcherID := newRateLimitedWatcher(t, server)
 
-	if err := rw.Run(context.Background()); err != nil {
-		t.Fatalf("rate-limited poll should not fail, got %v", err)
+	for range 3 {
+		if err := rw.Run(context.Background()); err != nil {
+			t.Fatalf("rate-limited poll should not fail, got %v", err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("polls after the block should not reach GitHub: hits=%d", got)
 	}
 
 	var watcher database.Watcher
@@ -113,12 +123,15 @@ func TestRepoWatcherRun_RateLimitedDownloadDefersWithoutFailure(t *testing.T) {
 	}))
 	defer server.Close()
 	rw, db, watcherID := newRateLimitedWatcher(t, server)
+	clock := time.Unix(1_700_000_000, 0)
+	rw.github.limiter("").now = func() time.Time { return clock }
 
 	// One more poll than maxDeployRetries: deferrals must never suspend the release.
 	for i := range 4 {
 		if err := rw.Run(context.Background()); err != nil {
 			t.Fatalf("poll %d: rate-limited deploy should not fail, got %v", i+1, err)
 		}
+		clock = clock.Add(2 * time.Hour) // let the block expire so the next poll reaches GitHub
 	}
 
 	if got := downloads.Load(); got != 4 {

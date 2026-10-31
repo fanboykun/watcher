@@ -16,9 +16,9 @@ import (
 )
 
 // newRateLimitTestClient keeps the production transport stack (unlike newTestClient)
-// and pins the limiter clock so blocks can be expired deterministically.
+// on an isolated pool, and pins the limiter clock so blocks expire deterministically.
 func newRateLimitTestClient(token string, server *httptest.Server) (*GitHubClient, *time.Time) {
-	c := NewGitHubClient(token, newTestLogger())
+	c := NewGitHubPool().Client(token, newTestLogger())
 	c.apiBase = server.URL
 	now := time.Unix(1_700_000_000, 0)
 	c.limiter.now = func() time.Time { return now }
@@ -153,6 +153,39 @@ func TestRateLimitTransport_PlainForbiddenIsNotRateLimited(t *testing.T) {
 	}
 	if got := hits.Load(); got != 2 {
 		t.Fatalf("plain 403 must not block later requests: hits=%d", got)
+	}
+}
+
+func TestGitHubPool_SharesBlocksPerToken(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Header.Get("Authorization") == "Bearer limited" {
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		writeRelease(w)
+	}))
+	defer server.Close()
+	pool := NewGitHubPool()
+	client := func(token string) *GitHubClient {
+		c := pool.Client(token, newTestLogger())
+		c.apiBase = server.URL
+		return c
+	}
+
+	if _, err := client("limited").FetchLatestRelease(context.Background(), "https://github.com/o/r"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("expected ErrRateLimited, got %v", err)
+	}
+	if _, err := client("limited").FetchLatestRelease(context.Background(), "https://github.com/o/r"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("a new client for the same token must inherit the block, got %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("blocked token reached the network: hits=%d", hits.Load())
+	}
+	if _, err := client("other").FetchLatestRelease(context.Background(), "https://github.com/o/r"); err != nil {
+		t.Fatalf("a different token must not be blocked, got %v", err)
 	}
 }
 

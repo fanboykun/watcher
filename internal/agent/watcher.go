@@ -24,6 +24,16 @@ type RepoWatcher struct {
 	db             *gorm.DB
 	watcherID      uint
 	webhooks       *webhook.Service
+	github         *GitHubPool // nil uses the process-wide pool
+}
+
+// githubClient returns a client sharing rate-limit state with every other user of the token.
+func (r *RepoWatcher) githubClient(log *Logger) *GitHubClient {
+	pool := r.github
+	if pool == nil {
+		pool = defaultGitHubPool
+	}
+	return pool.Client(r.resolveGitHubToken(), log)
 }
 
 // NewRepoWatcher creates a configured repo watcher.
@@ -108,7 +118,7 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 		r.state.RecordPollEvent("intercepted", live.PendingVersion, "A catalog candidate is awaiting explicit deployment")
 		return nil
 	}
-	gh := NewGitHubClient(r.resolveGitHubToken(), r.log)
+	gh := r.githubClient(r.log)
 	meta, err := gh.FetchServiceMetadataForRelease(ctx, r.wcfg.MetadataURL, r.wcfg.ReleaseRef, r.wcfg.ServiceName)
 	if err != nil {
 		if errors.Is(err, ErrRateLimited) {

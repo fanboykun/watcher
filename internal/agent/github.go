@@ -65,8 +65,12 @@ type GitHubClient struct {
 }
 
 // NewGitHubClient creates a GitHub client with optional token authentication.
+// Rate-limit state is shared with every other client using the same token.
 func NewGitHubClient(token string, log *Logger) *GitHubClient {
-	limiter := newRateLimiter()
+	return defaultGitHubPool.Client(token, log)
+}
+
+func newGitHubClient(token string, log *Logger, limiter *rateLimiter) *GitHubClient {
 	return &GitHubClient{
 		token:   token,
 		apiBase: defaultAPIBase,
