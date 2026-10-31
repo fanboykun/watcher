@@ -80,6 +80,25 @@ func (l *rateLimiter) blocked() *RateLimitError {
 	return &blocked
 }
 
+// snapshot reports the last known quota for display; it never contacts GitHub.
+func (l *rateLimiter) snapshot() GitHubQuota {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	quota := GitHubQuota{Limit: l.limit, Remaining: l.remaining, Reserve: l.limit / 10}
+	if now.Before(l.reset) {
+		reset := l.reset.UTC()
+		quota.ResetAt = &reset
+	} else if l.limit > 0 {
+		quota.Remaining = l.limit // the window rolled over since GitHub last reported
+	}
+	if l.blockedErr != nil && now.Before(l.blockedErr.Until) {
+		until := l.blockedErr.Until.UTC()
+		quota.BlockedUntil = &until
+	}
+	return quota
+}
+
 // shortfall reports when fewer than n requests are known to remain before reset.
 func (l *rateLimiter) shortfall(n int) *RateLimitError {
 	if blocked := l.blocked(); blocked != nil {

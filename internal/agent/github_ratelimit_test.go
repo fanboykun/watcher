@@ -202,6 +202,34 @@ func TestRateLimiter_ReserveYieldsFullPollsOnly(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_SnapshotReportsLastKnownQuota(t *testing.T) {
+	var reset int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Limit", "5000")
+		w.Header().Set("X-RateLimit-Remaining", "4321")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset, 10))
+		writeRelease(w)
+	}))
+	defer server.Close()
+	client, now := newRateLimitTestClient("token", server)
+	reset = now.Add(30 * time.Minute).Unix()
+
+	if quota := client.bucket.limiter.snapshot(); quota.Limit != 0 || quota.ResetAt != nil {
+		t.Fatalf("expected unknown quota before any request, got %+v", quota)
+	}
+	if _, err := client.FetchLatestRelease(context.Background(), "https://github.com/o/r"); err != nil {
+		t.Fatal(err)
+	}
+	quota := client.bucket.limiter.snapshot()
+	if quota.Limit != 5000 || quota.Remaining != 4321 || quota.Reserve != 500 || quota.ResetAt == nil || !quota.ResetAt.Equal(time.Unix(reset, 0)) || quota.BlockedUntil != nil {
+		t.Fatalf("unexpected quota: %+v", quota)
+	}
+	*now = time.Unix(reset, 0).Add(time.Second)
+	if quota := client.bucket.limiter.snapshot(); quota.Remaining != 5000 || quota.ResetAt != nil {
+		t.Fatalf("expected a fresh window after reset, got %+v", quota)
+	}
+}
+
 func TestGitHubPool_SharesBlocksPerToken(t *testing.T) {
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -123,6 +123,12 @@ export const queries = {
 			queryKey: [...keys.self, 'config'],
 			queryFn: ({ signal }) => api.selfConfig(signal)
 		}),
+	githubQuota: () =>
+		queryOptions({
+			queryKey: [...keys.self, 'github-quota'],
+			queryFn: ({ signal }) => api.githubRateLimits(signal),
+			refetchInterval: 30_000
+		}),
 	selfUpdate: () =>
 		queryOptions({
 			queryKey: [...keys.self, 'update-check'],

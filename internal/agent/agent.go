@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/fanboykun/watcher/internal/config"
 	"github.com/fanboykun/watcher/internal/database"
@@ -207,15 +208,16 @@ func (a *Agent) runWatcher(ctx context.Context, watcher *database.Watcher, trigg
 	}
 	run(CheckTrigger{WatcherID: watcher.ID, Trace: NewPollTrace("", "startup")})
 
-	ticker := newTicker(watcher.CheckIntervalSec)
-	defer ticker.Stop()
+	timer := time.NewTimer(nextPollDelay(watcher.CheckIntervalSec))
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			log.Info("watcher stopping")
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			run(CheckTrigger{WatcherID: watcher.ID, Trace: NewPollTrace("", "scheduled")})
+			timer.Reset(nextPollDelay(watcher.CheckIntervalSec))
 		case request := <-trigger:
 			log.WithTrace(request.Trace).Info("immediate check triggered via API")
 			run(request)

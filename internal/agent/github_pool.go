@@ -3,6 +3,7 @@ package agent
 import (
 	"crypto/sha256"
 	"sync"
+	"time"
 )
 
 // GitHubPool shares rate-limit and cache state per token, because GitHub enforces
@@ -25,6 +26,20 @@ func NewGitHubPool() *GitHubPool {
 // callers keep their own logger. Tokens are keyed by hash and never stored raw.
 func (p *GitHubPool) Client(token string, log *Logger) *GitHubClient {
 	return newGitHubClient(token, log, p.bucket(token))
+}
+
+// GitHubQuota is the last core quota GitHub reported for one token.
+type GitHubQuota struct {
+	Limit        int        `json:"limit"` // 0 until GitHub has reported a quota
+	Remaining    int        `json:"remaining"`
+	Reserve      int        `json:"reserve"` // background polls stop spending below this
+	ResetAt      *time.Time `json:"reset_at"`
+	BlockedUntil *time.Time `json:"blocked_until"`
+}
+
+// GitHubQuotaFor reports the process-wide quota state for token without contacting GitHub.
+func GitHubQuotaFor(token string) GitHubQuota {
+	return defaultGitHubPool.bucket(token).limiter.snapshot()
 }
 
 func (p *GitHubPool) bucket(token string) *githubBucket {

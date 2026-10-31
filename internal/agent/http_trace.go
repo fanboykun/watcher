@@ -43,6 +43,9 @@ func (t tracedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	fields = append(fields, "duration_ms", time.Since(started).Milliseconds())
 	if resp != nil {
 		fields = append(fields, "http_status", resp.StatusCode, "remote_request_id", resp.Header.Get("X-GitHub-Request-ID"))
+		if remaining := resp.Header.Get("X-RateLimit-Remaining"); remaining != "" {
+			fields = append(fields, "ratelimit_remaining", remaining, "ratelimit_reset", resp.Header.Get("X-RateLimit-Reset"))
+		}
 	}
 	if err != nil {
 		logger.Error("HTTP request failed", fields...)

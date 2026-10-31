@@ -6,6 +6,7 @@ import type {
 	SystemStatus,
 	SelfVersionResponse,
 	SelfUpdateCheckResponse,
+	GitHubQuota,
 	SelfConfigResponse,
 	UpdateSelfConfigRequest
 } from './types';
@@ -42,5 +43,7 @@ export const systemApi = {
 	selfUpdate: () => request<{ message: string }>('/self/update', { method: 'POST' }),
 	selfRestart: () =>
 		request<{ message: string; service_name: string }>('/self/restart', { method: 'POST' }),
-	selfUninstall: () => request<{ script: string }>('/self/uninstall', { method: 'POST' })
+	selfUninstall: () => request<{ script: string }>('/self/uninstall', { method: 'POST' }),
+	githubRateLimits: (signal?: AbortSignal) =>
+		request<GitHubQuota[]>('/github/rate-limit', { signal })
 };

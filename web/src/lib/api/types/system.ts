@@ -100,3 +100,16 @@ export interface UpdateSelfConfigRequest {
 	webhook_delivery_retention_days?: number;
 	web_assets_path?: string;
 }
+
+/** Last GitHub API quota reported for one configured token; tokens are never returned. */
+export interface GitHubQuota {
+	source: 'global' | 'anonymous' | 'watcher';
+	watcher_ids: number[];
+	/** 0 until GitHub has reported a quota for this token. */
+	limit: number;
+	remaining: number;
+	/** Background polls stop spending quota at or below this. */
+	reserve: number;
+	reset_at: string | null;
+	blocked_until: string | null;
+}
