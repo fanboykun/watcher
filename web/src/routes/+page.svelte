@@ -1,225 +1,219 @@
 <script lang="ts">
-	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
-	import { onMount } from 'svelte';
-	import { api, type SystemStatus, type Watcher } from '$lib/api';
-	import * as Card from '$lib/components/ui/card';
-	import * as Alert from '$lib/components/ui/alert';
-	import * as Button from '$lib/components/ui/button';
-	import Badge from '$lib/components/ui/badge/badge.svelte';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { queries } from '$lib/query/options';
+	import { message } from '$lib/query/client';
+	import { resolve } from '$app/paths';
+	import { type Watcher } from '$lib/api';
 	import {
-		Activity,
-		Clock,
+		ArrowUpRight,
+		ArrowRight,
 		Eye,
 		Server,
 		Rocket,
-		AlertCircle,
-		Download,
-		X,
-		BellRing
+		CircleAlert,
+		Plus,
+		RefreshCw,
+		CheckCheck,
+		Radio,
+		Terminal,
+		GitBranch
 	} from '@lucide/svelte';
-	import { resolve } from '$app/paths';
-	import { statusColor, timeAgo } from '$lib/utils';
-	import {
-		dismissSelfUpdate,
-		getSelfUpdateSnapshot,
-		lookupSelfUpdate,
-		subscribeSelfUpdate
-	} from '$lib/self-update';
-	import type { SelfUpdateCheckResponse } from '$lib/api';
+	import * as Button from '$lib/components/ui/button';
+	import PageHeading from '$lib/components/console/page-heading.svelte';
+	import Metric from '$lib/components/console/metric.svelte';
+	import EmptyState from '$lib/components/console/empty-state.svelte';
+	import WatcherCard from '$lib/features/watchers/watcher-card.svelte';
+	import { needsAttention } from '$lib/features/watchers/presentation';
 	import RequestLoading from '$lib/components/request-loading.svelte';
+	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 
-	let status = $state<SystemStatus | null>(null);
-	let watchers = $state<Watcher[]>([]);
-	let error = $state('');
-	let loading = $state(true);
-	let selfUpdateInfo = $state<SelfUpdateCheckResponse | null>(null);
-	let showSelfUpdateAlert = $state(false);
-
-	function syncSelfUpdateState() {
-		const snapshot = getSelfUpdateSnapshot();
-		selfUpdateInfo = snapshot.info;
-		showSelfUpdateAlert = snapshot.shouldNotify;
-	}
-
-	onMount(() => {
-		syncSelfUpdateState();
-		const unsubscribe = subscribeSelfUpdate((snapshot) => {
-			selfUpdateInfo = snapshot.info;
-			showSelfUpdateAlert = snapshot.shouldNotify;
-		});
-
-		const init = async () => {
-			try {
-				[status, watchers] = await Promise.all([api.status(), api.listWatchers()]);
-				void lookupSelfUpdate({ silent: true });
-			} catch (e) {
-				error = e instanceof Error ? e.message : 'Failed to connect to API';
-			} finally {
-				loading = false;
-			}
-		};
-
-		void init();
-
-		return unsubscribe;
-	});
-
-	function dismissUpdateAlert() {
-		if (!selfUpdateInfo?.latest_version) return;
-		dismissSelfUpdate(selfUpdateInfo.latest_version);
+	const statusQuery = createQuery(() => ({ ...queries.status(), refetchInterval: 15000 }));
+	const watchersQuery = createQuery(() => ({ ...queries.watchers(), refetchInterval: 15000 }));
+	const status = $derived(statusQuery.data ?? null);
+	const watchers = $derived(watchersQuery.data ?? []);
+	// The overview cannot render without fleet status; other failures are stale warnings.
+	const blocking = $derived(statusQuery.isError && !statusQuery.data ? statusQuery.error : null);
+	const error = $derived(message((blocking ? null : statusQuery.error) || watchersQuery.error));
+	const loading = $derived(statusQuery.isPending || watchersQuery.isPending);
+	const refreshing = $derived(statusQuery.isFetching || watchersQuery.isFetching);
+	const updatedAt = $derived(
+		statusQuery.dataUpdatedAt
+			? new Date(statusQuery.dataUpdatedAt).toLocaleTimeString([], {
+					hour: '2-digit',
+					minute: '2-digit'
+				})
+			: ''
+	);
+	const attention = $derived(watchers.filter(needsAttention));
+	const active = $derived(watchers.filter((w) => !w.paused).length);
+	const awaitingReview = $derived(watchers.filter((w) => w.status === 'pending_approval').length);
+	async function load() {
+		await Promise.all([statusQuery.refetch(), watchersQuery.refetch()]);
 	}
 </script>
 
-<div class="space-y-8">
-	<!-- Header -->
-	<div>
-		<h1 class="text-2xl font-bold tracking-tight">Dashboard</h1>
-		<p class="text-sm text-muted-foreground">Watcher Agent overview</p>
-	</div>
-
-	{#if showSelfUpdateAlert && selfUpdateInfo?.update_available}
-		<Alert.Root class="border-blue-500/30 bg-blue-500/10 text-blue-50">
-			<BellRing class="h-4 w-4 text-blue-300" />
-			<Alert.Title class="text-blue-200">New watcher version available</Alert.Title>
-			<Alert.Description class="text-blue-50/85">
-				Watcher {selfUpdateInfo.latest_version} is available. This agent is currently running {selfUpdateInfo.current_version}.
-			</Alert.Description>
-			<Alert.Action class="flex items-center gap-2">
-				<a href={resolve('/settings')}>
-					<Button.Root size="sm" class="bg-blue-600 text-white hover:bg-blue-700">
-						<Download class="mr-2 h-4 w-4" />
-						Update
-					</Button.Root>
-				</a>
-				<Button.Root
-					size="icon"
-					variant="outline"
-					class="h-8 w-8 border-blue-400/30 bg-transparent text-blue-100 hover:bg-blue-500/10 hover:text-white"
-					onclick={dismissUpdateAlert}
-				>
-					<X class="h-4 w-4" />
-				</Button.Root>
-			</Alert.Action>
-		</Alert.Root>
-	{/if}
-
-	{#if error}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			<div class="flex items-center gap-2">
-				<AlertCircle class="h-4 w-4" />
-				<span>API connection failed: {error}</span>
-			</div>
-		</div>
-	{/if}
-
+<div class="space-y-7">
+	<PageHeading
+		eyebrow="Mission control / 01"
+		title="Your fleet, at a glance."
+		description="Every repository, release, and running service. One clear view."
+	>
+		{#snippet actions()}
+			<Button.Root
+				variant="outline"
+				size="sm"
+				onclick={load}
+				disabled={refreshing}
+				aria-label="Refresh overview"
+				><RefreshCw class={['size-3.5', refreshing && 'animate-spin']} />Refresh</Button.Root
+			>
+			<Button.Root size="sm" href={resolve('/watchers/new')}
+				><Plus class="size-4" /> Add watcher</Button.Root
+			>
+		{/snippet}
+	</PageHeading>
+	<RequestError message={error} onRetry={load} />
 	{#if loading}
-		<RequestLoading label="Loading dashboard…" />
+		<RequestLoading label="Connecting to your deployment workspace…" />
 	{:else if status}
-		<!-- Stats grid -->
-		<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-			<Card.Root class="border-border bg-card">
-				<Card.Header class="flex flex-row items-center justify-between pb-2">
-					<Card.Title class="text-sm font-medium text-muted-foreground">Status</Card.Title>
-					<Activity class="h-4 w-4 text-emerald-400" />
-				</Card.Header>
-				<Card.Content>
-					<div class="text-2xl font-bold capitalize">{status.status}</div>
-					<p class="text-xs text-muted-foreground">{status.version} • {status.uptime_human}</p>
-				</Card.Content>
-			</Card.Root>
-
-			<Card.Root class="border-border bg-card">
-				<Card.Header class="flex flex-row items-center justify-between pb-2">
-					<Card.Title class="text-sm font-medium text-muted-foreground">Watchers</Card.Title>
-					<Eye class="h-4 w-4 text-blue-400" />
-				</Card.Header>
-				<Card.Content>
-					<div class="text-2xl font-bold">{status.watcher_count}</div>
-					<p class="text-xs text-muted-foreground">active poll loops</p>
-				</Card.Content>
-			</Card.Root>
-
-			<Card.Root class="border-border bg-card">
-				<Card.Header class="flex flex-row items-center justify-between pb-2">
-					<Card.Title class="text-sm font-medium text-muted-foreground">Services</Card.Title>
-					<Server class="h-4 w-4 text-violet-400" />
-				</Card.Header>
-				<Card.Content>
-					<div class="text-2xl font-bold">{status.service_count}</div>
-					<p class="text-xs text-muted-foreground">managed by NSSM</p>
-				</Card.Content>
-			</Card.Root>
-
-			<Card.Root class="border-border bg-card">
-				<Card.Header class="flex flex-row items-center justify-between pb-2">
-					<Card.Title class="text-sm font-medium text-muted-foreground">Deploys (24h)</Card.Title>
-					<Rocket class="h-4 w-4 text-amber-400" />
-				</Card.Header>
-				<Card.Content>
-					<div class="text-2xl font-bold">{status.deploys_24h}</div>
-					<p class="text-xs text-muted-foreground">in the last 24 hours</p>
-				</Card.Content>
-			</Card.Root>
+		<div class="console-metrics">
+			<Metric
+				label="Watchers"
+				value={status.watcher_count}
+				detail={`${active} polling enabled`}
+				icon={Eye}
+			/>
+			<Metric
+				label="Managed services"
+				value={status.service_count}
+				detail="Across NSSM and IIS"
+				icon={Server}
+			/>
+			<Metric
+				label="Deployments / 24h"
+				value={status.deploys_24h}
+				detail="In the last 24 hours"
+				icon={Rocket}
+			/>
+			<Metric
+				label="Awaiting review"
+				value={awaitingReview}
+				detail="Release approvals pending"
+				icon={CircleAlert}
+				accent={awaitingReview > 0}
+			/>
 		</div>
-
-		<!-- Watcher status cards -->
-		{#if watchers.length > 0}
-			<div>
-				<h2 class="mb-4 text-lg font-semibold">Watchers</h2>
-				<div class="grid gap-4 sm:grid-cols-2">
-					{#each watchers as w (w.id)}
-						<a
-							href={resolve(`/watchers/${w.id}`)}
-							class="block transition-transform hover:scale-[1.01]"
-						>
-							<Card.Root class="border-border bg-card hover:border-muted-foreground/30">
-								<Card.Header class="pb-3">
-									<div class="flex items-center justify-between">
-										<Card.Title class="text-base font-medium">{w.name}</Card.Title>
-										<span
-											class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize {statusColor(
-												w.status
-											)}"
-										>
-											Deployment: {w.status}
-										</span>
-									</div>
-									<p class="font-mono text-xs text-muted-foreground">{w.service_name}</p>
-								</Card.Header>
-								<Card.Content>
-									<div class="mb-4"><WatcherPollingStatus watcher={w} /></div>
-									<div class="flex items-center justify-between text-sm">
-										<div class="flex items-center gap-1.5 text-muted-foreground">
-											<Rocket class="h-3.5 w-3.5" />
-											<span class="font-mono">{w.current_version || '—'}</span>
-										</div>
-										<div class="flex items-center gap-1.5 text-muted-foreground">
-											<Clock class="h-3.5 w-3.5" />
-											<span>{w.last_checked ? timeAgo(w.last_checked) : 'never'}</span>
-										</div>
-									</div>
-									{#if w.last_error}
-										<p class="mt-2 truncate text-xs text-red-400">{w.last_error}</p>
-									{/if}
-									<div class="mt-2 text-xs text-muted-foreground">
-										{w.services.length} service{w.services.length !== 1 ? 's' : ''} • every {w.check_interval_sec}s
-									</div>
-								</Card.Content>
-							</Card.Root>
-						</a>
-					{/each}
+		<div class="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+			<section class="console-panel" aria-labelledby="attention-title">
+				<div class="panel-heading">
+					<div>
+						<h2 id="attention-title">
+							Needs attention <span
+								class="ml-2 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+								>{attention.length.toString().padStart(2, '0')}</span
+							>
+						</h2>
+						<p>Release approvals and operational issues.</p>
+					</div>
+					<CircleAlert class="size-4 text-primary" />
 				</div>
+				{#each attention as watcher (watcher.id)}
+					<a
+						class="attention-row"
+						href={resolve(
+							`/watchers/[id]?tab=${watcher.status === 'pending_approval' ? 'candidates' : 'overview'}`,
+							{ id: String(watcher.id) }
+						)}
+					>
+						<span class="repo-symbol"><GitBranch class="size-4" /></span>
+						<div class="min-w-0 flex-1">
+							<p class="text-xs font-semibold">{watcher.name}</p>
+							<p class="mt-1 truncate text-xs text-muted-foreground">
+								{watcher.status === 'pending_approval'
+									? `Release ${watcher.pending_version} is ready for review`
+									: watcher.last_error ||
+										watcher.last_poll_error ||
+										'Deployment failed. Open watcher to investigate.'}
+							</p>
+						</div>
+						<span class="hidden text-[11px] text-primary sm:inline"
+							>{watcher.status === 'pending_approval' ? 'Review' : 'Investigate'}</span
+						><ArrowUpRight class="size-3.5 shrink-0 text-muted-foreground" />
+					</a>
+				{:else}
+					<div class="flex items-start gap-3 px-6 py-7">
+						<CheckCheck class="mt-0.5 size-5 text-emerald-400" />
+						<div>
+							<p class="text-sm font-medium">
+								{watchers.length
+									? 'Nothing needs your attention.'
+									: 'A clean slate. Ready when you are.'}
+							</p>
+							<p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+								{watchers.length
+									? 'No pending approvals or reported watcher errors.'
+									: 'Connect your first repository to start watching for releases.'}
+							</p>
+						</div>
+					</div>
+				{/each}
+			</section>
+			<section class="console-panel" aria-labelledby="agent-title">
+				<div class="panel-heading">
+					<h2 id="agent-title">Agent heartbeat</h2>
+					<span class="font-mono text-[10px] text-muted-foreground uppercase">{status.status}</span>
+				</div>
+				<dl class="space-y-3 px-5 py-5 text-xs">
+					<div class="flex justify-between gap-2">
+						<dt class="text-muted-foreground">Version</dt>
+						<dd class="font-mono">{status.version}</dd>
+					</div>
+					<div class="flex justify-between gap-2">
+						<dt class="text-muted-foreground">Uptime</dt>
+						<dd class="font-mono">{status.uptime_human}</dd>
+					</div>
+					<div class="flex justify-between gap-2">
+						<dt class="text-muted-foreground">Last refreshed</dt>
+						<dd class="font-mono">{updatedAt}</dd>
+					</div>
+				</dl>
+				<a class="quick-link" href={resolve('/logs')}
+					><Terminal class="size-3.5 text-muted-foreground" /> Inspect agent logs <ArrowRight
+						class="ml-auto size-3.5"
+					/></a
+				>
+			</section>
+		</div>
+		<section aria-labelledby="fleet-title">
+			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+				<div class="flex items-center gap-3">
+					<h2 id="fleet-title" class="text-sm font-semibold">Deployment fleet</h2>
+					<span class="font-mono text-[10px] text-muted-foreground"
+						>{watchers.length.toString().padStart(2, '0')} REPOSITORIES</span
+					>
+				</div>
+				<a
+					class="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
+					href={resolve('/watchers')}>View all watchers <ArrowUpRight class="size-3.5" /></a
+				>
 			</div>
-		{:else if !error}
-			<Card.Root class="border-dashed border-border bg-card">
-				<Card.Content class="flex flex-col items-center justify-center py-12 text-center">
-					<Eye class="mb-3 h-10 w-10 text-muted-foreground/40" />
-					<h3 class="text-sm font-medium text-muted-foreground">No watchers configured</h3>
-					<p class="mt-1 text-xs text-muted-foreground/60">
-						Add a watcher via the API or the Watchers page
-					</p>
-				</Card.Content>
-			</Card.Root>
-		{/if}
+			{#if watchers.length}
+				<div class="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+					{#each watchers as watcher (watcher.id)}<WatcherCard {watcher} />{/each}
+				</div>
+			{:else}
+				<EmptyState
+					title="Your first release starts here."
+					description="Connect a GitHub repository, choose your services, and let Watcher handle the delivery."
+					icon={Radio}
+					>{#snippet actions()}<Button.Root href={resolve('/watchers/new')} size="sm"
+							><Plus class="size-4" />Connect a repository</Button.Root
+						>{/snippet}</EmptyState
+				>
+			{/if}
+		</section>
+	{:else if blocking}
+		<ErrorScreen error={blocking} onRetry={load} />
 	{/if}
 </div>

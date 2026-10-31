@@ -1,0 +1,85 @@
+/* The mobile sheet must sit above its modal overlay. */
+.console-sidebar[data-slot='sheet-content'] {
+	z-index: 60;
+	width: 260px;
+}
+
+.wizard-progress ol {
+	display: grid;
+	grid-template-columns: repeat(var(--step-count, 4), minmax(0, 1fr));
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--card);
+	overflow: hidden;
+}
+.wizard-progress li {
+	min-width: 0;
+	border-right: 1px solid var(--border);
+}
+.wizard-progress li:last-child {
+	border-right: 0;
+}
+.wizard-step {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	padding: 19px 20px;
+	text-align: left;
+	color: var(--muted-foreground);
+	border-bottom: 2px solid transparent;
+	transition: background 0.15s;
+}
+.wizard-step:hover:not(:disabled) {
+	background: #ffffff04;
+}
+.wizard-step:disabled {
+	cursor: wait;
+}
+.wizard-step-number {
+	display: grid;
+	place-items: center;
+	flex-shrink: 0;
+	width: 30px;
+	height: 30px;
+	border: 1px solid var(--input);
+	border-radius: 6px;
+	font: 11px var(--font-mono);
+}
+.wizard-step-current {
+	color: var(--primary);
+	background: #e9b66a08;
+	border-bottom-color: var(--primary);
+}
+.wizard-step-current .wizard-step-number {
+	border-color: #e9b66a55;
+	background: #e9b66a10;
+}
+.wizard-step-complete .wizard-step-number {
+	color: #6ee7b7;
+	border-color: #6ee7b733;
+}
+.wizard-footer {
+	position: sticky;
+	bottom: 0;
+	z-index: 20;
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 16px;
+	background: #191c1ef5;
+	backdrop-filter: blur(12px);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+@media (max-width: 767px) {
+	.wizard-step {
+		padding: 14px 6px;
+		flex-direction: column;
+		gap: 9px;
+		text-align: center;
+	}
+	.wizard-step > span:last-child > span:first-child {
+		font-size: 10px;
+	}
+}

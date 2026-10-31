@@ -1,64 +1,61 @@
 <script lang="ts">
+	import PageHeading from '$lib/components/console/page-heading.svelte';
+	import ListToolbar from '$lib/components/console/list-toolbar.svelte';
+	import EmptyState from '$lib/components/console/empty-state.svelte';
+	import WatcherCard from '$lib/features/watchers/watcher-card.svelte';
+	import {
+		matchesWatcher,
+		needsAttention,
+		type WatcherFilter
+	} from '$lib/features/watchers/presentation';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
-	import { onMount } from 'svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
+	import { goto } from '$app/navigation';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { queries, keys } from '$lib/query/options';
+	import { forget, invalidate, message } from '$lib/query/client';
 	import { api, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Table from '$lib/components/ui/table';
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
-	import { Eye, Plus, Trash2, Zap, AlertCircle } from '@lucide/svelte';
+	import { Eye, Plus, Trash2, Zap, ChevronDown, ExternalLink } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
-	import { statusColor, timeAgo } from '$lib/utils';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
-	let watchers = $state<Watcher[]>([]);
-	let error = $state('');
-	let loading = $state(true);
+	const client = useQueryClient();
+	const list = createQuery(() => ({ ...queries.watchers(), refetchInterval: 5000 }));
+	const watchers = $derived(list.data ?? []);
+	const deleteMutation = createMutation(() => ({
+		mutationFn: api.deleteWatcher,
+		onSuccess: () => invalidate(client, keys.watchers, keys.services, keys.status)
+	}));
+	const checkMutation = createMutation(() => ({
+		mutationFn: api.triggerCheck,
+		onSuccess: () => invalidate(client, keys.watchers)
+	}));
+	let query = $state('');
+	let filter = $state<WatcherFilter>('all');
+	const checkingID = $derived(checkMutation.isPending ? (checkMutation.variables ?? null) : null);
+	const filteredWatchers = $derived(watchers.filter((w) => matchesWatcher(w, query, filter)));
+	const attentionCount = $derived(watchers.filter(needsAttention).length);
+	// Without any rows a failed read blocks the page; with rows it is only a stale warning.
+	const blocking = $derived(list.isError && !list.data ? list.error : null);
+	const error = $derived(message((blocking ? null : list.error) || deleteMutation.error));
+	const loading = $derived(list.isPending);
 	let triggerMsg = $state('');
 	let triggerError = $state('');
 	let showDeleteDialog = $state(false);
-	let deleting = $state(false);
+	const deleting = $derived(deleteMutation.isPending);
 	let deleteWatcherID = $state<number | null>(null);
 	let deleteWatcherName = $state('');
-	let loadController: AbortController | null = null;
-
-	onMount(() => {
-		void load();
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') void load(true);
-		}, 5000);
-		return () => {
-			clearInterval(timer);
-			loadController?.abort();
-		};
-	});
-
-	async function load(background = false) {
-		if (background && loadController) return;
-		loadController?.abort();
-		const request = new AbortController();
-		loadController = request;
-		if (!background) loading = true;
-		try {
-			const result = await api.listWatchers(request.signal);
-			if (!request.signal.aborted) {
-				watchers = result;
-				error = '';
-			}
-		} catch (e) {
-			if (!request.signal.aborted)
-				error = e instanceof Error ? e.message : 'Failed to load watchers';
-		} finally {
-			if (loadController === request) {
-				loading = false;
-				loadController = null;
-			}
-		}
+	async function load() {
+		await list.refetch();
 	}
 
 	function openDeleteWatcherDialog(id: number, name: string) {
-		error = '';
 		deleteWatcherID = id;
 		deleteWatcherName = name;
 		showDeleteDialog = true;
@@ -66,22 +63,20 @@
 
 	async function confirmDeleteWatcher() {
 		if (!deleteWatcherID || deleting) return;
-		deleting = true;
 		try {
-			await api.deleteWatcher(deleteWatcherID);
-			await load();
+			await deleteMutation.mutateAsync(deleteWatcherID);
+			forget(client, keys.watcher(deleteWatcherID));
 			showDeleteDialog = false;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Delete failed';
-		} finally {
-			deleting = false;
+		} catch {
+			/* Mutation error remains visible. */
 		}
 	}
 
 	async function triggerCheck(id: number) {
+		if (checkingID !== null) return;
 		triggerError = '';
 		try {
-			const res = await api.triggerCheck(id);
+			const res = await checkMutation.mutateAsync(id);
 			triggerMsg = res.message;
 			setTimeout(() => (triggerMsg = ''), 3000);
 		} catch (e) {
@@ -90,23 +85,77 @@
 	}
 </script>
 
+{#snippet watcherActions(w: Watcher)}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger
+			class={Button.buttonVariants({ variant: 'outline', size: 'sm' })}
+			aria-label={`Actions for ${w.name}`}
+			disabled={checkingID !== null}>Actions<ChevronDown class="size-3.5" /></DropdownMenu.Trigger
+		>
+		<DropdownMenu.Content
+			align="end"
+			onCloseAutoFocus={(event) => {
+				if (showDeleteDialog) event.preventDefault();
+			}}
+		>
+			<DropdownMenu.Item
+				onSelect={() => {
+					void goto(resolve('/watchers/[id]', { id: String(w.id) }));
+				}}><ExternalLink />Open watcher</DropdownMenu.Item
+			>
+			<DropdownMenu.Item
+				disabled={checkingID !== null || w.paused}
+				onSelect={() => {
+					void triggerCheck(w.id);
+				}}><Zap />Poll now</DropdownMenu.Item
+			>
+			<DropdownMenu.Item
+				variant="destructive"
+				class="mt-1 border-t border-border pt-2"
+				onSelect={() => openDeleteWatcherDialog(w.id, w.name)}
+				><Trash2 />Delete watcher</DropdownMenu.Item
+			>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+{/snippet}
+
 <div class="space-y-6">
-	<div class="flex items-center justify-between">
-		<div>
-			<h1 class="text-2xl font-bold tracking-tight">Watchers</h1>
-			<p class="text-sm text-muted-foreground">Repository poll loops</p>
+	<PageHeading
+		eyebrow="Workspace / Repositories"
+		title="Watchers"
+		description="Your repositories on watch. Manage polling, review releases, and control delivery."
+	>
+		{#snippet actions()}<Button.Root href={resolve('/watchers/new')} size="sm"
+				><Plus class="size-4" />Add watcher</Button.Root
+			>{/snippet}
+	</PageHeading>
+	{#if !loading && watchers.length}
+		<div class="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+			<span><strong class="font-mono text-foreground">{watchers.length}</strong> repositories</span
+			><span><strong class="font-mono text-primary">{attentionCount}</strong> need attention</span
+			><span
+				><strong class="font-mono text-foreground">{watchers.filter((w) => w.paused).length}</strong
+				> paused</span
+			><span class="ml-auto font-mono text-[10px]">REFRESHES EVERY 5S</span>
 		</div>
-		<a href={resolve('/watchers/new')}>
-			<Button.Root>
-				<Plus class="mr-2 h-4 w-4" /> Add Watcher
-			</Button.Root>
-		</a>
-	</div>
+		<ListToolbar
+			bind:value={query}
+			label="Search repositories…"
+			count={filteredWatchers.length}
+			total={watchers.length}
+		>
+			<select class="filter-select" aria-label="Filter watchers by state" bind:value={filter}
+				><option value="all">All watchers</option><option value="attention">Needs attention</option
+				><option value="paused">Paused</option></select
+			>
+		</ListToolbar>
+	{/if}
 
 	<RequestError message={error} onRetry={() => load()} />
 
 	{#if triggerMsg}
 		<div
+			role="status"
 			class="flex items-center rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400"
 		>
 			<Zap class="mr-2 h-4 w-4 shrink-0" />
@@ -118,8 +167,16 @@
 
 	{#if loading}
 		<RequestLoading label="Loading watchers…" />
-	{:else if watchers.length > 0}
-		<Card.Root class="border-border bg-card">
+	{:else if blocking}
+		<ErrorScreen error={blocking} onRetry={load} />
+	{:else if filteredWatchers.length > 0}
+		<div class="grid gap-4 lg:hidden">
+			{#each filteredWatchers as watcher (watcher.id)}<div>
+					<WatcherCard {watcher} />
+					<div class="mt-2 flex justify-end">{@render watcherActions(watcher)}</div>
+				</div>{/each}
+		</div>
+		<Card.Root class="hidden border-border bg-card lg:block">
 			<Table.Root>
 				<Table.Header>
 					<Table.Row class="border-border hover:bg-transparent">
@@ -132,7 +189,7 @@
 					</Table.Row>
 				</Table.Header>
 				<Table.Body>
-					{#each watchers as w (w.id)}
+					{#each filteredWatchers as w (w.id)}
 						<Table.Row class="border-border">
 							<Table.Cell>
 								<a href={resolve(`/watchers/${w.id}`)} class="font-medium hover:underline">
@@ -153,26 +210,7 @@
 								{w.services ? w.services.length : 0}
 							</Table.Cell>
 							<Table.Cell class="text-right">
-								<div class="flex items-center justify-end gap-1">
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										class="h-8 w-8"
-										onclick={() => triggerCheck(w.id)}
-										title="Trigger check"
-									>
-										<Zap class="h-4 w-4" />
-									</Button.Root>
-									<Button.Root
-										variant="ghost"
-										size="icon"
-										class="h-8 w-8 text-red-400 hover:text-red-300"
-										onclick={() => openDeleteWatcherDialog(w.id, w.name)}
-										title="Delete"
-									>
-										<Trash2 class="h-4 w-4" />
-									</Button.Root>
-								</div>
+								<div class="flex justify-end">{@render watcherActions(w)}</div>
 							</Table.Cell>
 						</Table.Row>
 					{/each}
@@ -180,13 +218,30 @@
 			</Table.Root>
 		</Card.Root>
 	{:else if !error}
-		<Card.Root class="border-dashed border-border bg-card">
-			<Card.Content class="flex flex-col items-center justify-center py-16 text-center">
-				<Eye class="mb-3 h-10 w-10 text-muted-foreground/40" />
-				<h3 class="text-sm font-medium text-muted-foreground">No watchers yet</h3>
-				<p class="mt-1 text-xs text-muted-foreground/60">Click "Add Watcher" to get started</p>
-			</Card.Content>
-		</Card.Root>
+		{#if watchers.length}
+			<EmptyState
+				title="No matching watchers"
+				description="Try another repository name or clear your filters."
+				icon={Eye}
+				>{#snippet actions()}<Button.Root
+						variant="outline"
+						size="sm"
+						onclick={() => {
+							query = '';
+							filter = 'all';
+						}}>Clear filters</Button.Root
+					>{/snippet}</EmptyState
+			>
+		{:else}
+			<EmptyState
+				title="Put your first repository on watch."
+				description="Connect a GitHub repository to poll for new releases and deploy your services."
+				icon={Eye}
+				>{#snippet actions()}<Button.Root href={resolve('/watchers/new')} size="sm"
+						><Plus class="size-4" />Add watcher</Button.Root
+					>{/snippet}</EmptyState
+			>
+		{/if}
 	{/if}
 </div>
 

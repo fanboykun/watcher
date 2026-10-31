@@ -1,6 +1,12 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+	import PageHeading from '$lib/components/console/page-heading.svelte';
+	import RequestLoading from '$lib/components/request-loading.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
+	import { untrack } from 'svelte';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { queries } from '$lib/query/options';
+	import { invalidate, message, serviceScope } from '$lib/query/client';
+
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { api, type Service, type ServiceWritePayload, type Watcher } from '$lib/api';
@@ -8,34 +14,33 @@
 	import ServiceWizardForm from '$lib/components/service-wizard-form.svelte';
 	import { ArrowLeft } from '@lucide/svelte';
 
-	const serviceId = Number(page.params.id);
+	const serviceId = $derived(Number(page.params.id));
 
-	let service = $state<Service | null>(null);
-	let watcher = $state<Watcher | null>(null);
-	let saving = $state(false);
-	let error = $state('');
-
-	onMount(async () => {
-		try {
-			const detail = await api.getService(serviceId);
-			service = detail.service;
-			watcher = detail.watcher;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load service';
-		}
-	});
-
+	const client = useQueryClient();
+	const detail = createQuery(() => queries.service(serviceId));
+	// The form owns its draft and remounts whenever `initial` changes identity. Seed it once,
+	// from a response fetched for this view: runtime fields such as last_health_checked_at
+	// change on every refresh and must not wipe in-progress edits.
+	const ready = $derived(detail.isFetchedAfterMount && detail.data?.service.id === serviceId);
+	const service = $derived(ready ? untrack(() => detail.data!.service) : null);
+	const watcher = $derived(detail.data?.watcher ?? null);
+	const mutation = createMutation(() => ({
+		mutationFn: (payload: ServiceWritePayload) =>
+			api.updateService(watcher!.id, serviceId, payload),
+		onSuccess: (saved) => invalidate(client, ...serviceScope(serviceId, saved.watcher_id))
+	}));
+	const loading = $derived(detail.isPending || !detail.isFetchedAfterMount);
+	const saving = $derived(mutation.isPending);
+	const error = $derived(message(detail.error || mutation.error));
+	async function load() {
+		await detail.refetch();
+	}
 	async function updateService(payload: ServiceWritePayload) {
-		if (!service || !watcher) return;
-		saving = true;
-		error = '';
 		try {
-			await api.updateService(watcher.id, service.id, payload);
-			await goto(resolve(`/services/${service.id}`));
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to update service';
-		} finally {
-			saving = false;
+			await mutation.mutateAsync(payload);
+			return true;
+		} catch {
+			return false;
 		}
 	}
 </script>
@@ -45,26 +50,25 @@
 </svelte:head>
 
 <div class="space-y-6">
-	<div class="flex items-center gap-4">
-		<Button.Root
-			href={resolve(`/services/${serviceId}`)}
-			variant="ghost"
-			size="icon"
-			class="h-8 w-8"
-			aria-label="Back to service"><ArrowLeft class="h-4 w-4" /></Button.Root
-		>
-		<div>
-			<h1 class="text-2xl font-bold tracking-tight">Edit Service</h1>
-			<p class="text-sm text-muted-foreground">
-				{service
-					? `Update how Watcher manages ${service.windows_service_name}.`
-					: 'Update this service configuration.'}
-			</p>
-		</div>
-	</div>
+	<PageHeading
+		eyebrow="Workspace / Service configuration"
+		title="Edit service"
+		description={service
+			? `Update how Watcher manages ${service.windows_service_name}.`
+			: 'Update service runtime, health checks, and managed files.'}
+	>
+		{#snippet actions()}<Button.Root
+				href={resolve(`/services/${serviceId}`)}
+				variant="outline"
+				size="sm"><ArrowLeft class="size-3.5" />Back to service</Button.Root
+			>{/snippet}
+	</PageHeading>
 
-	{#if service}
+	{#if loading}<RequestLoading label="Loading service configuration…" />
+	{:else if !service}<ErrorScreen error={detail.error} onRetry={load} />
+	{:else}
 		<ServiceWizardForm
+			layout="single"
 			showHeader={false}
 			title="Service Setup"
 			description="Edit service runtime details, IIS or NSSM settings, and managed files."

@@ -1,20 +1,17 @@
 <script lang="ts">
+	import PageHeading from '$lib/components/console/page-heading.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
-	import { onMount } from 'svelte';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { queries } from '$lib/query/options';
+	import { message } from '$lib/query/client';
 	import { resolve } from '$app/paths';
-	import { api, type Watcher } from '$lib/api';
+	import { type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
-	import { webhookDocsHref } from '$lib/webhooks';
-	import {
-		AlertCircle,
-		BookOpenText,
-		ExternalLink,
-		Plus,
-		Webhook as WebhookIcon
-	} from '@lucide/svelte';
+
+	import { BookOpenText, Plus, Webhook as WebhookIcon } from '@lucide/svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 
 	type WebhookGroup = {
@@ -22,21 +19,11 @@
 		watchers: Watcher[];
 	};
 
-	let watchers = $state<Watcher[]>([]);
-	let error = $state('');
-	let loading = $state(true);
+	const list = createQuery(() => queries.watchers());
+	const watchers = $derived(list.data ?? []);
+	const error = $derived(message(list.error));
+	const loading = $derived(list.isPending);
 	let showAddDialog = $state(false);
-
-	onMount(async () => {
-		try {
-			watchers = await api.listWatchers();
-			error = '';
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load watchers';
-		} finally {
-			loading = false;
-		}
-	});
 
 	const webhookGroups = $derived.by<WebhookGroup[]>(() => {
 		const groups = new SvelteMap<string, Watcher[]>();
@@ -62,10 +49,11 @@
 <div class="space-y-6">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 		<div>
-			<h1 class="mt-2 text-2xl font-bold tracking-tight">Webhooks</h1>
-			<p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-				Delivery settings grouped by service.
-			</p>
+			<PageHeading
+				eyebrow="Observability / Delivery"
+				title="Webhooks"
+				description="Keep your integrations informed. Manage delivery settings and inspect events by service."
+			/>
 			<div class="mt-3 flex flex-wrap gap-2">
 				<a href={resolve('/docs/webhooks')}>
 					<Button.Root size="sm" variant="outline">

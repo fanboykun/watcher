@@ -1,6 +1,9 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { api, type AgentLogSource, type LogFileResponse } from '$lib/api';
+	import { untrack } from 'svelte';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { queries } from '$lib/query/options';
+	import { message } from '$lib/query/client';
+	import { type AgentLogSource } from '$lib/api';
 	import { parseLogLines } from '$lib/logs';
 	import LogEntries from './log-entries.svelte';
 	import RequestError from './request-error.svelte';
@@ -12,17 +15,17 @@
 
 	let { watcherId, initialTraceId = '' }: { watcherId?: number; initialTraceId?: string } =
 		$props();
-	let traceId = $state('');
+	let traceId = $state(untrack(() => initialTraceId));
 	let source = $state<AgentLogSource>('agent');
 	let lineCount = $state('200');
-	let response = $state.raw<LogFileResponse | null>(null);
-	let loading = $state(true);
-	let error = $state('');
-	let search = $state('');
+	const logQuery = createQuery(() => queries.logs(watcherId, Number(lineCount), source, traceId));
+	const response = $derived(logQuery.data ?? null);
+	const loading = $derived(logQuery.isFetching);
+	const error = $derived(message(logQuery.error));
+	let search = $state(untrack(() => initialTraceId));
 	let level = $state('all');
 	let rawView = $state(false);
 	let newestFirst = $state(true);
-	let controller: AbortController | null = null;
 	const sources = {
 		agent: 'Structured agent log',
 		stdout: 'Windows service · stdout',
@@ -45,30 +48,9 @@
 		entries.filter((entry) => entry.level === 'error' || entry.level === 'fatal').length
 	);
 
-	onMount(() => {
-		search = initialTraceId;
-		traceId = initialTraceId;
-		void loadLogs();
-		return () => controller?.abort();
-	});
-
+	// Source, line-count and trace changes fetch through the query key; this only refreshes.
 	async function loadLogs() {
-		controller?.abort();
-		const request = new AbortController();
-		controller = request;
-		loading = true;
-		error = '';
-		try {
-			const result =
-				watcherId !== undefined
-					? await api.watcherLogs(watcherId, Number(lineCount), request.signal, traceId)
-					: await api.agentLogs(Number(lineCount), source, request.signal, traceId);
-			if (!request.signal.aborted) response = result;
-		} catch (e) {
-			if (!request.signal.aborted) error = e instanceof Error ? e.message : 'Failed to load logs';
-		} finally {
-			if (!request.signal.aborted) loading = false;
-		}
+		await logQuery.refetch();
 	}
 </script>
 
@@ -81,8 +63,6 @@
 				onValueChange={(v) => {
 					if (v) {
 						source = v as AgentLogSource;
-						response = null;
-						void loadLogs();
 					}
 				}}
 			>
@@ -110,7 +90,6 @@
 				onValueChange={(v) => {
 					if (v) {
 						lineCount = v;
-						void loadLogs();
 					}
 				}}
 			>
@@ -147,11 +126,7 @@
 						)
 							? value
 							: '';
-						if (nextTrace !== traceId) {
-							traceId = nextTrace;
-							response = null;
-							void loadLogs();
-						}
+						if (nextTrace !== traceId) traceId = nextTrace;
 					}}
 					class="h-9 w-full min-w-0 pl-9 text-xs"
 				/>
@@ -211,8 +186,6 @@
 					onclick={() => {
 						search = '';
 						traceId = '';
-						response = null;
-						void loadLogs();
 					}}>Clear</Button.Root
 				>
 			</div>{/if}

@@ -1,0 +1,216 @@
+/* Watcher console: structural layout and shared visual language. */
+body {
+	margin: 0;
+	font-size: 14px;
+	-webkit-font-smoothing: antialiased;
+}
+button,
+a,
+input,
+select,
+textarea {
+	-webkit-tap-highlight-color: transparent;
+}
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']) {
+	cursor: pointer;
+}
+::selection {
+	background: #e9b66a40;
+}
+:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 4px;
+}
+.eyebrow {
+	font: 500 10px/1.5 var(--font-mono);
+	letter-spacing: 0.13em;
+	text-transform: uppercase;
+	color: var(--muted-foreground);
+}
+.console-shell {
+	min-height: 100dvh;
+}
+.console-sidebar {
+	position: fixed;
+	inset: 0 auto 0 0;
+	width: 236px;
+	flex-direction: column;
+	background: var(--sidebar);
+	border-right: 1px solid var(--border);
+	z-index: 40;
+}
+.brand {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 34px 25px 32px;
+}
+.brand-mark {
+	display: inline-flex;
+	flex: 0 0 auto;
+	width: 40px;
+	height: 40px;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid #e9b66a55;
+	border-radius: 10px;
+	color: var(--primary);
+	background: #e9b66a0a;
+}
+.brand strong {
+	display: block;
+	font-size: 25px;
+	font-weight: 750;
+	letter-spacing: -0.055em;
+	line-height: 1.15;
+}
+.brand-caption {
+	display: block;
+	margin-top: 5px;
+	font: 8px/1.4 var(--font-mono);
+	letter-spacing: 0.15em;
+	color: var(--muted-foreground);
+}
+.console-navigation {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 0 14px;
+}
+.nav-group {
+	margin: 5px 0 28px;
+}
+.nav-group > .eyebrow {
+	padding: 0 13px;
+	margin-bottom: 10px;
+	font-size: 9px;
+}
+.nav-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 11px 13px;
+	margin: 3px 0;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	color: var(--muted-foreground);
+	font-size: 12px;
+	font-weight: 550;
+	transition:
+		background 0.15s,
+		color 0.15s;
+}
+.nav-item:hover {
+	color: var(--foreground);
+	background: var(--muted);
+}
+.nav-item-active {
+	background: #e9b66a0d;
+	color: var(--primary);
+	border-color: #e9b66a20;
+}
+.nav-item-active::after {
+	content: '';
+	position: absolute;
+	right: 12px;
+	width: 4px;
+	height: 4px;
+	background: var(--primary);
+	border-radius: 50%;
+}
+.sidebar-bottom {
+	padding: 16px 22px 22px;
+}
+.agent-plaque {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	padding: 15px 0;
+	border-block: 1px solid var(--border);
+}
+.agent-glyph {
+	color: var(--primary);
+}
+.signout {
+	color: var(--muted-foreground);
+	padding: 7px;
+	border-radius: 4px;
+}
+.signout:hover {
+	background: var(--muted);
+	color: var(--foreground);
+}
+.console-workspace {
+	min-width: 0;
+	min-height: 100dvh;
+	display: flex;
+	flex-direction: column;
+}
+.console-topbar {
+	height: 68px;
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	padding: 0 38px;
+	border-bottom: 1px solid var(--border);
+	background: #111315ee;
+}
+.topbar-tag {
+	font: 9px/1.5 var(--font-mono);
+	letter-spacing: 0.08em;
+	color: var(--muted-foreground);
+}
+.console-avatar {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border: 1px solid #414442;
+	border-radius: 6px;
+	background: #242826;
+	color: #d0d7ce;
+	font-size: 11px;
+}
+.console-content {
+	width: 100%;
+	max-width: 1536px;
+	margin-inline: auto;
+	min-width: 0;
+	padding: 35px 38px 50px;
+	flex: 1;
+	animation: console-enter 0.35s ease-out;
+}
+.console-content:focus {
+	outline: none;
+}
+.console-footer {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 17px 38px;
+	border-top: 1px solid var(--border);
+	font: 9px/1.5 var(--font-mono);
+	color: var(--muted-foreground);
+}
+.console-heading {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 20px;
+	padding-bottom: 25px;
+	border-bottom: 1px solid var(--border);
+}
+.console-heading h1,
+.page-identity h1 {
+	font-size: clamp(26px, 2.3vw, 34px);
+	line-height: 1.2;
+	font-weight: 650;
+	letter-spacing: -0.045em;
+}
+.console-content h1 {
+	letter-spacing: -0.045em;
+}

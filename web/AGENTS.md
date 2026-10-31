@@ -6,6 +6,32 @@
 
 ---
 
+## Mandatory source boundaries
+
+- No application source file under `web/src` may exceed **350 physical lines**.
+  This includes routes, components, Svelte modules, TypeScript, and CSS. There is
+  no per-file allowlist and no lint suppression for this limit.
+- Run `bun run check:structure`. `check`, `build`, and `lint` also enforce this
+  limit. Split a growing file before adding behavior; do not compress formatting
+  or move the entire file to another directory to bypass the rule.
+- Keep each file responsible for one concern. Routes compose feature views;
+  feature controllers own query/mutation composition; form models and presentation
+  helpers stay pure. Extract named sections with typed props, not arbitrary
+  numbered chunks or generic catch-all utility files.
+- API endpoint clients and response types are grouped by domain under `lib/api`.
+  `lib/api.ts` is a compatibility facade. Shared server-state options live under
+  `lib/query`; unsaved form state belongs to its feature, never the query cache.
+- Use TanStack Query for server reads, polling, request errors, and mutation
+  progress. Include resource IDs, filters, pagination, target versions, and exact
+  candidate identity in keys. Mutations must invalidate affected caches and must
+  never retry deployment/restart/update operations automatically.
+- Keep SSE lifecycle cleanup explicit and write events into the query cache or
+  invalidate the matching keys. Never copy query results into a second mutable
+  server-data store. Editable drafts are intentional separate copies and must
+  survive background refreshes.
+
+---
+
 You are able to use the Svelte MCP server, where you have access to comprehensive Svelte 5 and SvelteKit documentation. Here's how to use the available tools effectively:
 
 ## Available MCP Tools:

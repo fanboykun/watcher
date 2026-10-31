@@ -1,64 +1,60 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { api, type AuthenticatedEventStream, type DeployLog, type Watcher } from '$lib/api';
+	import { api, type Watcher } from '$lib/api';
 	import * as Card from '$lib/components/ui/card';
 	import * as Button from '$lib/components/ui/button';
 	import { ArrowLeft, Clock, CheckCircle2, XCircle, Loader2, Copy } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
-	import { timeAgo, formatDate, formatDuration, statusColor } from '$lib/utils';
-	import { onMount } from 'svelte';
+	import { formatDate, formatDuration, statusColor } from '$lib/utils';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { queries } from '$lib/query/options';
+	import { invalidate, message, watcherScope } from '$lib/query/client';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
 
-	const id = Number(page.params.id);
-	const logId = Number(page.params.logId);
+	const id = $derived(Number(page.params.id));
+	const logId = $derived(Number(page.params.logId));
 
-	let watcher = $state<Watcher | null>(null);
-	let deployLog = $state<DeployLog | null>(null);
-	let error = $state('');
-	let streamSource: AuthenticatedEventStream | null = null;
-	let liveLogs = $state('');
-	let logContainer = $state<HTMLDivElement | null>(null);
-
-	onMount(() => {
-		const init = async () => {
-			try {
-				[watcher, deployLog] = await Promise.all([
-					api.getWatcher(id),
-					api.watcherDeployLog(id, logId)
-				]);
-				liveLogs = deployLog?.logs || '';
-				if (deployLog && !deployLog.completed_at) {
-					streamSource = api.streamDeployLog(
-						id,
-						logId,
-						async (data) => {
-							if (data === 'DONE') {
-								streamSource?.close();
-								streamSource = null;
-								deployLog = await api.watcherDeployLog(id, logId);
-								liveLogs = deployLog.logs || '';
-								return;
-							}
-							liveLogs = liveLogs ? `${liveLogs}\n${data}` : data;
-							if (deployLog) {
-								deployLog = { ...deployLog, logs: liveLogs };
-							}
-						},
-						() => {
-							// Keep the existing log content if the stream drops.
+	const client = useQueryClient();
+	const watcherQuery = createQuery(() => queries.watcher(id));
+	const attemptQuery = createQuery(() => queries.attempt(id, logId));
+	const watcher = $derived(watcherQuery.data ?? null);
+	const deployLog = $derived(attemptQuery.data ?? null);
+	const liveLogs = $derived(deployLog?.logs ?? '');
+	let copyError = $state('');
+	const error = $derived(
+		copyError || message(watcherQuery.error || (deployLog ? attemptQuery.error : null))
+	);
+	const completedAt = $derived(deployLog?.completed_at);
+	// The stream only sends lines written after it connects, so it must start from a snapshot
+	// fetched for this view. Any refetch closes it; it reopens on the new snapshot.
+	$effect(() => {
+		if (
+			!attemptQuery.isSuccess ||
+			!attemptQuery.isFetchedAfterMount ||
+			attemptQuery.isFetching ||
+			completedAt
+		)
+			return;
+		const watcherID = id,
+			attemptID = logId;
+		const options = queries.attempt(watcherID, attemptID);
+		const stream = api.streamDeployLog(watcherID, attemptID, async (data) => {
+			if (data === 'DONE') {
+				stream.close();
+				// Refreshes this attempt's final record along with the watcher it changed.
+				await invalidate(client, ...watcherScope(watcherID));
+				return;
+			}
+			client.setQueryData(options.queryKey, (current) =>
+				current
+					? {
+							...current,
+							logs: (current.logs ? `${current.logs}\n${data}` : data).slice(-2_000_000)
 						}
-					);
-				}
-			} catch (e) {
-				error = e instanceof Error ? e.message : 'Failed to load deploy log';
-			}
-		};
-		init();
-		return () => {
-			if (streamSource) {
-				streamSource.close();
-				streamSource = null;
-			}
-		};
+					: current
+			);
+		});
+		return () => stream.close();
 	});
 
 	function deployIcon(s: string) {
@@ -99,18 +95,18 @@
 		return 'text-zinc-300';
 	}
 
-	$effect(() => {
-		if (!logContainer || !liveLogs) return;
-		if (deployLog?.completed_at) return;
-		logContainer.scrollTop = logContainer.scrollHeight;
-	});
+	function followLogs(node: HTMLDivElement) {
+		$effect(() => {
+			if (liveLogs && !completedAt) node.scrollTop = node.scrollHeight;
+		});
+	}
 
 	async function copyLogs() {
 		if (!liveLogs) return;
 		try {
 			await navigator.clipboard.writeText(liveLogs);
 		} catch (e) {
-			error = 'Failed to copy logs';
+			copyError = 'Failed to copy logs';
 		}
 	}
 </script>
@@ -239,7 +235,7 @@
 				</Card.Title>
 			</Card.Header>
 			<Card.Content class="flex-1 overflow-y-auto p-0 font-mono text-sm text-muted-foreground">
-				<div class="p-0 leading-relaxed" bind:this={logContainer}>
+				<div class="p-0 leading-relaxed" {@attach followLogs}>
 					{#if liveLogs}
 						{#each normalizedLines(liveLogs) as line, idx (idx)}
 							<div class="grid grid-cols-[56px_1fr] border-b border-border/40 px-3 py-1.5 text-xs">
@@ -255,6 +251,8 @@
 				</div>
 			</Card.Content>
 		</Card.Root>
+	{:else if attemptQuery.isError}
+		<ErrorScreen error={attemptQuery.error} onRetry={() => attemptQuery.refetch()} />
 	{:else if !error}
 		<div class="flex flex-1 items-center justify-center text-muted-foreground">
 			<Loader2 class="h-8 w-8 animate-spin" />

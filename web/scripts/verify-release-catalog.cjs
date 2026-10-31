@@ -355,7 +355,30 @@ async function serveBuild() {
 				await page.getByRole('tab', { name: 'GitHub releases', exact: true }).click();
 				await page.getByRole('button', { name: 'Actions for v2' }).click();
 				await page.getByRole('menuitem', { name: 'Configure candidate' }).click();
-				await page.getByRole('button', { name: 'Approve & deploy' }).click();
+				const envEditor = page.getByRole('textbox', {
+					name: 'API service .env contents',
+					exact: true
+				});
+				async function paste(locator, value) {
+					await locator.click();
+					await locator.press('ControlOrMeta+a');
+					await locator.evaluate((node, text) => {
+						const clipboardData = new DataTransfer();
+						clipboardData.setData('text/plain', text);
+						node.dispatchEvent(
+							new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true })
+						);
+					}, value);
+				}
+				async function approve() {
+					await page.getByRole('button', { name: 'Review deployment', exact: true }).click();
+					await page
+						.getByRole('dialog')
+						.getByRole('button', { name: 'Deploy reviewed release', exact: true })
+						.click();
+				}
+
+				await approve();
 				await page
 					.getByRole('tabpanel', { name: 'Candidates', exact: true })
 					.getByText('Staged artifact checksum changed; download again', { exact: true })
@@ -389,13 +412,13 @@ async function serveBuild() {
 				await page.getByRole('menuitem', { name: 'Configure candidate' }).click();
 				await page.waitForURL(`${origin}${prefix}/watchers/1?tab=candidates`);
 				await page
-					.getByRole('button', { name: 'Approve & deploy' })
+					.getByRole('button', { name: 'Review deployment' })
 					.and(page.locator(':enabled'))
 					.waitFor();
 				await page.reload();
-				await page.getByRole('button', { name: 'Approve & deploy' }).waitFor();
+				await page.getByRole('button', { name: 'Review deployment' }).waitFor();
 				await page
-					.getByRole('button', { name: 'Approve & deploy' })
+					.getByRole('button', { name: 'Review deployment' })
 					.and(page.locator(':enabled'))
 					.waitFor();
 				const editor = page.getByRole('tabpanel', { name: 'Candidates', exact: true });
@@ -405,15 +428,15 @@ async function serveBuild() {
 				await pendingPill.click();
 				await editor.getByText('Candidate unavailable', { exact: true }).waitFor();
 				assert.equal(
-					await page.getByRole('button', { name: 'Approve & deploy' }).isEnabled(),
+					await page.getByRole('button', { name: 'Review deployment' }).isEnabled(),
 					false
 				);
 				failCandidate = false;
 
 				await pendingPill.click();
-				await editor.locator('textarea').waitFor();
+				await envEditor.waitFor();
 				await page
-					.getByRole('button', { name: 'Approve & deploy' })
+					.getByRole('button', { name: 'Review deployment' })
 					.and(page.locator(':enabled'))
 					.waitFor();
 				if (process.env.CATALOG_STRESS === '1') {
@@ -426,149 +449,179 @@ async function serveBuild() {
 					await editor.getByRole('button', { name: 'Next release', exact: true }).click();
 					await nextRequest;
 					await pendingPill.dispatchEvent('click');
-					await editor.locator('textarea').waitFor();
-					assert.equal(await editor.locator('textarea').inputValue(), 'TARGET=v2');
+					await envEditor.waitFor();
+					assert.equal(await envEditor.innerText(), 'TARGET=v2');
 					const nextResponse = page.waitForResponse((response) =>
 						response.url().includes('/candidate?target=next')
 					);
 					releaseNext();
 					delayedNext = false;
 					await nextResponse;
-					assert.equal(await editor.locator('textarea').inputValue(), 'TARGET=v2');
+					assert.equal(await envEditor.innerText(), 'TARGET=v2');
 				}
 				// Remote selection can change without a client refresh during save. The
 				// request must still name artifact 7 and receive server conflict for 8.
 				saveSwitchesArtifact = true;
-				await editor.locator('textarea').fill('TARGET=edited');
-				await page.getByRole('button', { name: 'Approve & deploy' }).click();
-				await page.waitForFunction(() =>
-					document
-						.querySelector('[role=tabpanel][data-state=active]')
-						?.textContent?.includes('A different catalog candidate is selected')
-				);
+				await paste(envEditor, 'TARGET=edited');
+				await approve();
+				await page
+					.getByRole('dialog')
+					.getByText('A different catalog candidate is selected', { exact: false })
+					.waitFor();
+				await page
+					.getByRole('dialog')
+					.getByRole('button', { name: 'Back to configuration' })
+					.click();
+				// New unsaved edits must also survive subsequent selection events.
+				await paste(envEditor, 'TARGET=edited-local');
 				assert.equal(rejectedWrongArtifact, 1);
 				assert.equal(approvals, 1);
-				assert.equal(await editor.locator('textarea').inputValue(), 'TARGET=edited');
+				assert.equal(await envEditor.innerText(), 'TARGET=edited-local');
 				saveSwitchesArtifact = false;
 				eventBody = 'data: {"type":"status_changed"}\n\n';
 				await editor.getByText(/Load the pending candidate using its version below/).waitFor();
-				assert.equal(await editor.locator('textarea').inputValue(), 'TARGET=edited');
+				assert.equal(await envEditor.innerText(), 'TARGET=edited-local');
 				assert.equal(
-					await page.getByRole('button', { name: 'Approve & deploy' }).isEnabled(),
+					await page.getByRole('button', { name: 'Review deployment' }).isEnabled(),
 					false
 				);
 				await page.getByRole('tab', { name: 'Overview', exact: true }).click();
 				await page.getByRole('tab', { name: 'Candidates', exact: true }).click();
 				await editor.getByText(/The pending release changed. Your edits are preserved/).waitFor();
-				assert.equal(await editor.locator('textarea').inputValue(), 'TARGET=edited');
+				assert.equal(await envEditor.innerText(), 'TARGET=edited-local');
 				eventBody = ': idle\n\n';
 				watcher.pending_catalog_id = 7;
 				// A successful automatic rollback leaves the selected target available for review.
 				Object.assign(watcher, { status: 'healthy', pending_catalog_id: 7, pending_version: 'v2' });
 				await page.goto(`${origin}${prefix}/watchers/1?tab=candidates`);
 				await page.getByRole('button', { name: 'Discard', exact: true }).waitFor();
-				await page.getByRole('button', { name: 'Approve & deploy' }).waitFor();
+				await page.getByRole('button', { name: 'Review deployment' }).waitFor();
 				for (const status of ['approved', 'deploying']) {
 					watcher.status = status;
 					await page.reload();
 					await page.getByText('Candidate configuration', { exact: true }).waitFor();
 					assert.equal(await page.getByRole('button', { name: 'Discard', exact: true }).count(), 0);
-					assert.equal(await page.getByRole('button', { name: 'Approve & deploy' }).count(), 0);
+					assert.equal(await page.getByRole('button', { name: 'Review deployment' }).count(), 0);
 				}
 				// Managed files stage per target and never call the active service endpoints.
 				managedMode = true;
 				watcher.status = 'pending_approval';
 				await page.reload();
-				const filesEditor = page.getByRole('region', { name: 'API service managed config files' });
+
+				const filesEditor = page.getByRole('region', {
+					name: 'API service configuration workspace'
+				});
+				const pathInput = () => filesEditor.getByLabel('Config file path', { exact: true });
+				const fileEditor = (name) =>
+					page.getByRole('textbox', { name: `API service ${name} contents`, exact: true });
+				async function chooseFile(name) {
+					await filesEditor.getByRole('button', { name, exact: true }).click();
+				}
+				async function removeFile(name) {
+					await chooseFile(name);
+					await filesEditor.getByRole('button', { name: `Remove ${name}`, exact: true }).click();
+					await page
+						.getByRole('dialog')
+						.getByRole('button', { name: 'Remove file', exact: true })
+						.click();
+				}
+				async function saveDraft() {
+					const response = page.waitForResponse(
+						(res) => res.url().includes('/candidate') && res.request().method() === 'PUT'
+					);
+					await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
+					await response;
+					await editor
+						.getByRole('button', { name: 'Save candidate', exact: true })
+						.and(page.locator(':enabled'))
+						.waitFor();
+					assert.equal(
+						await editor.getByRole('button', { name: 'Reset to saved', exact: true }).isEnabled(),
+						false
+					);
+				}
 				await filesEditor
-					.getByText('Inherits active files at deployment.', { exact: false })
+					.getByText('Managed files inherit active settings until edited.', { exact: true })
 					.waitFor();
-				await editor.locator('textarea').first().fill('TARGET=env-only');
-				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
-				await editor
-					.getByText('Candidate configuration saved for version "v2"!', { exact: true })
-					.waitFor();
+				await paste(envEditor, 'TARGET=env-only');
+				await saveDraft();
 				assert.equal(Object.hasOwn(candidateWrites.at(-1).services[0], 'config_files'), false);
 				await filesEditor.getByRole('button', { name: 'Stage active files', exact: true }).click();
-				await filesEditor
-					.getByLabel('Config file 1 contents', { exact: true })
-					.fill('{"candidate":true}');
+				await chooseFile('appsettings.json');
+				await paste(fileEditor('appsettings.json'), '{"candidate":true}');
 				await filesEditor.getByRole('button', { name: 'Add config file', exact: true }).click();
-				await filesEditor.getByLabel('Config file 2 path', { exact: true }).fill('web.config');
+				await pathInput().fill('web.config');
 				await filesEditor
-					.getByLabel('Config file 2 target', { exact: true })
+					.getByLabel('Config file target', { exact: true })
 					.selectOption('release_dir');
-				await filesEditor
-					.getByLabel('Config file 2 contents', { exact: true })
-					.fill('<configuration />');
-				await editor.getByText('Unsaved edits', { exact: true }).waitFor();
-				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
-				await editor.getByText('Unsaved edits', { exact: true }).waitFor({ state: 'hidden' });
+				await paste(fileEditor('web.config'), '<configuration />');
+				await saveDraft();
 				assert.deepEqual(managedDrafts.get('v2').config_files, [
 					{ file_path: 'appsettings.json', target: 'app_dir', content: '{"candidate":true}' },
 					{ file_path: 'web.config', target: 'release_dir', content: '<configuration />' }
 				]);
 				assert.equal(activeFiles[0].content, '{"active":true}');
 				await page.reload();
-				await filesEditor.getByLabel('Config file 2 contents', { exact: true }).waitFor();
+				await chooseFile('web.config');
 				assert.equal(
-					await filesEditor.getByLabel('Config file 2 target', { exact: true }).inputValue(),
+					await filesEditor.getByLabel('Config file target', { exact: true }).inputValue(),
 					'release_dir'
 				);
-				await filesEditor.getByText('Review active file', { exact: true }).first().click();
-				await filesEditor.getByText('{"active":true}', { exact: true }).waitFor();
+				await chooseFile('appsettings.json');
+				await filesEditor.getByRole('button', { name: 'Review changes', exact: true }).click();
+				await filesEditor.locator('.cm-deletedChunk').waitFor();
 				await editor.getByRole('button', { name: 'Next release', exact: true }).click();
-				await filesEditor.getByLabel('Config file 1 contents', { exact: true }).waitFor();
-				await filesEditor
-					.getByRole('button', { name: 'Remove config file 1', exact: true })
-					.click();
-				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
-				await editor.getByText('Unsaved edits', { exact: true }).waitFor({ state: 'hidden' });
+				await removeFile('appsettings.json');
+				await saveDraft();
 				assert.deepEqual(managedDrafts.get('next').config_files, []);
 				await pendingPill.click();
-				await filesEditor.getByLabel('Config file 2 contents', { exact: true }).waitFor();
-				await filesEditor.getByLabel('Config file 1 path', { exact: true }).fill('../outside.json');
+				await chooseFile('appsettings.json');
+				await pathInput().fill('../outside.json');
+				const writesBeforeInvalid = candidateWrites.length;
 				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
 				await editor
-					.getByText('Managed config file path must stay within its target directory', {
-						exact: true
-					})
+					.getByText(/enter a relative path/)
+					.first()
 					.waitFor();
-				await editor.getByRole('button', { name: 'Reset', exact: true }).click();
-				assert.equal(
-					await filesEditor.getByLabel('Config file 1 path', { exact: true }).inputValue(),
-					'appsettings.json'
-				);
-				await filesEditor
-					.getByRole('button', { name: 'Remove config file 2', exact: true })
+				assert.equal(candidateWrites.length, writesBeforeInvalid);
+				await editor.getByRole('button', { name: 'Reset to saved', exact: true }).click();
+				await page
+					.getByRole('dialog')
+					.getByRole('button', { name: 'Reset draft', exact: true })
 					.click();
-				await filesEditor
-					.getByRole('button', { name: 'Remove config file 1', exact: true })
-					.click();
-				await editor.getByRole('button', { name: 'Save candidate', exact: true }).click();
-				await editor.getByText('Unsaved edits', { exact: true }).waitFor({ state: 'hidden' });
+				await chooseFile('appsettings.json');
+				assert.equal(await pathInput().inputValue(), 'appsettings.json');
+				await removeFile('web.config');
+				await removeFile('appsettings.json');
+				await saveDraft();
 				assert.deepEqual(managedDrafts.get('v2').config_files, []);
 				await page.reload();
-				await filesEditor
-					.getByText('No managed config files will be included in this candidate.', { exact: true })
-					.waitFor();
+				await filesEditor.getByText('An explicit file set is staged.', { exact: true }).waitFor();
+				assert.equal(
+					await filesEditor.getByRole('button', { name: 'appsettings.json', exact: true }).count(),
+					1,
+					'removed file remains reviewable'
+				);
 				await editor.getByRole('button', { name: 'Next release', exact: true }).click();
-				await filesEditor
-					.getByText('No managed config files will be included in this candidate.', { exact: true })
-					.waitFor();
+				await filesEditor.getByText('An explicit file set is staged.', { exact: true }).waitFor();
 				await pendingPill.click();
 				await filesEditor.getByRole('button', { name: 'Add config file', exact: true }).click();
-				await filesEditor.getByLabel('Config file 1 path', { exact: true }).fill('web.config');
+				await pathInput().fill('web.config');
 				await filesEditor
-					.getByLabel('Config file 1 target', { exact: true })
+					.getByLabel('Config file target', { exact: true })
 					.selectOption('release_dir');
-				await filesEditor
-					.getByLabel('Config file 1 contents', { exact: true })
-					.fill('<approved />');
+				await paste(fileEditor('web.config'), '<approved />');
 				const approvalsBeforeFiles = approvals;
-				await editor.getByRole('button', { name: 'Approve & deploy', exact: true }).click();
+				const approvalResponse = page.waitForResponse(
+					(res) =>
+						new URL(res.url()).pathname.endsWith('/watchers/1/releases/7/deploy') &&
+						res.request().method() === 'POST'
+				);
+				await approve();
+				await approvalResponse;
 				await editor
 					.getByText('Staged artifact checksum changed; download again', { exact: true })
+					.first()
 					.waitFor();
 				assert.equal(approvals, approvalsBeforeFiles + 1);
 				assert.deepEqual(candidateWrites.at(-1).services[0].config_files, [

@@ -1,176 +1,169 @@
 <script lang="ts">
-	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
-	import RequestError from '$lib/components/request-error.svelte';
+	import { onDestroy } from 'svelte';
+	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { queries } from '$lib/query/options';
+	import { invalidate, message, watcherScope } from '$lib/query/client';
+	import { resolve } from '$app/paths';
 	import { api, type Watcher } from '$lib/api';
 	import * as Button from '$lib/components/ui/button';
-	import * as Card from '$lib/components/ui/card';
-	import { Input } from '$lib/components/ui/input';
 	import * as Table from '$lib/components/ui/table';
-	import { Clock, Pause, Play, RefreshCw, Search, AlertCircle, CheckCircle } from '@lucide/svelte';
-	import { timeAgo } from '$lib/utils';
-	import { onDestroy, onMount } from 'svelte';
-	import { invalidate, goto } from '$app/navigation';
-	import { resolve } from '$app/paths';
-
-	let { data } = $props();
-	let watchers = $derived(data.watchers);
-	let loadError = $derived(data.loadError);
-	let searchQuery = $state('');
-	let globalError = $state('');
-	let globalSuccess = $state('');
-
-	let autoRefreshInterval: ReturnType<typeof setInterval>;
-
-	onMount(() => {
-		// Auto refresh every 5 seconds to get latest poll status
-		autoRefreshInterval = setInterval(() => {
-			invalidate('app:watchers');
-		}, 5000);
-	});
-
-	onDestroy(() => {
-		if (autoRefreshInterval) clearInterval(autoRefreshInterval);
-	});
-
-	async function togglePause(w: Watcher) {
-		const newPaused = !w.paused;
-		try {
-			await api.updateWatcher(w.id, { paused: newPaused });
-			w.paused = newPaused;
-			showSuccess(`Watcher ${w.name} ${newPaused ? 'paused' : 'resumed'}`);
-			invalidate('app:watchers');
-		} catch (e: unknown) {
-			showError(`Failed to toggle pause: ${(e as { message: string }).message}`);
-		}
-	}
-
-	function showSuccess(msg: string) {
-		globalSuccess = msg;
-		setTimeout(() => (globalSuccess = ''), 3000);
-	}
-
-	function showError(msg: string) {
-		globalError = msg;
-	}
-
-	let filteredWatchers = $derived(
+	import PageHeading from '$lib/components/console/page-heading.svelte';
+	import ListToolbar from '$lib/components/console/list-toolbar.svelte';
+	import EmptyState from '$lib/components/console/empty-state.svelte';
+	import WatcherPollingStatus from '$lib/components/watcher-polling-status.svelte';
+	import RequestError from '$lib/components/request-error.svelte';
+	import ErrorScreen from '$lib/components/errors/error-screen.svelte';
+	import { Clock, Pause, Play, RefreshCw, Radio } from '@lucide/svelte';
+	const client = useQueryClient();
+	const list = createQuery(() => ({ ...queries.watchers(), refetchInterval: 5000 }));
+	const watchers = $derived(list.data ?? []);
+	const pauseMutation = createMutation(() => ({
+		mutationFn: (w: Watcher) => api.updateWatcher(w.id, { paused: !w.paused }),
+		onSuccess: (_data, w) => invalidate(client, ...watcherScope(w.id))
+	}));
+	let query = $state('');
+	let filter = $state('all');
+	let error = $state('');
+	let success = $state('');
+	const pendingID = $derived(
+		pauseMutation.isPending ? (pauseMutation.variables?.id ?? null) : null
+	);
+	const refreshing = $derived(list.isFetching);
+	const blocking = $derived(list.isError && !list.data ? list.error : null);
+	let successTimer: ReturnType<typeof setTimeout> | undefined;
+	const filtered = $derived(
 		watchers.filter(
 			(w) =>
-				w.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				w.service_name.toLowerCase().includes(searchQuery.toLowerCase())
+				[w.name, w.service_name].join(' ').toLowerCase().includes(query.trim().toLowerCase()) &&
+				(filter === 'all' || (filter === 'paused' ? w.paused : !w.paused))
 		)
 	);
+	async function refresh() {
+		await list.refetch();
+	}
+	onDestroy(() => clearTimeout(successTimer));
+
+	async function togglePause(watcher: Watcher) {
+		if (pendingID !== null) return;
+		error = '';
+		success = '';
+		try {
+			await pauseMutation.mutateAsync(watcher);
+			success = `${watcher.name}: polling ${watcher.paused ? 'resumed' : 'paused'}.`;
+			clearTimeout(successTimer);
+			successTimer = setTimeout(() => (success = ''), 4000);
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : 'Could not change polling state';
+		}
+	}
 </script>
 
-<div class="flex flex-col gap-6">
-	<!-- Header -->
-	<div>
-		<h1 class="text-2xl font-bold tracking-tight">Polling Management</h1>
-		<p class="text-sm text-muted-foreground">Manage and monitor GitHub repository polling</p>
+<div class="space-y-6">
+	<PageHeading
+		eyebrow="Observability / Repositories"
+		title="Polling"
+		description="Keep an eye on what's next. Control when repositories are checked for new releases."
+	>
+		{#snippet actions()}<Button.Root
+				variant="outline"
+				size="sm"
+				onclick={refresh}
+				disabled={refreshing}
+				><RefreshCw class={['size-3.5', refreshing && 'animate-spin']} />Refresh</Button.Root
+			>{/snippet}
+	</PageHeading>
+	<div class="flex flex-wrap gap-5 text-xs text-muted-foreground">
+		<span
+			><strong class="font-mono text-foreground">{watchers.filter((w) => !w.paused).length}</strong> polling
+			enabled</span
+		><span
+			><strong class="font-mono text-primary">{watchers.filter((w) => w.paused).length}</strong> paused</span
+		><span class="ml-auto font-mono text-[10px]">REFRESHES EVERY 5S</span>
 	</div>
-
-	<div class="flex items-center gap-2">
-		<div class="relative max-w-sm flex-1">
-			<Search class="absolute top-2.5 left-2.5 h-4 w-4 text-muted-foreground" />
-			<Input type="search" placeholder="Filter watchers..." class="pl-8" bind:value={searchQuery} />
-		</div>
-		<Button.Root
-			variant="outline"
-			size="icon"
-			onclick={() => {
-				invalidate('app:watchers');
-				showSuccess('Refreshed');
-			}}
+	<RequestError message={blocking ? '' : message(list.error)} onRetry={refresh} />
+	<RequestError message={error} />
+	{#if success}<p
+			role="status"
+			class="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-400"
 		>
-			<RefreshCw class="h-4 w-4" />
-		</Button.Root>
-	</div>
-
-	<RequestError message={globalError} />
-
-	{#if loadError}
-		<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-			<AlertCircle class="mr-2 inline h-4 w-4" />
-			{loadError}
-		</div>
+			{success}
+		</p>{/if}
+	{#if watchers.length}
+		<ListToolbar
+			bind:value={query}
+			label="Search polling repositories…"
+			count={filtered.length}
+			total={watchers.length}
+			><select class="filter-select" aria-label="Filter polling state" bind:value={filter}
+				><option value="all">All states</option><option value="active">Polling enabled</option
+				><option value="paused">Paused</option></select
+			></ListToolbar
+		>
 	{/if}
-
-	{#if globalSuccess}
-		<div class="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-sm text-green-400">
-			<CheckCircle class="mr-2 inline h-4 w-4" />
-			{globalSuccess}
-		</div>
-	{/if}
-
-	<Card.Root>
-		<Card.Header>
-			<Card.Title>Polled Repositories</Card.Title>
-			<Card.Description>Shows the monitoring status of all configured watchers.</Card.Description>
-		</Card.Header>
-		<Card.Content>
-			<Table.Root>
-				<Table.Header>
-					<Table.Row>
-						<Table.Head>Watcher</Table.Head>
-						<Table.Head>Target Service</Table.Head>
-						<Table.Head>Interval</Table.Head>
-						<Table.Head>Polling</Table.Head>
-						<Table.Head>Latest poll</Table.Head>
-						<Table.Head class="text-right">Actions</Table.Head>
-					</Table.Row>
-				</Table.Header>
-				<Table.Body>
-					{#if filteredWatchers.length === 0 && !loadError}
-						<Table.Row>
-							<Table.Cell colspan={6} class="h-24 text-center">No watchers found.</Table.Cell>
-						</Table.Row>
-					{/if}
-					{#each filteredWatchers as w (w.id)}
+	{#if filtered.length}
+		<div class="console-panel">
+			<Table.Root
+				><Table.Header
+					><Table.Row
+						><Table.Head>Repository</Table.Head><Table.Head>Interval</Table.Head><Table.Head
+							>Polling</Table.Head
+						><Table.Head>Latest poll</Table.Head><Table.Head class="text-right">Control</Table.Head
+						></Table.Row
+					></Table.Header
+				><Table.Body>
+					{#each filtered as watcher (watcher.id)}
 						<Table.Row
-							class="cursor-pointer transition-colors hover:bg-muted/50"
-							onclick={() => goto(resolve(`/watchers/${w.id}?tab=polling`))}
+							><Table.Cell
+								><a
+									class="font-semibold hover:text-primary"
+									href={resolve('/watchers/[id]?tab=polling', { id: String(watcher.id) })}
+									>{watcher.name}</a
+								>
+								<p class="mt-1 font-mono text-[11px] text-muted-foreground">
+									{watcher.service_name}
+								</p></Table.Cell
+							><Table.Cell
+								><span
+									class="inline-flex items-center gap-1.5 font-mono text-xs whitespace-nowrap text-muted-foreground"
+									><Clock class="size-3.5" />{watcher.check_interval_sec}s</span
+								></Table.Cell
+							><Table.Cell><WatcherPollingStatus {watcher} kind="activity" /></Table.Cell
+							><Table.Cell><WatcherPollingStatus {watcher} kind="result" /></Table.Cell><Table.Cell
+								class="text-right"
+								><Button.Root
+									variant="outline"
+									size="sm"
+									disabled={pendingID !== null}
+									loading={pendingID === watcher.id}
+									onclick={() => togglePause(watcher)}
+									>{#if watcher.paused}<Play class="size-3.5" />Resume{:else}<Pause
+											class="size-3.5"
+										/>Pause{/if}</Button.Root
+								></Table.Cell
+							></Table.Row
 						>
-							<Table.Cell class="font-medium">{w.name}</Table.Cell>
-							<Table.Cell>{w.service_name}</Table.Cell>
-							<Table.Cell>
-								<div class="flex items-center gap-1.5 text-sm text-muted-foreground">
-									<Clock class="h-3.5 w-3.5" />
-									{w.check_interval_sec}s
-								</div>
-							</Table.Cell>
-							<Table.Cell><WatcherPollingStatus watcher={w} kind="activity" /></Table.Cell>
-							<Table.Cell><WatcherPollingStatus watcher={w} kind="result" /></Table.Cell>
-							<Table.Cell class="text-right">
-								<div class="flex justify-end gap-2" role="group" aria-label="Actions">
-									{#if w.paused}
-										<Button.Root
-											size="sm"
-											variant="outline"
-											onclick={(e) => {
-												e.stopPropagation();
-												togglePause(w);
-											}}
-										>
-											<Play class="mr-1 h-3.5 w-3.5" /> Resume
-										</Button.Root>
-									{:else}
-										<Button.Root
-											size="sm"
-											variant="outline"
-											onclick={(e) => {
-												e.stopPropagation();
-												togglePause(w);
-											}}
-										>
-											<Pause class="mr-1 h-3.5 w-3.5" /> Pause
-										</Button.Root>
-									{/if}
-								</div>
-							</Table.Cell>
-						</Table.Row>
 					{/each}
-				</Table.Body>
-			</Table.Root>
-		</Card.Content>
-	</Card.Root>
+				</Table.Body></Table.Root
+			>
+		</div>
+	{:else if blocking}
+		<ErrorScreen error={blocking} onRetry={refresh} />
+	{:else if !message(list.error)}
+		<EmptyState
+			title={watchers.length ? 'No matching repositories' : 'Nothing on watch. Yet.'}
+			description={watchers.length
+				? 'Try a different search or clear your filters.'
+				: 'Add a watcher to start checking GitHub for new releases.'}
+			icon={Radio}
+			>{#snippet actions()}{#if watchers.length}<Button.Root
+						variant="outline"
+						size="sm"
+						onclick={() => {
+							query = '';
+							filter = 'all';
+						}}>Clear filters</Button.Root
+					>{:else}<Button.Root size="sm" href={resolve('/watchers/new')}>Add watcher</Button.Root
+					>{/if}{/snippet}</EmptyState
+		>
+	{/if}
 </div>
