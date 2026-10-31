@@ -124,7 +124,7 @@ func TestRepoWatcherRun_RateLimitedDownloadDefersWithoutFailure(t *testing.T) {
 	defer server.Close()
 	rw, db, watcherID := newRateLimitedWatcher(t, server)
 	clock := time.Unix(1_700_000_000, 0)
-	rw.github.limiter("").now = func() time.Time { return clock }
+	rw.github.bucket("").limiter.now = func() time.Time { return clock }
 
 	// One more poll than maxDeployRetries: deferrals must never suspend the release.
 	for i := range 4 {

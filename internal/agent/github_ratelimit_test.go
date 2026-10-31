@@ -21,7 +21,7 @@ func newRateLimitTestClient(token string, server *httptest.Server) (*GitHubClien
 	c := NewGitHubPool().Client(token, newTestLogger())
 	c.apiBase = server.URL
 	now := time.Unix(1_700_000_000, 0)
-	c.limiter.now = func() time.Time { return now }
+	c.bucket.limiter.now = func() time.Time { return now }
 	return c, &now
 }
 

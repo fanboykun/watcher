@@ -50,6 +50,7 @@ type githubRelease struct {
 type githubAsset struct {
 	Size               int64  `json:"size"`
 	Digest             string `json:"digest"`
+	UpdatedAt          string `json:"updated_at"`
 	ID                 int64  `json:"id"`
 	Name               string `json:"name"`
 	URL                string `json:"url"`                  // API download URL — works for private repos
@@ -60,33 +61,36 @@ type GitHubClient struct {
 	token   string
 	apiBase string // defaults to defaultAPIBase, overridable in tests
 	client  *http.Client
-	limiter *rateLimiter
+	bucket  *githubBucket // rate-limit and cache state shared per token
 	log     *Logger
 }
 
 // NewGitHubClient creates a GitHub client with optional token authentication.
-// Rate-limit state is shared with every other client using the same token.
+// Rate-limit and cache state is shared with every other client using the same token.
 func NewGitHubClient(token string, log *Logger) *GitHubClient {
 	return defaultGitHubPool.Client(token, log)
 }
 
-func newGitHubClient(token string, log *Logger, limiter *rateLimiter) *GitHubClient {
+func newGitHubClient(token string, log *Logger, bucket *githubBucket) *GitHubClient {
 	return &GitHubClient{
 		token:   token,
 		apiBase: defaultAPIBase,
 		client: &http.Client{
-			Timeout:   90 * time.Second,
-			Transport: rateLimitTransport{base: tracedTransport{log: log}, limiter: limiter},
+			Timeout: 90 * time.Second,
+			Transport: cachingTransport{
+				base:   rateLimitTransport{base: tracedTransport{log: log}, limiter: bucket.limiter},
+				bucket: bucket,
+			},
 		},
-		limiter: limiter,
-		log:     log,
+		bucket: bucket,
+		log:    log,
 	}
 }
 
 // now reads the limiter clock so rate-limit waits and blocks agree in tests.
 func (g *GitHubClient) now() time.Time {
-	if g.limiter == nil {
+	if g.bucket == nil {
 		return time.Now()
 	}
-	return g.limiter.now()
+	return g.bucket.limiter.now()
 }

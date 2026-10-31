@@ -23,7 +23,7 @@ func newTestLogger() *Logger {
 // newTestClient returns a GitHubClient pointing at the test server for both
 // direct HTTP calls and GitHub API calls.
 func newTestClient(token string, server *httptest.Server) *GitHubClient {
-	c := NewGitHubClient(token, newTestLogger())
+	c := NewGitHubPool().Client(token, newTestLogger())
 	c.client = server.Client()
 	c.apiBase = server.URL // redirect API calls to test server
 	return c
