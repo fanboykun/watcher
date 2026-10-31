@@ -24,6 +24,16 @@ type RepoWatcher struct {
 	db             *gorm.DB
 	watcherID      uint
 	webhooks       *webhook.Service
+	github         *GitHubPool // nil uses the process-wide pool
+}
+
+// githubClient returns a client sharing rate-limit state with every other user of the token.
+func (r *RepoWatcher) githubClient(log *Logger) *GitHubClient {
+	pool := r.github
+	if pool == nil {
+		pool = defaultGitHubPool
+	}
+	return pool.Client(r.resolveGitHubToken(), log)
 }
 
 // NewRepoWatcher creates a configured repo watcher.
@@ -108,9 +118,14 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 		r.state.RecordPollEvent("intercepted", live.PendingVersion, "A catalog candidate is awaiting explicit deployment")
 		return nil
 	}
-	gh := NewGitHubClient(r.resolveGitHubToken(), r.log)
-	meta, err := gh.FetchServiceMetadataForRelease(ctx, r.wcfg.MetadataURL, r.wcfg.ReleaseRef, r.wcfg.ServiceName)
+	gh := r.githubClient(r.log)
+	meta, err := gh.FetchServiceMetadataForRelease(withGitHubPollPriority(ctx), r.wcfg.MetadataURL, r.wcfg.ReleaseRef, r.wcfg.ServiceName)
 	if err != nil {
+		if errors.Is(err, ErrRateLimited) {
+			r.log.Warn("GitHub rate limit reached; skipping poll", "error", err)
+			r.state.RecordPollEvent("rate_limited", "", err.Error())
+			return nil
+		}
 		if !errors.Is(err, context.Canceled) {
 			r.state.RecordPollEvent("error", "", err.Error())
 		}
@@ -172,9 +187,21 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 		return nil
 	}
 
+	// Don't open an attempt that would stall halfway on quota; wait for the reset instead.
+	if limitErr := gh.quotaShortfall(deployRequestBudget); limitErr != nil {
+		r.log.Warn("GitHub quota too low to start deployment", "target", targetVersion, "error", limitErr)
+		r.state.RecordPollEvent("rate_limited", targetVersion, limitErr.Error())
+		return nil
+	}
+
 	if err := r.deploy(ctx, gh, svcMeta, targetVersion, localVersion); err != nil {
 		if errors.Is(err, errDeploymentPolicyChanged) {
 			r.state.RecordPollEvent("intercepted", targetVersion, err.Error())
+			return nil
+		}
+		var deferred *deployDeferredError
+		if errors.As(err, &deferred) {
+			r.deferDeployment(deferred, targetVersion, live.Status, live.LastError)
 			return nil
 		}
 		if !errors.Is(err, context.Canceled) {

@@ -46,6 +46,11 @@ main.go
 - A watcher goroutine is restarted when its `updated_at` changes.
 - Each watcher run records poll events and updates deploy state in DB.
 - Consecutive failures are capped per target version (`maxDeployRetries = 3`) to prevent infinite loops.
+- Scheduled polls are jittered by ±10% of `check_interval_sec` so watchers do not hit GitHub in lockstep.
+- GitHub rate limits are never deploy failures:
+  - a rate-limited poll records poll status `rate_limited` and returns without error
+  - a rate-limited artifact download waits up to 15 minutes, then closes the attempt as `deferred` (not counted by retry suspension, no rollback, watcher status restored)
+  - a deploy is not started when the token cannot afford it (`deployRequestBudget`)
 - GitHub settings precedence is watcher-first:
   - deployment environment: `watcher.deployment_environment` -> global `ENVIRONMENT`
   - token: `watcher.github_token` -> global `GITHUB_TOKEN`
@@ -81,6 +86,13 @@ main.go
   - `ListAvailableVersions`
   - `CleanOldReleases`
   - `DeleteVersion`
+
+### `internal/agent/github_pool.go`, `github_cache.go`, `github_ratelimit.go`
+- `NewGitHubClient` draws from a process-wide `GitHubPool`; all clients for the same token share one bucket (keyed by token hash).
+- Transport stack: `cachingTransport` → `rateLimitTransport` → `tracedTransport`.
+  - ETag revalidation for GitHub JSON GETs (authenticated 304s cost no quota) and merging of identical in-flight requests; binary asset downloads bypass the cache.
+  - Rate-limit responses (primary and secondary) become `*RateLimitError` (`errors.Is(err, ErrRateLimited)`); the token is blocked locally until reset.
+  - Background polls (`withGitHubPollPriority`) stop spending quota at the last 10% of the limit; conditional revalidations still run.
 
 ### `internal/agent/github.go`
 - GitHub metadata and artifact download logic.
@@ -155,6 +167,7 @@ main.go
 - `GET /api/logs`
 - `GET /api/logs/stream`
 - `POST /api/github/inspect`
+- `GET /api/github/rate-limit` (quota per configured token; never returns tokens)
 
 ### Services (flat)
 - `GET /api/services`
@@ -248,6 +261,7 @@ Notes:
   - Permission: `Contents: Read`
 - If GitHub Deployment API reporting is enabled:
   - also grant `Deployments: Read and write`
+- Quota is shared by every watcher (and every host) using the same token; prefer one fine-grained PAT per host from a bot account.
 - Classic PAT fallback:
   - `repo` scope generally covers private repo release access and deployments endpoints.
 
@@ -320,6 +334,8 @@ workflows/deploy.yml
 6. Health check URL precedence: service-level URL overrides watcher-level URL.
 7. API has no authentication layer; treat deployment as internal/trusted only.
 8. `web/build/` must exist before Go build so `go:embed all:build` succeeds.
+9. Never map a GitHub 403/429 to a deploy failure; check `errors.Is(err, agent.ErrRateLimited)` first. API handlers report it with `githubError` (429 + `Retry-After`).
+10. Tests that make rate-limited requests through the real transport must use an isolated `NewGitHubPool()`, or they will block the process-wide pool for other tests.
 
 ---
 

@@ -20,6 +20,7 @@
 		intercepted: 'Awaiting approval',
 		skipped: 'Release skipped',
 		deploy_suspended: 'Deployment suspended',
+		rate_limited: 'GitHub rate limited',
 		completed: 'Completed'
 	};
 	const result = $derived(
@@ -56,7 +57,7 @@
 		<div class="min-w-0">
 			{#if kind === 'both'}<p class="mb-1.5 text-xs text-muted-foreground">Latest poll</p>{/if}
 			<p
-				class={`text-sm font-medium ${watcher.last_poll_status === 'error' ? 'text-red-400' : watcher.last_poll_status === 'intercepted' || watcher.last_poll_status === 'deploy_suspended' ? 'text-amber-400' : ''}`}
+				class={`text-sm font-medium ${watcher.last_poll_status === 'error' ? 'text-red-400' : ['intercepted', 'deploy_suspended', 'rate_limited'].includes(watcher.last_poll_status) ? 'text-amber-400' : ''}`}
 			>
 				{result}
 			</p>

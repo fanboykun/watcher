@@ -12,8 +12,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/config"
@@ -25,10 +27,14 @@ import (
 type fakeCatalog struct {
 	failDownload bool
 	failList     bool
+	listErr      error
 	download     func(context.Context, string) (string, error)
 }
 
 func (f *fakeCatalog) ListReleaseCatalog(ctx context.Context, url string, page int) (*agent.ReleaseCatalog, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	if f.failList {
 		return nil, fmt.Errorf("GitHub unavailable")
 	}
@@ -172,6 +178,38 @@ func TestCatalogTokenPrecedenceAndPublicAccess(t *testing.T) {
 				t.Fatalf("factory calls=%d, want 2", calls)
 			}
 		})
+	}
+}
+
+func TestCatalogRateLimitReturnsRetryAfter(t *testing.T) {
+	db, err := database.NewDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	watcher := database.Watcher{Name: "catalog", ServiceName: "api", MetadataURL: "https://github.com/owner/repo", InstallDir: t.TempDir()}
+	if err := db.Create(&watcher).Error; err != nil {
+		t.Fatal(err)
+	}
+	log := agent.NewLoggerWithWriter("api", io.Discard, "error")
+	h := NewHandler(db, "nssm", t.TempDir(), "test", "", ".env", &config.AppConfig{}, log, nil, nil, nil, nil, nil)
+	until := time.Now().Add(90 * time.Second)
+	limitErr := fmt.Errorf("list releases: %w", &agent.RateLimitError{Resource: "core", Until: until})
+	h.catalogFactory = func(string, *agent.Logger) catalogClient { return &fakeCatalog{listErr: limitErr} }
+	router := gin.New()
+	registerAPIRoutes(router.Group("/api"), h)
+
+	rec := authRequest(router, http.MethodGet, fmt.Sprintf("/api/watchers/%d/releases", watcher.ID), "", "watcher")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d body=%s, want 429", rec.Code, rec.Body.String())
+	}
+	if retry, err := strconv.Atoi(rec.Header().Get("Retry-After")); err != nil || retry < 89 || retry > 91 {
+		t.Fatalf("Retry-After=%q, want about 90", rec.Header().Get("Retry-After"))
+	}
+	var body struct {
+		Until time.Time `json:"rate_limited_until"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Until.Sub(until).Abs() > time.Second {
+		t.Fatalf("rate_limited_until=%v, want %v (%v)", body.Until, until, err)
 	}
 }
 

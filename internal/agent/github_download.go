@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,6 +45,7 @@ func (g *GitHubClient) fetchDirect(ctx context.Context, url string) ([]byte, err
 // For private repos, uses the GitHub API asset URL from version.json's artifact_url.
 func (g *GitHubClient) DownloadArtifact(ctx context.Context, artifactURL, destPath string, retries int) error {
 	var lastErr error
+	var waited time.Duration
 
 	for attempt := 1; attempt <= retries; attempt++ {
 		g.log.Info("downloading artifact", "url", artifactURL, "attempt", attempt)
@@ -66,6 +68,21 @@ func (g *GitHubClient) DownloadArtifact(ctx context.Context, artifactURL, destPa
 		}
 
 		lastErr = err
+		var limitErr *RateLimitError
+		if errors.As(err, &limitErr) {
+			// Waiting for quota is not a failed attempt; defer instead once the wait gets long.
+			wait := max(limitErr.Until.Sub(g.now()), 0)
+			if waited+wait > maxRateLimitWait {
+				return err
+			}
+			g.log.Warn("GitHub rate limit reached; waiting before retrying download", "resume_at", limitErr.Until, "wait_seconds", wait.Seconds())
+			if err := sleepContext(ctx, wait); err != nil {
+				return err
+			}
+			waited += wait
+			attempt--
+			continue
+		}
 		g.log.Warn("download attempt failed", "attempt", attempt, "error", err)
 
 		if attempt < retries {

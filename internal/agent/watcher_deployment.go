@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -43,6 +44,36 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 		}
 	}
 
+	// ── Prepare and download ──────────────────────────────────────
+	// Runs before the GitHub Deployment is opened so a failed or rate-limited
+	// download never leaves an in_progress deployment behind.
+	if err := os.MkdirAll(r.wcfg.InstallDir, 0755); err != nil {
+		return fmt.Errorf("create install dir: %w", err)
+	}
+
+	if svcMeta.ArtifactURL == "" {
+		return fmt.Errorf("artifact_url missing in version.json for %s", targetVersion)
+	}
+
+	downloadsDir := filepath.Join(r.wcfg.InstallDir, "downloads")
+	if err := os.MkdirAll(downloadsDir, 0755); err != nil {
+		return fmt.Errorf("create downloads dir: %w", err)
+	}
+
+	zipPath := r.cachedArtifact
+	if zipPath == "" {
+		zipPath = filepath.Join(downloadsDir, releaseStorageName(targetVersion)+".zip")
+		if err := gh.DownloadArtifact(ctx, svcMeta.ArtifactURL, zipPath, r.wcfg.DownloadRetries); err != nil {
+			if errors.Is(err, ErrRateLimited) {
+				return &deployDeferredError{err: err}
+			}
+			return fmt.Errorf("download artifact: %w", err)
+		}
+		defer os.Remove(zipPath)
+	} else {
+		r.state.AppendDeployLog("artifact: using staged catalog download")
+	}
+
 	if useGHDeploy {
 		if logURL == "" && strings.TrimSpace(r.global.APIBaseURL) != "" {
 			r.state.AppendDeployLog("github_deployment: invalid API_BASE_URL, skipping log_url in deployment statuses")
@@ -67,35 +98,6 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 	}
 
 	// ── Actual deploy ─────────────────────────────────────────────
-	if err := os.MkdirAll(r.wcfg.InstallDir, 0755); err != nil {
-		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
-		return fmt.Errorf("create install dir: %w", err)
-	}
-
-	if svcMeta.ArtifactURL == "" {
-		err := fmt.Errorf("artifact_url missing in version.json for %s", targetVersion)
-		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
-		return err
-	}
-
-	downloadsDir := filepath.Join(r.wcfg.InstallDir, "downloads")
-	if err := os.MkdirAll(downloadsDir, 0755); err != nil {
-		r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
-		return fmt.Errorf("create downloads dir: %w", err)
-	}
-
-	zipPath := r.cachedArtifact
-	if zipPath == "" {
-		zipPath = filepath.Join(downloadsDir, releaseStorageName(targetVersion)+".zip")
-		if err := gh.DownloadArtifact(ctx, svcMeta.ArtifactURL, zipPath, r.wcfg.DownloadRetries); err != nil {
-			r.ghDeployFailure(ctx, gh, useGHDeploy, ghOwner, ghRepo, ghDeploymentID, deployLogID, err.Error())
-			return fmt.Errorf("download artifact: %w", err)
-		}
-		defer os.Remove(zipPath)
-	} else {
-		r.state.AppendDeployLog("artifact: using staged catalog download")
-	}
-
 	originalServices := append([]ServiceConfig(nil), r.wcfg.Services...)
 	candidates, err := r.prepareCandidateServices(targetVersion)
 	if err != nil {

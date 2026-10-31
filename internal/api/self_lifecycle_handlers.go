@@ -20,7 +20,7 @@ func (h *Handler) SelfUpdateCheck(c *gin.Context) {
 
 	info, err := agent.CheckForUpdate(c.Request.Context(), h.version, h.appCfg.WatcherRepoURL, h.githubToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		githubError(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -37,7 +37,7 @@ func (h *Handler) SelfUpdate(c *gin.Context) {
 	// Check for update first
 	info, err := agent.CheckForUpdate(c.Request.Context(), h.version, h.appCfg.WatcherRepoURL, h.githubToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		githubError(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -56,7 +56,7 @@ func (h *Handler) SelfUpdate(c *gin.Context) {
 
 	// Perform the update (this may restart the process on Windows)
 	if err := agent.PerformSelfUpdate(c.Request.Context(), info.DownloadURL, h.githubToken, h.nssmPath, h.selfServiceName()); err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		githubError(c, http.StatusInternalServerError, err)
 		return
 	}
 

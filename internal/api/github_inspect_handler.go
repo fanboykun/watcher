@@ -30,7 +30,7 @@ func (h *Handler) InspectGitHubRepo(c *gin.Context) {
 
 	resp, err := client.InspectRepository(c.Request.Context(), req.RepoURL, req.ReleaseRef)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		githubError(c, http.StatusInternalServerError, err)
 		return
 	}
 

@@ -162,6 +162,17 @@ func (g *GitHubClient) fetchNamedAssetFromRelease(ctx context.Context, owner, re
 		return g.fetchDirect(ctx, asset.BrowserDownloadURL)
 	}
 
+	// Small JSON metadata (version.json) is polled every cycle; when the release
+	// revalidated unchanged, reuse its bytes instead of spending a download request.
+	cacheKey := ""
+	if g.bucket != nil && strings.HasSuffix(strings.ToLower(asset.Name), ".json") && asset.Size <= maxCachedAssetSize {
+		cacheKey = fmt.Sprintf("%s\n%s\n%s\n%d", asset.URL, asset.UpdatedAt, asset.Digest, asset.Size)
+		if data, ok := g.bucket.assets.get(cacheKey); ok {
+			g.log.Debug("using cached asset", "asset", assetName, "release_ref", releaseRef)
+			return data, nil
+		}
+	}
+
 	g.log.Debug("downloading asset via API", "asset", assetName, "url", asset.URL, "release_ref", releaseRef)
 
 	req, err := g.newRequest(ctx, http.MethodGet, asset.URL)
@@ -181,5 +192,9 @@ func (g *GitHubClient) fetchNamedAssetFromRelease(ctx context.Context, owner, re
 		return nil, fmt.Errorf("asset download returned HTTP %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err == nil && cacheKey != "" {
+		g.bucket.assets.put(cacheKey, data)
+	}
+	return data, err
 }

@@ -50,6 +50,7 @@ type githubRelease struct {
 type githubAsset struct {
 	Size               int64  `json:"size"`
 	Digest             string `json:"digest"`
+	UpdatedAt          string `json:"updated_at"`
 	ID                 int64  `json:"id"`
 	Name               string `json:"name"`
 	URL                string `json:"url"`                  // API download URL — works for private repos
@@ -60,18 +61,44 @@ type GitHubClient struct {
 	token   string
 	apiBase string // defaults to defaultAPIBase, overridable in tests
 	client  *http.Client
+	bucket  *githubBucket // rate-limit and cache state shared per token
 	log     *Logger
 }
 
 // NewGitHubClient creates a GitHub client with optional token authentication.
+// Rate-limit and cache state is shared with every other client using the same token.
 func NewGitHubClient(token string, log *Logger) *GitHubClient {
+	return defaultGitHubPool.Client(token, log)
+}
+
+func newGitHubClient(token string, log *Logger, bucket *githubBucket) *GitHubClient {
 	return &GitHubClient{
 		token:   token,
 		apiBase: defaultAPIBase,
 		client: &http.Client{
-			Timeout:   90 * time.Second,
-			Transport: tracedTransport{log: log},
+			Timeout: 90 * time.Second,
+			Transport: cachingTransport{
+				base:   rateLimitTransport{base: tracedTransport{log: log}, limiter: bucket.limiter},
+				bucket: bucket,
+			},
 		},
-		log: log,
+		bucket: bucket,
+		log:    log,
 	}
+}
+
+// quotaShortfall reports when this token cannot afford n more requests right now.
+func (g *GitHubClient) quotaShortfall(n int) *RateLimitError {
+	if g.bucket == nil {
+		return nil
+	}
+	return g.bucket.limiter.shortfall(n)
+}
+
+// now reads the limiter clock so rate-limit waits and blocks agree in tests.
+func (g *GitHubClient) now() time.Time {
+	if g.bucket == nil {
+		return time.Now()
+	}
+	return g.bucket.limiter.now()
 }

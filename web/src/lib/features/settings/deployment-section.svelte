@@ -4,6 +4,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import * as Tabs from '$lib/components/ui/tabs';
+	import GitHubQuotaCard from './github-quota-card.svelte';
 	import type { createSettings } from '$lib/features/settings/settings-controller.svelte';
 	let { model }: { model: ReturnType<typeof createSettings> } = $props();
 </script>
@@ -88,5 +89,6 @@
 				</div></Card.Content
 			>
 		</Card.Root>
-	</fieldset></Tabs.Content
+	</fieldset>
+	<GitHubQuotaCard /></Tabs.Content
 >
