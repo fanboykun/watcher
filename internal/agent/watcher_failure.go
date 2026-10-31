@@ -8,6 +8,22 @@ import (
 	"github.com/fanboykun/watcher/internal/database"
 )
 
+// deployDeferredError stops a deployment before any service was touched, so the
+// attempt can be retried later without counting as a failure or rolling back.
+type deployDeferredError struct{ err error }
+
+func (e *deployDeferredError) Error() string { return "deployment deferred: " + e.err.Error() }
+func (e *deployDeferredError) Unwrap() error { return e.err }
+
+// deferDeployment closes a deferred attempt and restores the pre-deploy watcher state.
+func (r *RepoWatcher) deferDeployment(err error, targetVersion, previousStatus, previousError string) {
+	r.log.Warn("deployment deferred", "version", targetVersion, "error", err)
+	if stateErr := r.state.SetDeferred(err.Error(), previousStatus, previousError); stateErr != nil {
+		r.log.Error("failed to settle deferred deployment attempt", "deploy_log_id", r.state.deployLogID, "error", stateErr)
+	}
+	r.state.RecordPollEvent("rate_limited", targetVersion, err.Error())
+}
+
 // recordDeployFailure persists a failed deployment and any compensation attempt.
 func (r *RepoWatcher) recordDeployFailure(err error, targetVersion, localVersion string) bool {
 	phase, originalErr, rollbackTo, rollbackFailed := classifyDeployFailure(err)

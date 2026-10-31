@@ -111,6 +111,11 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 	gh := NewGitHubClient(r.resolveGitHubToken(), r.log)
 	meta, err := gh.FetchServiceMetadataForRelease(ctx, r.wcfg.MetadataURL, r.wcfg.ReleaseRef, r.wcfg.ServiceName)
 	if err != nil {
+		if errors.Is(err, ErrRateLimited) {
+			r.log.Warn("GitHub rate limit reached; skipping poll", "error", err)
+			r.state.RecordPollEvent("rate_limited", "", err.Error())
+			return nil
+		}
 		if !errors.Is(err, context.Canceled) {
 			r.state.RecordPollEvent("error", "", err.Error())
 		}
@@ -175,6 +180,11 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 	if err := r.deploy(ctx, gh, svcMeta, targetVersion, localVersion); err != nil {
 		if errors.Is(err, errDeploymentPolicyChanged) {
 			r.state.RecordPollEvent("intercepted", targetVersion, err.Error())
+			return nil
+		}
+		var deferred *deployDeferredError
+		if errors.As(err, &deferred) {
+			r.deferDeployment(deferred, targetVersion, live.Status, live.LastError)
 			return nil
 		}
 		if !errors.Is(err, context.Canceled) {

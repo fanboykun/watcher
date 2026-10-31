@@ -57,6 +57,7 @@ export function statusColor(s: string): string {
 			return 'bg-red-500/15 text-red-400 border-red-500/30';
 		case 'rollback':
 		case 'pending_approval':
+		case 'deferred':
 			return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
 		default:
 			return 'bg-muted text-muted-foreground border-border';

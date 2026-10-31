@@ -255,6 +255,45 @@ func (s *StateManager) SetFailedWithPhase(errMsg, phase string) error {
 	return nil
 }
 
+// SetDeferred closes the active attempt as "deferred" so it is not counted by
+// ConsecutiveFailuresForVersion, and restores the watcher state SetDeploying replaced.
+func (s *StateManager) SetDeferred(errMsg, previousStatus, previousError string) error {
+	if previousStatus == "" || previousStatus == string(StatusDeploying) {
+		previousStatus = string(StatusUnknown)
+	}
+	now := time.Now().UTC()
+	var attempt database.DeployLog
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		query := tx.Where("watcher_id = ? AND completed_at IS NULL", s.watcherID)
+		if s.deployLogID != 0 {
+			query = query.Where("id = ?", s.deployLogID)
+		}
+		if err := query.First(&attempt).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err := tx.Model(&database.Watcher{}).Where("id = ? AND status = ?", s.watcherID, string(StatusDeploying)).
+			UpdateColumns(map[string]any{"status": previousStatus, "last_error": previousError}).Error; err != nil {
+			return err
+		}
+		if attempt.ID == 0 {
+			return nil
+		}
+		var durationMs int64
+		if attempt.StartedAt != nil {
+			durationMs = now.Sub(*attempt.StartedAt).Milliseconds()
+		}
+		return tx.Model(&attempt).Updates(map[string]any{"status": "deferred", "error": errMsg, "completed_at": &now, "duration_ms": durationMs}).Error
+	})
+	if err != nil {
+		return err
+	}
+	if attempt.ID != 0 {
+		s.publish(EventDeployFinished, map[string]any{"deploy_log_id": attempt.ID, "status": "deferred", "error": errMsg})
+	}
+	s.publish(EventStatusChanged, map[string]any{"status": previousStatus})
+	return nil
+}
+
 // SetRolledBack records a successful rollback and advances the rollback high-watermark.
 func (s *StateManager) SetRolledBack(version string) error {
 	now := time.Now().UTC()

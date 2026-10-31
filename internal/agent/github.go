@@ -60,18 +60,29 @@ type GitHubClient struct {
 	token   string
 	apiBase string // defaults to defaultAPIBase, overridable in tests
 	client  *http.Client
+	limiter *rateLimiter
 	log     *Logger
 }
 
 // NewGitHubClient creates a GitHub client with optional token authentication.
 func NewGitHubClient(token string, log *Logger) *GitHubClient {
+	limiter := newRateLimiter()
 	return &GitHubClient{
 		token:   token,
 		apiBase: defaultAPIBase,
 		client: &http.Client{
 			Timeout:   90 * time.Second,
-			Transport: tracedTransport{log: log},
+			Transport: rateLimitTransport{base: tracedTransport{log: log}, limiter: limiter},
 		},
-		log: log,
+		limiter: limiter,
+		log:     log,
 	}
+}
+
+// now reads the limiter clock so rate-limit waits and blocks agree in tests.
+func (g *GitHubClient) now() time.Time {
+	if g.limiter == nil {
+		return time.Now()
+	}
+	return g.limiter.now()
 }
