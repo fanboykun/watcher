@@ -156,6 +156,52 @@ func TestRateLimitTransport_PlainForbiddenIsNotRateLimited(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_ReserveYieldsFullPollsOnly(t *testing.T) {
+	var full, notModified atomic.Int32
+	var reset int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Limit", "100")
+		w.Header().Set("X-RateLimit-Remaining", "10")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset, 10))
+		w.Header().Set("X-RateLimit-Resource", "core")
+		switch r.URL.Path {
+		case "/repos/o/r/releases/latest":
+			serveWithETag(w, r, `"latest"`, githubRelease{TagName: "v1"}, &full, &notModified)
+		default:
+			full.Add(1)
+			_ = json.NewEncoder(w).Encode([]githubRelease{{TagName: "v1"}})
+		}
+	}))
+	defer server.Close()
+	client, now := newRateLimitTestClient("token", server)
+	reset = now.Add(time.Hour).Unix()
+	poll := withGitHubPollPriority(context.Background())
+
+	if _, err := client.FetchLatestRelease(poll, "https://github.com/o/r"); err != nil {
+		t.Fatalf("first poll with unknown quota must proceed: %v", err)
+	}
+	if _, err := client.FetchLatestRelease(poll, "https://github.com/o/r"); err != nil {
+		t.Fatalf("conditional poll costs no quota and must proceed: %v", err)
+	}
+	_, err := client.fetchReleases(poll, "o", "r", 30)
+	var limitErr *RateLimitError
+	if !errors.As(err, &limitErr) || !limitErr.Reserve || !limitErr.Until.Equal(time.Unix(reset, 0)) {
+		t.Fatalf("full poll inside the reserve must be refused, got %v", err)
+	}
+	if _, err := client.fetchReleases(context.Background(), "o", "r", 30); err != nil {
+		t.Fatalf("non-poll requests may use the reserve: %v", err)
+	}
+	if notModified.Load() != 1 || full.Load() != 2 {
+		t.Fatalf("full=%d notModified=%d, want 2 and 1", full.Load(), notModified.Load())
+	}
+	if client.quotaShortfall(deployRequestBudget) != nil {
+		t.Fatal("10 remaining covers a deploy")
+	}
+	if client.quotaShortfall(11) == nil {
+		t.Fatal("expected shortfall when asking for more than remains")
+	}
+}
+
 func TestGitHubPool_SharesBlocksPerToken(t *testing.T) {
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

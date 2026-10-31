@@ -87,6 +87,14 @@ func newGitHubClient(token string, log *Logger, bucket *githubBucket) *GitHubCli
 	}
 }
 
+// quotaShortfall reports when this token cannot afford n more requests right now.
+func (g *GitHubClient) quotaShortfall(n int) *RateLimitError {
+	if g.bucket == nil {
+		return nil
+	}
+	return g.bucket.limiter.shortfall(n)
+}
+
 // now reads the limiter clock so rate-limit waits and blocks agree in tests.
 func (g *GitHubClient) now() time.Time {
 	if g.bucket == nil {

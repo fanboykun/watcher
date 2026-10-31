@@ -119,7 +119,7 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 		return nil
 	}
 	gh := r.githubClient(r.log)
-	meta, err := gh.FetchServiceMetadataForRelease(ctx, r.wcfg.MetadataURL, r.wcfg.ReleaseRef, r.wcfg.ServiceName)
+	meta, err := gh.FetchServiceMetadataForRelease(withGitHubPollPriority(ctx), r.wcfg.MetadataURL, r.wcfg.ReleaseRef, r.wcfg.ServiceName)
 	if err != nil {
 		if errors.Is(err, ErrRateLimited) {
 			r.log.Warn("GitHub rate limit reached; skipping poll", "error", err)
@@ -184,6 +184,13 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 		msg := fmt.Sprintf("deploy suspended for %s after %d consecutive failures — use dashboard to redeploy", targetVersion, failures)
 		r.log.Warn(msg)
 		r.state.RecordPollEvent("deploy_suspended", targetVersion, msg)
+		return nil
+	}
+
+	// Don't open an attempt that would stall halfway on quota; wait for the reset instead.
+	if limitErr := gh.quotaShortfall(deployRequestBudget); limitErr != nil {
+		r.log.Warn("GitHub quota too low to start deployment", "target", targetVersion, "error", limitErr)
+		r.state.RecordPollEvent("rate_limited", targetVersion, limitErr.Error())
 		return nil
 	}
 

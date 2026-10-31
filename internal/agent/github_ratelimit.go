@@ -23,6 +23,9 @@ const (
 	// maxRateLimitWait bounds how long a download waits for quota before deferring.
 	maxRateLimitWait  = 15 * time.Minute
 	rateLimitBodyPeek = 64 << 10
+	// deployRequestBudget covers a deploy's GitHub calls: release lookup, asset
+	// download, and the Deployment API create/in_progress/success statuses.
+	deployRequestBudget = 5
 )
 
 // RateLimitError reports when GitHub will accept requests from this token again.
@@ -30,9 +33,13 @@ type RateLimitError struct {
 	Resource  string
 	Until     time.Time
 	Secondary bool
+	Reserve   bool // refused locally to keep the remaining quota for deployments
 }
 
 func (e *RateLimitError) Error() string {
+	if e.Reserve {
+		return fmt.Sprintf("GitHub quota nearly exhausted; polling paused to keep the rest for deployments until %s", e.Until.UTC().Format(time.RFC3339))
+	}
 	kind := "primary"
 	if e.Secondary {
 		kind = "secondary"
@@ -46,13 +53,16 @@ func (e *RateLimitError) Error() string {
 
 func (e *RateLimitError) Is(target error) bool { return target == ErrRateLimited }
 
-// rateLimiter remembers a token's rate-limit block so later requests fail locally
-// instead of spending more of the exhausted quota.
+// rateLimiter remembers a token's quota and rate-limit block so later requests
+// fail locally instead of spending more of an exhausted quota.
 type rateLimiter struct {
 	mu               sync.Mutex
 	now              func() time.Time
 	blockedErr       *RateLimitError
 	secondaryStrikes int
+	// Last core quota GitHub reported; limit is 0 until a response carries it.
+	limit, remaining int
+	reset            time.Time
 }
 
 func newRateLimiter() *rateLimiter {
@@ -70,10 +80,49 @@ func (l *rateLimiter) blocked() *RateLimitError {
 	return &blocked
 }
 
+// shortfall reports when fewer than n requests are known to remain before reset.
+func (l *rateLimiter) shortfall(n int) *RateLimitError {
+	if blocked := l.blocked(); blocked != nil {
+		return blocked
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.limit == 0 || l.remaining >= n || !l.now().Before(l.reset) {
+		return nil
+	}
+	return &RateLimitError{Resource: "core", Until: l.reset}
+}
+
+// reserveExhausted reports when background polling should yield the last tenth
+// of the quota to deployments and interactive requests.
+func (l *rateLimiter) reserveExhausted() *RateLimitError {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.limit == 0 || l.remaining > l.limit/10 || !l.now().Before(l.reset) {
+		return nil
+	}
+	return &RateLimitError{Resource: "core", Until: l.reset, Reserve: true}
+}
+
+// observe records the core quota headers GitHub attaches to API responses.
+func (l *rateLimiter) observe(header http.Header) {
+	if resource := header.Get("X-RateLimit-Resource"); resource != "" && resource != "core" {
+		return
+	}
+	limit, limitErr := strconv.Atoi(header.Get("X-RateLimit-Limit"))
+	remaining, remainingErr := strconv.Atoi(header.Get("X-RateLimit-Remaining"))
+	reset, resetErr := strconv.ParseInt(header.Get("X-RateLimit-Reset"), 10, 64)
+	if limitErr != nil || remainingErr != nil || resetErr != nil || limit <= 0 {
+		return
+	}
+	l.limit, l.remaining, l.reset = limit, remaining, time.Unix(reset, 0)
+}
+
 // classify inspects a response and records a block when it is a rate-limit refusal.
 func (l *rateLimiter) classify(resp *http.Response) *RateLimitError {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.observe(resp.Header)
 	if resp.StatusCode < 400 {
 		l.secondaryStrikes = 0
 		return nil
@@ -145,7 +194,12 @@ type rateLimitTransport struct {
 }
 
 func (t rateLimitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if limitErr := t.limiter.blocked(); limitErr != nil {
+	limitErr := t.limiter.blocked()
+	// Conditional polls stay allowed: an unchanged 304 costs no quota.
+	if limitErr == nil && isGitHubPoll(req.Context()) && req.Header.Get("If-None-Match") == "" {
+		limitErr = t.limiter.reserveExhausted()
+	}
+	if limitErr != nil {
 		if req.Body != nil {
 			req.Body.Close()
 		}
@@ -161,6 +215,19 @@ func (t rateLimitTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		return nil, limitErr
 	}
 	return resp, nil
+}
+
+type githubPollKey struct{}
+
+// withGitHubPollPriority marks requests as background polling, which yields the
+// last part of the quota to deployments and interactive requests.
+func withGitHubPollPriority(ctx context.Context) context.Context {
+	return context.WithValue(ctx, githubPollKey{}, true)
+}
+
+func isGitHubPoll(ctx context.Context) bool {
+	poll, _ := ctx.Value(githubPollKey{}).(bool)
+	return poll
 }
 
 // sleepContext waits for d or until ctx ends; tests replace it to avoid real waits.

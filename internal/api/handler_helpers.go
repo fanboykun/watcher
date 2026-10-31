@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,6 +15,19 @@ import (
 	"github.com/fanboykun/watcher/internal/database"
 	"github.com/gin-gonic/gin"
 )
+
+// githubError reports GitHub rate limits as 429 with Retry-After, and any other
+// GitHub failure with the handler's fallback status.
+func githubError(c *gin.Context, fallback int, err error) {
+	var limitErr *agent.RateLimitError
+	if !errors.As(err, &limitErr) {
+		c.JSON(fallback, ErrorResponse{Error: err.Error()})
+		return
+	}
+	retryAfter := max(int(math.Ceil(time.Until(limitErr.Until).Seconds())), 1)
+	c.Header("Retry-After", strconv.Itoa(retryAfter))
+	c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error(), "rate_limited_until": limitErr.Until.UTC()})
+}
 
 func (h *Handler) findWatcher(c *gin.Context) (*database.Watcher, error) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)

@@ -47,7 +47,7 @@ func (h *Handler) ListCatalogReleases(c *gin.Context) {
 	}
 	catalog, err := h.catalogClient(c, watcher).ListReleaseCatalog(c.Request.Context(), watcher.MetadataURL, page)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, ErrorResponse{Error: err.Error()})
+		githubError(c, http.StatusBadGateway, err)
 		return
 	}
 	artifacts, err := h.catalogDownloads(watcher)
@@ -75,7 +75,7 @@ func (h *Handler) DownloadCatalogRelease(c *gin.Context) {
 	client := h.catalogClient(c, watcher)
 	release, asset, version, err := client.ResolveCatalogAsset(c.Request.Context(), watcher, req.ReleaseID, req.AssetID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		githubError(c, http.StatusBadRequest, err)
 		return
 	}
 	owner, repo, err := agent.ParseGitHubURL(watcher.MetadataURL)
@@ -101,7 +101,7 @@ func (h *Handler) DownloadCatalogRelease(c *gin.Context) {
 	if err != nil {
 		_ = os.RemoveAll(filepath.Dir(path))
 		_ = h.db.Delete(&artifact).Error
-		c.JSON(http.StatusBadGateway, ErrorResponse{Error: err.Error()})
+		githubError(c, http.StatusBadGateway, err)
 		return
 	}
 	h.log.WithWatcher(watcher.ID, watcher.Name).WithTrace(agent.TraceFromContext(c.Request.Context())).Info("release artifact staged", "catalog_id", artifact.ID, "version", version, "asset", asset.Name)

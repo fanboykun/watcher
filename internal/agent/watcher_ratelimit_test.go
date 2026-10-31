@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -100,6 +101,43 @@ func TestRepoWatcherRun_RateLimitedMetadataSkipsPoll(t *testing.T) {
 	db.Model(&database.DeployLog{}).Count(&deploys)
 	if deploys != 0 {
 		t.Fatalf("expected no deploy attempts, got %d", deploys)
+	}
+}
+
+func TestRepoWatcherRun_LowQuotaSkipsDeployBeforeOpeningAttempt(t *testing.T) {
+	var downloads atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/version.json":
+			w.Header().Set("X-RateLimit-Limit", "60")
+			w.Header().Set("X-RateLimit-Remaining", "3")
+			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+			_ = json.NewEncoder(w).Encode(VersionMetadata{Services: map[string]ServiceMeta{
+				"api": {Version: "v2", ArtifactURL: server.URL + "/artifact.zip"},
+			}})
+		default:
+			downloads.Add(1)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	rw, db, watcherID := newRateLimitedWatcher(t, server)
+
+	if err := rw.Run(context.Background()); err != nil {
+		t.Fatalf("low quota should not fail the poll, got %v", err)
+	}
+	var deploys int64
+	db.Model(&database.DeployLog{}).Where("watcher_id = ?", watcherID).Count(&deploys)
+	if deploys != 0 || downloads.Load() != 0 {
+		t.Fatalf("expected no attempt and no download, got deploys=%d downloads=%d", deploys, downloads.Load())
+	}
+	var watcher database.Watcher
+	if err := db.First(&watcher, watcherID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if watcher.LastPollStatus != "rate_limited" || watcher.Status != string(StatusHealthy) {
+		t.Fatalf("last_poll_status=%q status=%q", watcher.LastPollStatus, watcher.Status)
 	}
 }
 
