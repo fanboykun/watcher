@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fanboykun/watcher/internal/agent"
 	"github.com/fanboykun/watcher/internal/database"
 )
 
@@ -103,6 +104,45 @@ func validateServicePayload(svc *database.Service) error {
 	}
 
 	return nil
+}
+
+// resolveWatcherSource validates source settings together, because what
+// metadata_url and release_ref may hold depends on the source type.
+func resolveWatcherSource(sourceType, metadataURL, releaseRef string) (normalizedType, normalizedURL string, err error) {
+	normalizedType, ok := agent.NormalizeSourceType(sourceType)
+	if !ok {
+		return "", "", fmt.Errorf("source_type must be one of: %s, %s, %s, %s", agent.SourceGitHub, agent.SourceHTTP, agent.SourceFS, agent.SourceS3)
+	}
+	if normalizedType == agent.SourceGitHub {
+		return normalizedType, metadataURL, nil
+	}
+	root, err := agent.NormalizeFeedLocation(normalizedType, metadataURL)
+	if err != nil {
+		return "", "", fmt.Errorf("metadata_url: %w", err)
+	}
+	if err := agent.ValidateFeedReleaseRef(defaultReleaseRef(releaseRef)); err != nil {
+		return "", "", err
+	}
+	return normalizedType, root, nil
+}
+
+// resolveFeedAuth validates a feed credential for the resolved source type.
+// http feeds take bearer/basic/header credentials and s3 feeds require sigv4;
+// file shares use the Windows account Watcher runs as.
+func resolveFeedAuth(sourceType string, auth agent.FeedAuth) (agent.FeedAuth, error) {
+	normalized, err := agent.NormalizeFeedAuth(auth)
+	if err != nil {
+		return agent.FeedAuth{}, fmt.Errorf("feed_auth: %w", err)
+	}
+	switch {
+	case sourceType == agent.SourceS3 && normalized.Type != agent.FeedAuthSigV4:
+		return agent.FeedAuth{}, fmt.Errorf("s3 sources need feed_auth_type %q with an access key, secret key and region", agent.FeedAuthSigV4)
+	case sourceType != agent.SourceS3 && normalized.Type == agent.FeedAuthSigV4:
+		return agent.FeedAuth{}, fmt.Errorf("feed_auth_type %q is only supported for %s sources", agent.FeedAuthSigV4, agent.SourceS3)
+	case normalized.Type != "" && sourceType != agent.SourceHTTP && sourceType != agent.SourceS3:
+		return agent.FeedAuth{}, fmt.Errorf("feed credentials are only supported for %s and %s sources", agent.SourceHTTP, agent.SourceS3)
+	}
+	return normalized, nil
 }
 
 func defaultReleaseRef(ref string) string {

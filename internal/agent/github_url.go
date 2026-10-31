@@ -148,12 +148,17 @@ func buildMetadataFromRelease(release *githubRelease) *VersionMetadata {
 			continue
 		}
 
-		meta.Services[serviceName] = ServiceMeta{
+		svc := ServiceMeta{
 			Version:     release.TagName,
 			Artifact:    asset.Name,
 			ArtifactURL: asset.BrowserDownloadURL,
 			PublishedAt: release.PublishedAt,
 		}
+		// GitHub reports asset digests as "sha256:<hex>"; older assets may have none.
+		if strings.HasPrefix(asset.Digest, "sha256:") {
+			svc.SHA256 = asset.Digest
+		}
+		meta.Services[serviceName] = svc
 	}
 
 	return meta

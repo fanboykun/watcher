@@ -9,6 +9,8 @@
 		pending?: boolean;
 		errorMessage?: string;
 		rollbackReportGitHub: boolean;
+		/** False for feed watchers, which have no GitHub repository to report to. */
+		canReportGitHub?: boolean;
 		rollbackTargetVersion: string;
 		onRollback: (version: string, reportGithub?: boolean) => Promise<void>;
 	}
@@ -18,6 +20,7 @@
 		pending = false,
 		errorMessage = '',
 		rollbackReportGitHub = $bindable(),
+		canReportGitHub = true,
 		onRollback,
 		rollbackTargetVersion
 	}: Props = $props();
@@ -43,16 +46,16 @@
 			<p class="text-sm">
 				Target version: <span class="font-mono font-medium">{rollbackTargetVersion}</span>
 			</p>
-			<div class="flex items-center gap-2 py-1">
-				<Checkbox
-					id="rollbackReportGitHub"
-					bind:checked={rollbackReportGitHub}
-					disabled={pending}
-				/>
-				<Label for="rollbackReportGitHub" class="text-sm text-muted-foreground select-none">
-					Report rollback to GitHub Deployment API
-				</Label>
-			</div>
+			{#if canReportGitHub}<div class="flex items-center gap-2 py-1">
+					<Checkbox
+						id="rollbackReportGitHub"
+						bind:checked={rollbackReportGitHub}
+						disabled={pending}
+					/>
+					<Label for="rollbackReportGitHub" class="text-sm text-muted-foreground select-none">
+						Report rollback to GitHub Deployment API
+					</Label>
+				</div>{/if}
 		</div>
 		<Dialog.Footer>
 			<Button.Root
@@ -68,7 +71,7 @@
 				class="bg-amber-600 text-white hover:bg-amber-700"
 				disabled={pending}
 				loading={pending}
-				onclick={() => onRollback(rollbackTargetVersion, rollbackReportGitHub)}
+				onclick={() => onRollback(rollbackTargetVersion, canReportGitHub && rollbackReportGitHub)}
 			>
 				Proceed Rollback
 			</Button.Root>

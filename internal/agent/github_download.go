@@ -134,26 +134,7 @@ func (g *GitHubClient) downloadDirect(ctx context.Context, url, destPath string)
 		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
 
-	tmp := destPath + ".tmp"
-	f, err := os.Create(tmp)
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-
-	_, copyErr := io.Copy(f, resp.Body)
-	f.Close()
-
-	if copyErr != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("write artifact: %w", copyErr)
-	}
-
-	if err := os.Rename(tmp, destPath); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("rename artifact: %w", err)
-	}
-
-	return nil
+	return writeFileAtomic(destPath, resp.Body)
 }
 
 // newRequest creates an authenticated GitHub API request bound to the supplied context.

@@ -15,12 +15,18 @@ const githubDeploymentStatusDescriptionLimit = 140
 
 type VersionMetadata struct {
 	Services map[string]ServiceMeta `json:"services"`
+
+	// notModified marks a feed manifest served from the poll cache because the
+	// feed reported it unchanged.
+	notModified bool
 }
 
 type ServiceMeta struct {
 	Version            string `json:"version"`
 	Artifact           string `json:"artifact"`
 	ArtifactURL        string `json:"artifact_url"`
+	SHA256             string `json:"sha256,omitempty"` // hex digest of the artifact; verified before extraction
+	Size               int64  `json:"size,omitempty"`   // artifact bytes, shown in the release catalog
 	PublishedAt        string `json:"published_at"`
 	AppKind            string `json:"app_kind,omitempty"`
 	WindowsServiceName string `json:"windows_service_name,omitempty"`

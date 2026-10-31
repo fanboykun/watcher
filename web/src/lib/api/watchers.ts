@@ -1,6 +1,8 @@
 import type {
 	LogFileResponse,
+	FeedAuthDraft,
 	InspectRepoResponse,
+	ReleaseSourceType,
 	Watcher,
 	WatcherWritePayload,
 	DeployLog,
@@ -71,11 +73,23 @@ export const watchersApi = {
 			`/watchers/${id}/polls?page=${page}&pageSize=${pageSize}&status=${status}`,
 			{ signal }
 		),
-	inspectRepo: (repoUrl: string, releaseRef = 'latest', githubToken = '') =>
-		request<InspectRepoResponse>('/github/inspect', {
+	inspectRepo: (
+		repoUrl: string,
+		releaseRef = 'latest',
+		githubToken = '',
+		sourceType: ReleaseSourceType = 'github',
+		feedAuth?: FeedAuthDraft
+	) =>
+		request<InspectRepoResponse>('/sources/inspect', {
 			method: 'POST',
 			body: JSON.stringify({
+				source_type: sourceType,
 				repo_url: repoUrl,
+				feed_auth_type: feedAuth?.type ?? '',
+				feed_auth_username: feedAuth?.username ?? '',
+				feed_auth_header: feedAuth?.header ?? '',
+				feed_auth_region: feedAuth?.region ?? '',
+				feed_auth_secret: feedAuth?.secret ?? '',
 				release_ref: releaseRef,
 				github_token: githubToken
 			})

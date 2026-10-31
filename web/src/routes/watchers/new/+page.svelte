@@ -17,6 +17,14 @@
 
 	import { ArrowLeft, ArrowRight, Check } from '@lucide/svelte';
 	import { createWatcherSetup } from '$lib/features/watchers/setup/setup-controller.svelte';
+	import SourceTypePicker from '$lib/features/watchers/source-type-picker.svelte';
+	import FeedAuthFields from '$lib/features/watchers/feed-auth-fields.svelte';
+	import {
+		isGitHubSource,
+		sourceLocationLabel,
+		sourceLocationPlaceholder,
+		takesFeedCredentials
+	} from '$lib/features/watchers/presentation';
 	const model = createWatcherSetup();
 </script>
 
@@ -49,11 +57,19 @@
 				<div class="space-y-4">
 					<div class="grid gap-4 md:grid-cols-2">
 						<div class="space-y-2 md:col-span-2">
-							<Label for="repoURL">GitHub Repository or metadata URL</Label>
+							<Label>Release source</Label>
+							<SourceTypePicker
+								bind:value={model.ui.sourceType}
+								idPrefix="setupSource"
+								disabled={model.inspecting}
+							/>
+						</div>
+						<div class="space-y-2 md:col-span-2">
+							<Label for="repoURL">{sourceLocationLabel(model.ui.sourceType)}</Label>
 							<Input
 								id="repoURL"
 								bind:value={model.ui.repoURL}
-								placeholder="https://github.com/org/repo"
+								placeholder={sourceLocationPlaceholder(model.ui.sourceType)}
 							/>
 						</div>
 						<div class="space-y-2">
@@ -62,32 +78,53 @@
 								id="releaseRef"
 								bind:value={model.ui.releaseRef}
 								placeholder="latest or v1.2.3"
+								aria-describedby="releaseRef-help"
 							/>
+							{#if !isGitHubSource(model.ui.sourceType)}
+								<p id="releaseRef-help" class="text-xs text-muted-foreground">
+									A pinned tag reads <code>releases/&lt;tag&gt;/version.json</code>.
+								</p>
+							{/if}
 						</div>
-						<div class="space-y-2">
-							<Label for="inspectGitHubToken">Inspect Token Override</Label>
-							<Input
-								id="inspectGitHubToken"
-								type="password"
-								bind:value={model.ui.inspectGitHubToken}
-								disabled={!model.ui.useInspectGitHubToken}
-								placeholder="Use only for inspect"
-							/>
-							<div class="mt-2 flex items-center gap-2">
-								<Checkbox
-									id="useInspectGitHubToken"
-									bind:checked={model.ui.useInspectGitHubToken}
+						{#if takesFeedCredentials(model.ui.sourceType)}
+							<div class="md:col-span-2">
+								<FeedAuthFields
+									bind:auth={model.ui.feedAuth}
+									idPrefix="setupFeedAuth"
+									s3={model.ui.sourceType === 's3'}
 								/>
-								<Label for="useInspectGitHubToken">Use custom token for inspect</Label>
 							</div>
-						</div>
+						{/if}
+						{#if model.ui.sourceType === 'github'}<div class="space-y-2">
+								<Label for="inspectGitHubToken">Inspect Token Override</Label>
+								<Input
+									id="inspectGitHubToken"
+									type="password"
+									bind:value={model.ui.inspectGitHubToken}
+									disabled={!model.ui.useInspectGitHubToken}
+									placeholder="Use only for inspect"
+								/>
+								<div class="mt-2 flex items-center gap-2">
+									<Checkbox
+										id="useInspectGitHubToken"
+										bind:checked={model.ui.useInspectGitHubToken}
+									/>
+									<Label for="useInspectGitHubToken">Use custom token for inspect</Label>
+								</div>
+							</div>{/if}
 					</div>
 
 					<div
 						class="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground"
 					>
-						Watcher inspects `version.json` first for the chosen ref and falls back to legacy repo
-						asset discovery when needed.
+						{#if isGitHubSource(model.ui.sourceType)}
+							Watcher inspects `version.json` first for the chosen ref and falls back to legacy repo
+							asset discovery when needed.
+						{:else}
+							Watcher reads <code>version.json</code> from the feed root. Relative
+							<code>artifact_url</code> values resolve against that manifest, and the GitHub token is
+							never sent to the feed.
+						{/if}
 					</div>
 
 					{#if model.ui.inspectResult}

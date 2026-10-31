@@ -254,7 +254,9 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 		_ = h.webhooks.EmitAttemptEventTx(h.db, watcher, &succeededAttempt)
 	}
 
-	if reportGitHub {
+	if reportGitHub && !agent.IsGitHubSource(watcher.SourceType) {
+		appendRollbackLog(fmt.Sprintf("github_deployment: skipped for %s release source", watcher.SourceType))
+	} else if reportGitHub {
 		token := strings.TrimSpace(watcher.GitHubToken)
 		if token == "" {
 			token = strings.TrimSpace(h.githubToken)

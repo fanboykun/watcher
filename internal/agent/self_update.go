@@ -18,48 +18,134 @@ type SelfUpdateInfo struct {
 	UpdateAvailable bool   `json:"update_available"`
 	DownloadURL     string `json:"download_url"`
 	PublishedAt     string `json:"published_at"`
+	SHA256          string `json:"sha256,omitempty"` // verified before the binary is replaced
 }
 
-// CheckForUpdate compares the current watcher version against the latest release
-// from the watcher's own GitHub repository.
-func CheckForUpdate(ctx context.Context, currentVersion, repoURL, token string) (*SelfUpdateInfo, error) {
-	log := NewLogger("self-update")
-	client := NewGitHubClient(token, log)
+// SelfUpdateServiceName is the service key for Watcher's own releases in a feed manifest.
+const SelfUpdateServiceName = "watcher"
 
-	release, err := client.FetchLatestRelease(ctx, repoURL)
+// SelfUpdateSource locates Watcher's own releases: a GitHub repository, or an
+// internal release feed for hosts that cannot reach GitHub.
+type SelfUpdateSource struct {
+	RepoURL  string
+	Token    string   // GitHub only
+	FeedAuth FeedAuth // http(s) feeds, including sigv4 for a private bucket
+}
+
+// feed returns the feed source when RepoURL is not a GitHub repository URL.
+func (s SelfUpdateSource) feed(log *Logger) (feedSource, error) {
+	if _, _, err := ParseGitHubURL(s.RepoURL); err == nil {
+		return nil, nil
+	}
+	sourceType := SourceHTTP
+	if isAbsFeedPath(strings.TrimSpace(s.RepoURL)) {
+		sourceType = SourceFS
+	}
+	root, err := NormalizeFeedLocation(sourceType, s.RepoURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch latest release: %w", err)
+		return nil, fmt.Errorf("WATCHER_REPO_URL is neither a GitHub repository nor a release feed: %w", err)
+	}
+	auth, err := NormalizeFeedAuth(s.FeedAuth)
+	if err != nil {
+		return nil, fmt.Errorf("WATCHER_REPO_AUTH_*: %w", err)
+	}
+	return newFeedSource(sourceType, root, auth, log), nil
+}
+
+// CheckForUpdate compares the current watcher version against the latest
+// release from the watcher's own repository or release feed.
+func CheckForUpdate(ctx context.Context, currentVersion string, src SelfUpdateSource) (*SelfUpdateInfo, error) {
+	log := NewLogger("self-update")
+	feed, err := src.feed(log)
+	if err != nil {
+		return nil, err
+	}
+	if feed != nil {
+		meta, err := feed.FetchMetadata(ctx, "latest", SelfUpdateServiceName)
+		if err != nil {
+			return nil, fmt.Errorf("fetch release feed: %w", err)
+		}
+		svc, ok := meta.Services[SelfUpdateServiceName]
+		if !ok {
+			return nil, fmt.Errorf("release feed manifest has no %q service entry for Watcher's own releases", SelfUpdateServiceName)
+		}
+		return &SelfUpdateInfo{
+			CurrentVersion:  currentVersion,
+			LatestVersion:   svc.Version,
+			UpdateAvailable: isNewer(svc.Version, currentVersion),
+			DownloadURL:     svc.ArtifactURL,
+			PublishedAt:     svc.PublishedAt,
+			SHA256:          svc.SHA256,
+		}, nil
 	}
 
-	// Find the watcher zip asset
-	var downloadURL string
-	for _, asset := range release.Assets {
-		if strings.HasSuffix(asset.Name, ".zip") && strings.Contains(asset.Name, "watcher") {
-			downloadURL = asset.BrowserDownloadURL
-			break
-		}
+	client := NewGitHubClient(src.Token, log)
+	release, err := client.FetchLatestRelease(ctx, src.RepoURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetch latest release: %w", err)
 	}
 
 	info := &SelfUpdateInfo{
 		CurrentVersion:  currentVersion,
 		LatestVersion:   release.TagName,
 		UpdateAvailable: isNewer(release.TagName, currentVersion),
-		DownloadURL:     downloadURL,
 		PublishedAt:     release.PublishedAt,
 	}
-
+	// Find the watcher zip asset
+	for _, asset := range release.Assets {
+		if strings.HasSuffix(asset.Name, ".zip") && strings.Contains(asset.Name, "watcher") {
+			info.DownloadURL = asset.BrowserDownloadURL
+			if strings.HasPrefix(asset.Digest, "sha256:") {
+				info.SHA256 = asset.Digest
+			}
+			break
+		}
+	}
 	return info, nil
 }
 
-// PerformSelfUpdate downloads the latest release, extracts the new watcher binary,
-// and replaces the current executable. On Windows, it restarts via NSSM.
-func PerformSelfUpdate(ctx context.Context, downloadURL, token, nssmPath, serviceName string) error {
-	if downloadURL == "" {
+// downloadSelfUpdate fetches the release zip from the configured source and
+// verifies its checksum when the release publishes one.
+func downloadSelfUpdate(ctx context.Context, info *SelfUpdateInfo, src SelfUpdateSource, destPath string, log *Logger) error {
+	expected, err := normalizeSHA256(info.SHA256)
+	if err != nil {
+		return err
+	}
+	feed, err := src.feed(log)
+	if err != nil {
+		return err
+	}
+	if feed != nil {
+		err = feed.DownloadArtifact(ctx, info.DownloadURL, destPath, 3)
+	} else {
+		err = NewGitHubClient(src.Token, log).DownloadArtifact(ctx, info.DownloadURL, destPath, 3)
+	}
+	if err != nil {
+		return err
+	}
+	if expected == "" {
+		log.Warn("self-update release publishes no sha256; integrity not verified")
+		return nil
+	}
+	actual, err := fileSHA256(destPath)
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		os.Remove(destPath)
+		return fmt.Errorf("update sha256 mismatch: release expects %s, downloaded file is %s", expected, actual)
+	}
+	return nil
+}
+
+// PerformSelfUpdate downloads the release described by info, extracts the new
+// watcher binary, and replaces the current executable. On Windows, it restarts via NSSM.
+func PerformSelfUpdate(ctx context.Context, info *SelfUpdateInfo, src SelfUpdateSource, nssmPath, serviceName string) error {
+	if info == nil || info.DownloadURL == "" {
 		return fmt.Errorf("no download URL provided")
 	}
 
 	log := NewLogger("self-update")
-	client := NewGitHubClient(token, log)
 
 	// Get the path to the currently running executable
 	exePath, err := os.Executable()
@@ -76,7 +162,7 @@ func PerformSelfUpdate(ctx context.Context, downloadURL, token, nssmPath, servic
 
 	// Download the release zip to a temp location
 	tmpZip := filepath.Join(exeDir, "update.zip")
-	if err := client.DownloadArtifact(ctx, downloadURL, tmpZip, 3); err != nil {
+	if err := downloadSelfUpdate(ctx, info, src, tmpZip, log); err != nil {
 		return fmt.Errorf("download update: %w", err)
 	}
 	defer os.Remove(tmpZip)

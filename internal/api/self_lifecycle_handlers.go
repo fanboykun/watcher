@@ -12,13 +12,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// selfUpdateSource reads where Watcher's own releases live from the runtime config.
+func (h *Handler) selfUpdateSource() agent.SelfUpdateSource {
+	return agent.SelfUpdateSource{
+		RepoURL: h.appCfg.WatcherRepoURL,
+		Token:   h.githubToken,
+		FeedAuth: agent.FeedAuth{
+			Type:     h.appCfg.WatcherRepoAuthType,
+			Username: h.appCfg.WatcherRepoAuthUsername,
+			Header:   h.appCfg.WatcherRepoAuthHeader,
+			Region:   h.appCfg.WatcherRepoAuthRegion,
+			Secret:   h.appCfg.WatcherRepoAuthSecret,
+		},
+	}
+}
+
 func (h *Handler) SelfUpdateCheck(c *gin.Context) {
 	if h.appCfg == nil || h.appCfg.WatcherRepoURL == "" {
 		c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: "WATCHER_REPO_URL not configured"})
 		return
 	}
 
-	info, err := agent.CheckForUpdate(c.Request.Context(), h.version, h.appCfg.WatcherRepoURL, h.githubToken)
+	info, err := agent.CheckForUpdate(c.Request.Context(), h.version, h.selfUpdateSource())
 	if err != nil {
 		githubError(c, http.StatusInternalServerError, err)
 		return
@@ -35,7 +50,7 @@ func (h *Handler) SelfUpdate(c *gin.Context) {
 	}
 
 	// Check for update first
-	info, err := agent.CheckForUpdate(c.Request.Context(), h.version, h.appCfg.WatcherRepoURL, h.githubToken)
+	info, err := agent.CheckForUpdate(c.Request.Context(), h.version, h.selfUpdateSource())
 	if err != nil {
 		githubError(c, http.StatusInternalServerError, err)
 		return
@@ -55,7 +70,7 @@ func (h *Handler) SelfUpdate(c *gin.Context) {
 	}
 
 	// Perform the update (this may restart the process on Windows)
-	if err := agent.PerformSelfUpdate(c.Request.Context(), info.DownloadURL, h.githubToken, h.nssmPath, h.selfServiceName()); err != nil {
+	if err := agent.PerformSelfUpdate(c.Request.Context(), info, h.selfUpdateSource(), h.nssmPath, h.selfServiceName()); err != nil {
 		githubError(c, http.StatusInternalServerError, err)
 		return
 	}

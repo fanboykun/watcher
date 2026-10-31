@@ -7,8 +7,16 @@ A pull-based deployment agent that polls GitHub releases and deploys versioned a
 ### Deployment
 
 **Watcher**:
-A configured deployment target that polls a GitHub repository or `version.json` feed for new releases and orchestrates their deployment.
+A configured deployment target that polls a release source (GitHub or an internal release feed) for new releases and orchestrates their deployment.
 _Avoid_: job, task, monitor
+
+**Release source**:
+Where a watcher reads releases from, set by `source_type`: `github` (repository releases or a `version.json` release asset) `http` (an internal release feed over HTTP(S)) or `fs` (the same feed on a local directory or SMB/UNC share).
+_Avoid_: provider, backend, origin
+
+**Release feed**:
+A static, write-once directory tree on company storage with `version.json` at its root, polled by `http` watchers. Its root URL is the watcher's `metadata_url`. See `docs/adr/0002-internal-release-feed.md`.
+_Avoid_: bucket, mirror, artifact store
 
 **Deploy**:
 The full pipeline of downloading, extracting, stopping services, swapping the `current` junction, writing managed config, registering services, starting services, and health-checking for a specific version.

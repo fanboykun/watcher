@@ -23,15 +23,21 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 	resolvedEnv := resolveDeploymentEnvironment(r.wcfg.DeploymentEnvironment, r.global.Environment)
 	useGHDeploy := r.global.GitHubDeployEnabled && strings.TrimSpace(r.resolveGitHubToken()) != ""
 	logURL := buildDeployLogURL(r.global.APIBaseURL, r.watcherID, deployLogID)
-	r.state.AppendDeployLog(fmt.Sprintf("github_deployment: environment=%q", resolvedEnv))
-	if !r.global.GitHubDeployEnabled {
-		r.state.AppendDeployLog("github_deployment: disabled by GITHUB_DEPLOY_ENABLED=false")
-	} else if !useGHDeploy {
-		r.state.AppendDeployLog("github_deployment: disabled because GitHub token is empty (watcher + global)")
-	}
-	if useGHDeploy && resolvedEnv == "" {
-		r.state.AppendDeployLog("github_deployment: disabled because deployment environment is empty (watcher + global ENVIRONMENT)")
+	githubSource := IsGitHubSource(r.wcfg.SourceType)
+	if !githubSource {
+		r.state.AppendDeployLog(fmt.Sprintf("github_deployment: skipped for %s release source", r.wcfg.SourceType))
 		useGHDeploy = false
+	} else {
+		r.state.AppendDeployLog(fmt.Sprintf("github_deployment: environment=%q", resolvedEnv))
+		if !r.global.GitHubDeployEnabled {
+			r.state.AppendDeployLog("github_deployment: disabled by GITHUB_DEPLOY_ENABLED=false")
+		} else if !useGHDeploy {
+			r.state.AppendDeployLog("github_deployment: disabled because GitHub token is empty (watcher + global)")
+		}
+		if useGHDeploy && resolvedEnv == "" {
+			r.state.AppendDeployLog("github_deployment: disabled because deployment environment is empty (watcher + global ENVIRONMENT)")
+			useGHDeploy = false
+		}
 	}
 
 	if useGHDeploy {
@@ -54,6 +60,11 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 	if svcMeta.ArtifactURL == "" {
 		return fmt.Errorf("artifact_url missing in version.json for %s", targetVersion)
 	}
+	// Reject a malformed checksum before spending the download.
+	expectedSum, err := normalizeSHA256(svcMeta.SHA256)
+	if err != nil {
+		return err
+	}
 
 	downloadsDir := filepath.Join(r.wcfg.InstallDir, "downloads")
 	if err := os.MkdirAll(downloadsDir, 0755); err != nil {
@@ -63,14 +74,18 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 	zipPath := r.cachedArtifact
 	if zipPath == "" {
 		zipPath = filepath.Join(downloadsDir, releaseStorageName(targetVersion)+".zip")
-		if err := gh.DownloadArtifact(ctx, svcMeta.ArtifactURL, zipPath, r.wcfg.DownloadRetries); err != nil {
+		if err := r.releaseSource(gh).DownloadArtifact(ctx, svcMeta.ArtifactURL, zipPath, r.wcfg.DownloadRetries); err != nil {
 			if errors.Is(err, ErrRateLimited) {
 				return &deployDeferredError{err: err}
 			}
 			return fmt.Errorf("download artifact: %w", err)
 		}
 		defer os.Remove(zipPath)
+		if err := r.verifyArtifactChecksum(zipPath, expectedSum); err != nil {
+			return err
+		}
 	} else {
+		// RunCatalog already checked the staged file against its recorded hash.
 		r.state.AppendDeployLog("artifact: using staged catalog download")
 	}
 
@@ -119,7 +134,8 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 	if err := r.state.SetHealthy(targetVersion); err != nil {
 		return fmt.Errorf("complete deployment attempt: %w", err)
 	}
-	if owner, repo, err := resolveDeploymentRepo(r.wcfg.MetadataURL, svcMeta.ArtifactURL); err == nil {
+	// Recorded so a later rollback can report to the same GitHub repository and ref.
+	if owner, repo, err := resolveDeploymentRepo(r.wcfg.MetadataURL, svcMeta.ArtifactURL); githubSource && err == nil {
 		metadata := ReleaseDeploymentMetadata{
 			Version:     targetVersion,
 			Owner:       owner,

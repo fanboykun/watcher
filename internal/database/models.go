@@ -16,10 +16,17 @@ type AuthCredential struct {
 
 // Watcher represents a repository being monitored for releases.
 type Watcher struct {
-	ID                    uint   `gorm:"primaryKey" json:"id"`
-	Name                  string `gorm:"not null" json:"name"`
-	ServiceName           string `gorm:"not null;index" json:"service_name"`
-	MetadataURL           string `gorm:"not null" json:"metadata_url"`
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	Name        string `gorm:"not null" json:"name"`
+	ServiceName string `gorm:"not null;index" json:"service_name"`
+	SourceType  string `gorm:"not null;default:'github'" json:"source_type"` // github | http | fs | s3
+	MetadataURL string `gorm:"not null" json:"metadata_url"`                 // GitHub repo/manifest URL, or feed root for http
+	// Optional credential for http/s3 feeds; sent only to the feed root's origin.
+	FeedAuthType          string `gorm:"not null;default:''" json:"feed_auth_type"`     // "" | bearer | basic | header | sigv4
+	FeedAuthUsername      string `gorm:"not null;default:''" json:"feed_auth_username"` // basic only
+	FeedAuthHeader        string `gorm:"not null;default:''" json:"feed_auth_header"`   // header only
+	FeedAuthRegion        string `gorm:"not null;default:''" json:"feed_auth_region"`   // sigv4 (s3) only
+	FeedAuthSecret        string `gorm:"not null;default:''" json:"-"`
 	ReleaseRef            string `gorm:"not null;default:'latest'" json:"release_ref"`
 	DeploymentEnvironment string `gorm:"not null;default:''" json:"deployment_environment"`
 	GitHubToken           string `gorm:"column:github_token;not null;default:''" json:"-"`
@@ -80,6 +87,8 @@ type Watcher struct {
 	WebhookDeliveries []WebhookDelivery `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"-"`
 
 	// Derived response-only fields
+	HasFeedAuthSecret          bool   `gorm:"-" json:"has_feed_auth_secret"`
+	FeedAuthSecretMasked       string `gorm:"-" json:"feed_auth_secret_masked,omitempty"`
 	HasGitHubToken             bool   `gorm:"-" json:"has_github_token"`
 	GitHubTokenMasked          string `gorm:"-" json:"github_token_masked,omitempty"`
 	HasWebhookSigningSecret    bool   `gorm:"-" json:"has_webhook_signing_secret"`
@@ -173,7 +182,7 @@ type PollEvent struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	WatcherID     uint      `gorm:"not null;index" json:"watcher_id"`
 	CheckedAt     time.Time `gorm:"not null;autoCreateTime" json:"checked_at"`
-	Status        string    `gorm:"not null" json:"status"` // e.g. "new_release", "no_update", "error"
+	Status        string    `gorm:"not null" json:"status"` // e.g. "new_release", "no_update", "unchanged", "error"
 	RemoteVersion string    `gorm:"not null;default:''" json:"remote_version"`
 	Error         string    `json:"error"`
 }

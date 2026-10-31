@@ -32,8 +32,10 @@ The key under `services` must match the Watcher `service_name`. In the dashboard
 | `services` | yes | Object keyed by Watcher service name. |
 | `services.<name>.version` | yes | Version Watcher compares with `current_version`. For monorepos, prefer the full service tag such as `services/prs/v0.1.0` to avoid ambiguity. |
 | `services.<name>.artifact` | yes | Exact release asset filename. |
-| `services.<name>.artifact_url` | yes | GitHub release download URL for the artifact. Slash tags such as `services/prs/v0.1.0` are supported. |
+| `services.<name>.artifact_url` | yes | Download URL for the artifact. For GitHub sources, the release download URL; slash tags such as `services/prs/v0.1.0` are supported. For internal release feeds it may be relative to the manifest (see below). |
+| `services.<name>.sha256` | recommended | Lowercase hex SHA-256 of the artifact (a `sha256:` prefix is accepted). Watcher hashes the download and fails the deploy before extraction on mismatch; the failure counts toward the retry cap. When absent, the deploy log notes that integrity was not verified. Internal feed templates always set it. |
 | `services.<name>.published_at` | recommended | UTC timestamp for display and diagnostics. |
+| `services.<name>.size` | optional | Artifact size in bytes, shown in a feed's release catalog. |
 
 ## Deployment Hint Fields
 
@@ -94,9 +96,43 @@ A monorepo can publish a `latest` release containing only `version.json`. That m
 
 Configure Watcher with the repo URL or direct manifest URL. During creation, Watcher tries to load `version.json` first, shows these services as deploy targets, and creates one service definition for the selected target.
 
+## Internal Release Feeds
+
+A watcher with `source_type = http` reads the same manifest from company storage instead of GitHub; `source_type = fs` reads it from a local directory or SMB/UNC share. Its `metadata_url` is the feed root, and Watcher polls `<feed root>/version.json`:
+
+```text
+<feed root>/
+  version.json                        latest pointer, published last
+  releases.json                       release index (pinning and catalog)
+  releases/<version>/version.json     per-release manifest, write-once
+  releases/<version>/<artifact>.zip   artifact, write-once
+```
+
+`artifact_url` may be relative and resolves against the manifest that lists it, so the root manifest can use `releases/v1.4.2/app-v1.4.2.zip`:
+
+```json
+{
+  "services": {
+    "admin-be": {
+      "version": "v1.4.2",
+      "artifact": "admin-be-v1.4.2.zip",
+      "artifact_url": "releases/v1.4.2/admin-be-v1.4.2.zip",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "published_at": "2026-10-31T04:19:05Z",
+      "app_kind": "nssm",
+      "windows_service_name": "admin-be",
+      "binary_name": "web.exe"
+    }
+  }
+}
+```
+
+A pinned `release_ref` reads `releases/<ref>/version.json`, where a relative `artifact_url` such as `admin-be-v1.4.2.zip` resolves beside that manifest. `releases.json` lists releases for the release catalog; its shape is in the ADR below. The GitHub token is never sent to a feed, and GitHub Deployment reporting and repository inspection are skipped for feed watchers. The layout and publishing order are recorded in `docs/adr/0002-internal-release-feed.md`.
+
 ## Compatibility Notes
 
 - Existing manifests with only `version`, `artifact`, `artifact_url`, and `published_at` still deploy. The UI will fill missing service fields with conservative defaults.
+- Repo asset discovery uses GitHub's own asset digest as the checksum when GitHub reports one.
 - Repo asset discovery is a fallback when no manifest exists. It is not the recommended org contract because it derives service names from filenames.
 - Watcher compares only `version`. Re-publishing a zip with the same `version` will not trigger a new deploy.
 - Use unique `install_dir` values per watcher.

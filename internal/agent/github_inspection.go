@@ -77,6 +77,20 @@ func (g *GitHubClient) FetchManifestMetadataFromRepoRelease(ctx context.Context,
 	return &meta, nil
 }
 
+// InspectFeed previews an internal release feed's latest manifest for the UI.
+// The returned metadata URL is the normalized feed root a watcher should store.
+func InspectFeed(ctx context.Context, sourceType, rawURL, releaseRef string, auth FeedAuth, log *Logger) (*InspectRepoResponse, error) {
+	root, err := NormalizeFeedLocation(sourceType, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := newFeedSource(sourceType, root, auth, log).FetchMetadata(ctx, releaseRef, "")
+	if err != nil {
+		return nil, err
+	}
+	return inspectResponse(meta, "manifest", "", root), nil
+}
+
 // buildInspectResponse builds the repository-inspection response from resolved metadata.
 func buildInspectResponse(rawURL, releaseRef string, meta *VersionMetadata, source string) *InspectRepoResponse {
 	owner, repo, _ := ParseGitHubURL(rawURL)
@@ -84,11 +98,14 @@ func buildInspectResponse(rawURL, releaseRef string, meta *VersionMetadata, sour
 	if owner != "" && repo != "" {
 		repoURL = fmt.Sprintf("https://github.com/%s/%s", owner, repo)
 	}
+	return inspectResponse(meta, source, repoURL, manifestURLForInspect(rawURL, releaseRef))
+}
 
+func inspectResponse(meta *VersionMetadata, source, repoURL, metadataURL string) *InspectRepoResponse {
 	res := &InspectRepoResponse{
 		Source:      source,
 		RepoURL:     repoURL,
-		MetadataURL: manifestURLForInspect(rawURL, releaseRef),
+		MetadataURL: metadataURL,
 		Services:    make(map[string]InspectServiceTarget, len(meta.Services)),
 	}
 	for name, svc := range meta.Services {

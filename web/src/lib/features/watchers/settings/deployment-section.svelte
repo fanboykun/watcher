@@ -59,18 +59,18 @@
 							deployment.
 						</p>
 					</div>
-					<div class="space-y-2">
-						<Label for="editDeploymentEnvironment">Deployment Environment</Label>
-						<Input
-							id="editDeploymentEnvironment"
-							bind:value={model.ui.editDeploymentEnvironment}
-							placeholder="production"
-							aria-describedby="editDeploymentEnvironment-help"
-						/>
-						<p id="editDeploymentEnvironment-help" class="text-xs text-muted-foreground">
-							GitHub environment for this watcher. Leave blank to inherit the global environment.
-						</p>
-					</div>
+					{#if model.ui.editSourceType === 'github'}<div class="space-y-2">
+							<Label for="editDeploymentEnvironment">Deployment Environment</Label>
+							<Input
+								id="editDeploymentEnvironment"
+								bind:value={model.ui.editDeploymentEnvironment}
+								placeholder="production"
+								aria-describedby="editDeploymentEnvironment-help"
+							/>
+							<p id="editDeploymentEnvironment-help" class="text-xs text-muted-foreground">
+								GitHub environment for this watcher. Leave blank to inherit the global environment.
+							</p>
+						</div>{/if}
 				</div>
 				<div class="space-y-2 rounded-lg border border-border/70 bg-muted/20 p-4">
 					<Label class="text-sm font-medium">Deployment Policy</Label>
@@ -100,30 +100,30 @@
 						>
 					</RadioGroup.Root>
 				</div>
-				<div class="space-y-2">
-					<Label for="editGitHubToken">GitHub Access Token Override</Label>
-					<Input
-						id="editGitHubToken"
-						type="password"
-						bind:value={model.ui.editGitHubToken}
-						placeholder="Paste new token to replace override"
-						disabled={model.ui.editUseGlobalToken}
-						aria-describedby="editGitHubToken-help"
-					/>
-					<p id="editGitHubToken-help" class="text-xs text-muted-foreground">
-						Leave blank to keep the saved override. Select Use global GitHub token to remove the
-						override.
-					</p>
-					<div class="mt-2 flex items-center gap-2">
-						<Checkbox id="editUseGlobalToken" bind:checked={model.ui.editUseGlobalToken} />
-						<Label for="editUseGlobalToken">Use global GitHub token</Label>
-					</div>
-					<p class="mt-1 text-xs text-muted-foreground">
-						Current: {model.watcher.has_github_token
-							? model.watcher.github_token_masked || 'set'
-							: 'using global token'}
-					</p>
-				</div></Card.Content
+				{#if model.ui.editSourceType === 'github'}<div class="space-y-2">
+						<Label for="editGitHubToken">GitHub Access Token Override</Label>
+						<Input
+							id="editGitHubToken"
+							type="password"
+							bind:value={model.ui.editGitHubToken}
+							placeholder="Paste new token to replace override"
+							disabled={model.ui.editUseGlobalToken}
+							aria-describedby="editGitHubToken-help"
+						/>
+						<p id="editGitHubToken-help" class="text-xs text-muted-foreground">
+							Leave blank to keep the saved override. Select Use global GitHub token to remove the
+							override.
+						</p>
+						<div class="mt-2 flex items-center gap-2">
+							<Checkbox id="editUseGlobalToken" bind:checked={model.ui.editUseGlobalToken} />
+							<Label for="editUseGlobalToken">Use global GitHub token</Label>
+						</div>
+						<p class="mt-1 text-xs text-muted-foreground">
+							Current: {model.watcher.has_github_token
+								? model.watcher.github_token_masked || 'set'
+								: 'using global token'}
+						</p>
+					</div>{/if}</Card.Content
 			></Card.Root
 		></Tabs.Content
 	>

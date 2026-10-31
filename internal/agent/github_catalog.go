@@ -3,8 +3,6 @@ package agent
 import (
 	"archive/zip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -103,6 +101,17 @@ func (g *GitHubClient) ResolveCatalogAsset(ctx context.Context, watcher *databas
 				return nil, nil, "", fmt.Errorf("selected asset is not the artifact declared for service %q in version.json", watcher.ServiceName)
 			}
 			version = svc.Version
+			// DownloadCatalogAsset verifies the digest, so the manifest checksum is enforced there too.
+			sum, err := normalizeSHA256(svc.SHA256)
+			if err != nil {
+				return nil, nil, "", err
+			}
+			if sum != "" {
+				if github := strings.TrimPrefix(strings.ToLower(asset.Digest), "sha256:"); asset.Digest != "" && github != sum {
+					return nil, nil, "", fmt.Errorf("version.json sha256 does not match the GitHub asset digest")
+				}
+				asset.Digest = "sha256:" + sum
+			}
 		}
 		return &release, asset, version, nil
 	}
@@ -138,8 +147,7 @@ func (g *GitHubClient) DownloadCatalogAsset(ctx context.Context, repoURL string,
 		return "", err
 	}
 	defer os.Remove(f.Name())
-	hash := sha256.New()
-	_, copyErr := io.Copy(io.MultiWriter(f, hash), resp.Body)
+	_, copyErr := io.Copy(f, resp.Body)
 	closeErr := f.Close()
 	if copyErr != nil {
 		return "", copyErr
@@ -147,22 +155,31 @@ func (g *GitHubClient) DownloadCatalogAsset(ctx context.Context, repoURL string,
 	if closeErr != nil {
 		return "", closeErr
 	}
-	sum := hex.EncodeToString(hash.Sum(nil))
-	if strings.HasPrefix(digest, "sha256:") && !strings.EqualFold(strings.TrimPrefix(digest, "sha256:"), sum) {
-		return "", fmt.Errorf("asset SHA-256 does not match GitHub digest")
+	return finishCatalogDownload(ctx, f.Name(), path, digest)
+}
+
+// finishCatalogDownload checks a downloaded temp file against its published
+// digest (when it is a sha256 digest) and the ZIP format, then moves it to
+// path. It returns the file's SHA-256 for later revalidation.
+func finishCatalogDownload(ctx context.Context, tmp, path, digest string) (string, error) {
+	sum, err := fileSHA256(tmp)
+	if err != nil {
+		return "", err
 	}
-	archive, err := zip.OpenReader(f.Name())
+	if strings.HasPrefix(strings.ToLower(digest), "sha256:") && !strings.EqualFold(digest[len("sha256:"):], sum) {
+		return "", fmt.Errorf("asset SHA-256 does not match the published digest")
+	}
+	archive, err := zip.OpenReader(tmp)
 	if err != nil {
 		return "", fmt.Errorf("invalid ZIP asset: %w", err)
 	}
-	err = archive.Close()
-	if err != nil {
+	if err := archive.Close(); err != nil {
 		return "", err
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := os.Rename(f.Name(), path); err != nil {
+	if err := os.Rename(tmp, path); err != nil {
 		return "", err
 	}
 	return sum, nil
@@ -172,25 +189,37 @@ func CatalogArtifactPath(artifact *database.CatalogArtifact) string {
 	return filepath.Join(artifact.InstallDir, "downloads", "catalog", fmt.Sprintf("%d", artifact.ID), "artifact.zip")
 }
 
+// CatalogRepository names the release source a staged download came from:
+// owner/repo for GitHub, the normalized feed root otherwise.
+func CatalogRepository(watcher *database.Watcher) (string, error) {
+	sourceType, ok := NormalizeSourceType(watcher.SourceType)
+	if !ok {
+		return "", fmt.Errorf("unsupported release source %q", watcher.SourceType)
+	}
+	if sourceType != SourceGitHub {
+		return NormalizeFeedLocation(sourceType, watcher.MetadataURL)
+	}
+	owner, repo, err := ParseGitHubURL(watcher.MetadataURL)
+	if err != nil {
+		return "", err
+	}
+	return owner + "/" + repo, nil
+}
+
 // ValidateCatalogArtifact detects missing or changed files before service operations.
 func ValidateCatalogArtifact(watcher *database.Watcher, artifact *database.CatalogArtifact) error {
-	owner, repo, err := ParseGitHubURL(watcher.MetadataURL)
+	repository, err := CatalogRepository(watcher)
 	if err != nil {
 		return err
 	}
-	if artifact.ServiceName != watcher.ServiceName || artifact.WatcherID != watcher.ID || artifact.Repository != owner+"/"+repo || filepath.Clean(artifact.InstallDir) != filepath.Clean(watcher.InstallDir) || artifact.DownloadedAt == nil {
+	if artifact.ServiceName != watcher.ServiceName || artifact.WatcherID != watcher.ID || artifact.Repository != repository || filepath.Clean(artifact.InstallDir) != filepath.Clean(watcher.InstallDir) || artifact.DownloadedAt == nil {
 		return fmt.Errorf("download belongs to a different watcher configuration; download again")
 	}
-	f, err := os.Open(CatalogArtifactPath(artifact))
+	sum, err := fileSHA256(CatalogArtifactPath(artifact))
 	if err != nil {
 		return fmt.Errorf("staged artifact unavailable: %w", err)
 	}
-	defer f.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, f); err != nil {
-		return err
-	}
-	if hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
+	if sum != artifact.SHA256 {
 		return fmt.Errorf("staged artifact checksum changed; download again")
 	}
 	return nil

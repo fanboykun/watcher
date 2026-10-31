@@ -27,6 +27,22 @@ export interface InspectRepoResponse {
 	services: Record<string, InspectServiceTarget>;
 }
 
+/** Where a watcher reads releases: GitHub, or an internal release feed over HTTP(S), a file share or a private S3 bucket. */
+export type ReleaseSourceType = 'github' | 'http' | 'fs' | 's3';
+
+/** Credential sent only to an http feed's own origin; empty means none. */
+export type FeedAuthType = '' | 'bearer' | 'basic' | 'header' | 'sigv4';
+
+export interface FeedAuthDraft {
+	type: FeedAuthType;
+	username: string;
+	header: string;
+	/** sigv4 (s3) only; empty means us-east-1. */
+	region: string;
+	/** Write-only. Blank on update keeps the saved secret. */
+	secret: string;
+}
+
 export interface Watcher {
 	pending_catalog_id: number;
 	polling_activity: 'active' | 'checking' | 'paused' | 'stopped' | 'unknown';
@@ -38,7 +54,14 @@ export interface Watcher {
 	id: number;
 	name: string;
 	service_name: string;
+	source_type: ReleaseSourceType;
 	metadata_url: string;
+	feed_auth_type: FeedAuthType;
+	feed_auth_username: string;
+	feed_auth_header: string;
+	feed_auth_region: string;
+	has_feed_auth_secret: boolean;
+	feed_auth_secret_masked?: string;
 	release_ref: string;
 	deployment_environment: string;
 	github_token?: string;
@@ -86,7 +109,13 @@ export interface Watcher {
 export interface WatcherWritePayload {
 	name?: string;
 	service_name?: string;
+	source_type?: ReleaseSourceType;
 	metadata_url?: string;
+	feed_auth_type?: FeedAuthType;
+	feed_auth_username?: string;
+	feed_auth_header?: string;
+	feed_auth_region?: string;
+	feed_auth_secret?: string;
 	release_ref?: string;
 	deployment_environment?: string;
 	github_token?: string;

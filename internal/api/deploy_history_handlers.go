@@ -229,7 +229,12 @@ func (h *Handler) ListPollEvents(c *gin.Context) {
 	status := c.Query("status")
 
 	query := h.db.Model(&database.PollEvent{}).Where("watcher_id = ?", watcher.ID)
-	if status != "" && status != "all" {
+	switch status {
+	case "", "all":
+	case "up_to_date":
+		// "unchanged" is an up-to-date poll the feed answered without resending its manifest.
+		query = query.Where("status IN ?", []string{"no_update", "unchanged"})
+	default:
 		query = query.Where("status = ?", status)
 	}
 

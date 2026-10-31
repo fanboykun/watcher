@@ -54,7 +54,8 @@
 							aria-describedby="cfg-watcher-repo-url-help"
 						/>
 						<p id="cfg-watcher-repo-url-help" class="text-xs text-muted-foreground">
-							GitHub repository used to check for updates to the Watcher agent itself.
+							Where updates to the Watcher agent itself come from: a GitHub repository, or an
+							internal release feed (URL or file share path) listing a <code>watcher</code> service.
 						</p>
 					</div>
 					<div class="space-y-2 md:col-span-2">

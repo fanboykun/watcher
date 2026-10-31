@@ -24,7 +24,8 @@ type RepoWatcher struct {
 	db             *gorm.DB
 	watcherID      uint
 	webhooks       *webhook.Service
-	github         *GitHubPool // nil uses the process-wide pool
+	github         *GitHubPool    // nil uses the process-wide pool
+	feedPoll       *feedPollCache // last feed manifest, shared by every cycle of this watcher
 }
 
 // githubClient returns a client sharing rate-limit state with every other user of the token.
@@ -50,6 +51,7 @@ func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.App
 		db:        db,
 		watcherID: dbWatcher.ID,
 		webhooks:  webhookService,
+		feedPoll:  newFeedPollCache(),
 	}
 }
 
@@ -106,7 +108,7 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 		return nil
 	}
 
-	r.log.Info("check cycle", "metadata_url", r.wcfg.MetadataURL)
+	r.log.Info("check cycle", "source_type", r.wcfg.SourceType, "metadata_url", r.wcfg.MetadataURL)
 
 	_ = r.state.SetChecked()
 
@@ -119,7 +121,7 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 		return nil
 	}
 	gh := r.githubClient(r.log)
-	meta, err := gh.FetchServiceMetadataForRelease(withGitHubPollPriority(ctx), r.wcfg.MetadataURL, r.wcfg.ReleaseRef, r.wcfg.ServiceName)
+	meta, err := r.releaseSource(gh).FetchMetadata(withGitHubPollPriority(ctx), r.wcfg.ReleaseRef, r.wcfg.ServiceName)
 	if err != nil {
 		if errors.Is(err, ErrRateLimited) {
 			r.log.Warn("GitHub rate limit reached; skipping poll", "error", err)
@@ -152,8 +154,13 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 	r.log.Info("local version", "current", localVersion, "max_ignored", maxIgnoredVersion)
 
 	if localVersion == targetVersion {
-		r.log.Info("already up to date")
-		r.state.RecordPollEvent("no_update", targetVersion, "")
+		// "unchanged" means the feed confirmed it without sending the manifest again.
+		status := "no_update"
+		if meta.notModified {
+			status = "unchanged"
+		}
+		r.log.Info("already up to date", "manifest_unchanged", meta.notModified)
+		r.state.RecordPollEvent(status, targetVersion, "")
 		return nil
 	}
 
@@ -188,7 +195,7 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 	}
 
 	// Don't open an attempt that would stall halfway on quota; wait for the reset instead.
-	if limitErr := gh.quotaShortfall(deployRequestBudget); limitErr != nil {
+	if limitErr := r.githubQuotaShortfall(gh); limitErr != nil {
 		r.log.Warn("GitHub quota too low to start deployment", "target", targetVersion, "error", limitErr)
 		r.state.RecordPollEvent("rate_limited", targetVersion, limitErr.Error())
 		return nil

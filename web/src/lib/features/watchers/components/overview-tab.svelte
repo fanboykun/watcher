@@ -2,6 +2,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import type { Watcher } from '$lib/api';
 	import { timeAgo } from '$lib/utils';
+	import { isGitHubSource, sourceTypeLabel } from '$lib/features/watchers/presentation';
 
 	let {
 		watcher
@@ -76,7 +77,13 @@
 				>
 				<dl class="mt-4 grid gap-4 sm:grid-cols-2">
 					<div class="sm:col-span-2">
-						<dt class="text-xs text-muted-foreground">Metadata URL</dt>
+						<dt class="text-xs text-muted-foreground">Release source</dt>
+						<dd class="mt-1">{sourceTypeLabel(watcher.source_type)}</dd>
+					</div>
+					<div class="sm:col-span-2">
+						<dt class="text-xs text-muted-foreground">
+							{isGitHubSource(watcher.source_type) ? 'Metadata URL' : 'Feed URL'}
+						</dt>
 						<dd class="mt-1 font-mono text-xs break-all">{watcher.metadata_url}</dd>
 					</div>
 					<div>

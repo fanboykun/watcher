@@ -5,6 +5,7 @@
 	import { invalidate, watcherScope } from '$lib/query/client';
 
 	import { api, type Watcher, type CatalogRelease, type CatalogDownload } from '$lib/api';
+	import { isGitHubSource } from '$lib/features/watchers/presentation';
 	import * as Button from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -33,6 +34,9 @@
 	const client = useQueryClient();
 	let catalogPage = $state(1);
 	const catalogQuery = createQuery(() => queries.releases(watcher.id, catalogPage));
+	const catalogTitle = $derived(
+		isGitHubSource(watcher.source_type) ? 'GitHub releases' : 'Feed releases'
+	);
 	const catalog = $derived(catalogQuery.data ?? null);
 	const operation = createMutation(() => ({
 		mutationFn: (v: { id: number; run: () => Promise<unknown> }) => v.run(),
@@ -127,13 +131,13 @@
 
 <section
 	class="overflow-hidden rounded-xl border border-border bg-card"
-	aria-label="GitHub releases catalog"
+	aria-label="Release catalog"
 >
 	<header class="section-toolbar border-b border-border px-5 py-5">
 		<div class="space-y-1">
 			<div class="flex items-center gap-2">
 				<Archive class="size-4 text-muted-foreground" />
-				<h2 class="font-semibold">GitHub releases</h2>
+				<h2 class="font-semibold">{catalogTitle}</h2>
 			</div>
 			<p class="text-sm text-muted-foreground">
 				{catalog?.repository ?? 'Repository catalog'} · Download, configure, then deploy.
@@ -160,7 +164,9 @@
 		</p>{/if}
 	{#if message}<p role="status" class="mx-5 mt-4 text-sm text-emerald-500">{message}</p>{/if}
 	{#if loading && !catalog}
-		<p role="status" class="px-5 py-12 text-sm text-muted-foreground">Loading GitHub releases…</p>
+		<p role="status" class="px-5 py-12 text-sm text-muted-foreground">
+			Loading {catalogTitle.toLowerCase()}…
+		</p>
 	{:else if catalog}
 		<div class="divide-y divide-border" aria-busy={loading}>
 			{#each catalog.releases as release (release.id)}
@@ -214,10 +220,10 @@
 									}}><Rocket />Deploy release…</DropdownMenu.Item
 								>
 
-								<DropdownMenu.Item
-									onclick={() => window.open(release.html_url, '_blank', 'noopener,noreferrer')}
-									><ExternalLink />View on GitHub</DropdownMenu.Item
-								>
+								{#if release.html_url}<DropdownMenu.Item
+										onclick={() => window.open(release.html_url, '_blank', 'noopener,noreferrer')}
+										><ExternalLink />View on GitHub</DropdownMenu.Item
+									>{/if}
 							</DropdownMenu.Content>
 						</DropdownMenu.Root>
 					</div>

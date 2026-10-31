@@ -12,6 +12,7 @@
 	import CandidateTab from '$lib/features/watchers/components/candidate-tab.svelte';
 	import ReleasesTab from '$lib/features/watchers/components/releases-tab.svelte';
 	import DownloadedVersions from '$lib/features/watchers/components/downloaded-versions.svelte';
+	import { isGitHubSource } from '$lib/features/watchers/presentation';
 	import type { createWatcherDetail } from '$lib/features/watchers/detail/detail-controller.svelte';
 	let { model }: { model: ReturnType<typeof createWatcherDetail> } = $props();
 </script>
@@ -36,7 +37,11 @@
 		<Tabs.List>
 			<Tabs.Trigger value="overview">Overview</Tabs.Trigger>
 			<Tabs.Trigger value="services">Services ({model.watcher.services.length})</Tabs.Trigger>
-			<Tabs.Trigger value="releases">GitHub releases</Tabs.Trigger>
+			<Tabs.Trigger value="releases"
+				>{isGitHubSource(model.watcher.source_type)
+					? 'GitHub releases'
+					: 'Feed releases'}</Tabs.Trigger
+			>
 			<Tabs.Trigger value="candidates" class="relative">
 				Candidates
 				{#if model.reviewableCandidate}

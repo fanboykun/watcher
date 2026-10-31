@@ -259,10 +259,77 @@ Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/watchers/1/servic
 
 ---
 
+## Watching an internal release feed (no GitHub access)
+
+Hosts that cannot reach `github.com` can poll a release feed on company storage instead. Pick the source in **Add Watcher → Release source**, or set `source_type` through the API:
+
+| Source | `source_type` | `metadata_url` |
+| --- | --- | --- |
+| GitHub (default) | `github` | Repository URL or `version.json` release asset URL |
+| Internal release feed over HTTP(S) | `http` | Feed root, e.g. `https://releases.internal/apps/my-project` |
+| File share feed | `fs` | Feed directory, e.g. `\\fileserver\releases\my-project` or `D:\releases\my-project` |
+
+The feed layout and publishing order are described in `docs/version-json.md` and `docs/adr/0002-internal-release-feed.md`. A feed watcher follows `latest` or a pinned tag (`releases/<tag>/version.json`), and its **Feed releases** tab lists the feed's `releases.json` for downloading and deploying a specific version. Feed watchers never receive the GitHub token and skip GitHub Deployment reporting; set `GITHUB_DEPLOY_ENABLED=false` on hosts with no GitHub access at all.
+
+```powershell
+Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/watchers" -ContentType "application/json" -Body '{
+  "name": "my-project",
+  "service_name": "my-project",
+  "source_type": "fs",
+  "metadata_url": "\\\\fileserver\\releases\\my-project",
+  "install_dir": "C:\\apps\\my-project"
+}'
+```
+
+Polling an unchanged feed is cheap. Watcher revalidates `version.json` with `ETag`/`Last-Modified` (nginx, IIS, MinIO/S3 and Nexus send these by default), and on a file share it compares the file's modification time and size. Such polls show as **Up to date (feed unchanged)**. A manual **Check now** always rereads the manifest.
+
+### Authenticated HTTP(S) feeds
+
+When the feed sits behind Nexus/Artifactory, an authenticating proxy or an object-store gateway, set **Feed credentials** on the watcher (`feed_auth_type` in the API):
+
+| `feed_auth_type` | Sends | Fields |
+| --- | --- | --- |
+| `bearer` | `Authorization: Bearer <secret>` | `feed_auth_secret` |
+| `basic` | `Authorization: Basic <username:secret>` | `feed_auth_username`, `feed_auth_secret` |
+| `header` | `<header>: <secret>` (e.g. `X-JFrog-Art-Api`) | `feed_auth_header`, `feed_auth_secret` |
+
+The secret is write-only: the API returns only `has_feed_auth_secret` and a masked value, and a blank `feed_auth_secret` on update keeps the saved one. The credential is sent only to the feed root's scheme, host and port. An `artifact_url` on another host, or a redirect to one, is fetched without it, and an `https` feed's credential is never sent over plain `http`. A `401`/`403` shows as `feed authentication failed` on the poll or deploy.
+
+### File share permissions
+
+Watcher runs under NSSM as **LocalSystem** by default. LocalSystem reaches network shares as the **computer account** (`DOMAIN\HOST$`), not as a user, so:
+
+- Grant the computer account (or the domain group containing your Watcher hosts) **read** access on both the share permissions and the NTFS permissions of the feed directory. If Watcher runs under a dedicated service account instead, grant that account.
+- Give **write** access only to the publisher (for example the self-hosted runner's account). Watcher hosts never need to write to the feed.
+- Workgroup (non-domain) hosts have no computer account on the file server; run Watcher under a local account that exists with the same password on the file server, or serve the feed over HTTP(S) instead.
+
+When access is missing, the watcher's poll shows `access denied reading \\fileserver\releases\my-project\version.json; grant read access to the account Watcher runs as`. A missing file shows `... not found; check the feed path and that a release has been published`.
+
+---
+
 ## Updating the watcher
 
 ### Option 1: Web UI (Recommended)
 Go to **Settings** in the dashboard and click **Check for Updates**. If a new version is available, click **Update Agent**. The watcher will download the new binary, swap itself, and restart the service automatically.
+
+### Updating from an internal release feed
+
+Hosts without GitHub access can update Watcher from the same kind of feed watchers use. Point `WATCHER_REPO_URL` at the feed root, an `https://` URL or a `\\fileserver\share\path`, and publish Watcher's release zip in that feed with a `watcher` service entry:
+
+```json
+{
+  "services": {
+    "watcher": {
+      "version": "v1.9.0",
+      "artifact": "watcher-windows-amd64.zip",
+      "artifact_url": "releases/v1.9.0/watcher-windows-amd64.zip",
+      "sha256": "…"
+    }
+  }
+}
+```
+
+The zip is the unchanged GitHub release asset of `fanboykun/watcher`; mirror it into the feed manually or from a self-hosted runner job. The `sha256` is checked before the binary is replaced. An authenticated HTTP(S) feed takes `WATCHER_REPO_AUTH_TYPE` (`bearer`, `basic` or `header`), `WATCHER_REPO_AUTH_USERNAME`, `WATCHER_REPO_AUTH_HEADER` and `WATCHER_REPO_AUTH_SECRET` in `.env`; saving settings from the dashboard keeps them.
 
 ### Option 2: Manual
 1. Download the new release zip

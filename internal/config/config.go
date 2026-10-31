@@ -49,9 +49,19 @@ type AppConfig struct {
 	// If empty, GitHub Deployment API integration is disabled.
 	APIBaseURL string `mapstructure:"API_BASE_URL"`
 
-	// WatcherRepoURL is the GitHub repository URL for the watcher project itself.
-	// Used for self-update checks.
+	// WatcherRepoURL locates the watcher project's own releases for self-update:
+	// a GitHub repository URL, or an internal release feed (http(s) URL or a
+	// local/UNC path) whose manifest lists the "watcher" service.
 	WatcherRepoURL string `mapstructure:"WATCHER_REPO_URL"`
+
+	// Optional credential for an http(s) WATCHER_REPO_URL feed: type is
+	// bearer, basic, header or sigv4 (private S3/MinIO bucket), as for watcher
+	// feed credentials.
+	WatcherRepoAuthType     string `mapstructure:"WATCHER_REPO_AUTH_TYPE"`
+	WatcherRepoAuthUsername string `mapstructure:"WATCHER_REPO_AUTH_USERNAME"`
+	WatcherRepoAuthHeader   string `mapstructure:"WATCHER_REPO_AUTH_HEADER"`
+	WatcherRepoAuthRegion   string `mapstructure:"WATCHER_REPO_AUTH_REGION"`
+	WatcherRepoAuthSecret   string `mapstructure:"WATCHER_REPO_AUTH_SECRET"`
 
 	// WatcherServiceName is the NSSM service name for the watcher itself.
 	// Used by self-update/restart/uninstall actions.
@@ -96,6 +106,11 @@ func LoadConfig(envPath string) (*AppConfig, error) {
 	v.SetDefault("ENVIRONMENT", "production")
 	v.SetDefault("GITHUB_DEPLOY_ENABLED", true)
 	v.SetDefault("WATCHER_SERVICE_NAME", "app-watcher")
+	v.SetDefault("WATCHER_REPO_AUTH_TYPE", "")
+	v.SetDefault("WATCHER_REPO_AUTH_USERNAME", "")
+	v.SetDefault("WATCHER_REPO_AUTH_HEADER", "")
+	v.SetDefault("WATCHER_REPO_AUTH_REGION", "")
+	v.SetDefault("WATCHER_REPO_AUTH_SECRET", "")
 	v.SetDefault("WEBHOOK_TIMEOUT_SEC", 10)
 	v.SetDefault("WEBHOOK_RETRY_SCHEDULE_SEC", "0,10,60,300")
 	v.SetDefault("WEBHOOK_AUTO_PAUSE_ENABLED", true)

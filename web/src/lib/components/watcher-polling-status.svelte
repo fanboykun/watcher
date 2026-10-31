@@ -16,6 +16,7 @@
 	const labels: Record<string, string> = {
 		error: 'Failed',
 		no_update: 'Up to date',
+		unchanged: 'Up to date (feed unchanged)',
 		new_release: 'New release',
 		intercepted: 'Awaiting approval',
 		skipped: 'Release skipped',

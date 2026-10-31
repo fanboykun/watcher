@@ -51,6 +51,7 @@ main.go
   - a rate-limited poll records poll status `rate_limited` and returns without error
   - a rate-limited artifact download waits up to 15 minutes, then closes the attempt as `deferred` (not counted by retry suspension, no rollback, watcher status restored)
   - a deploy is not started when the token cannot afford it (`deployRequestBudget`)
+- Each watcher has a release source (`source_type`): `github` (default), `http` (internal release feed over HTTP(S)) or `fs` (the same feed on a local/UNC path, see `docs/adr/0002-internal-release-feed.md`). Polling and artifact download go through the `releaseSource` seam in `internal/agent/release_source.go`; GitHub-only features (Deployment API reporting, repo inspection) are skipped for feeds; feeds serve the release catalog from `releases.json` (`FeedCatalog`), and the GitHub token is never sent to a feed host.
 - GitHub settings precedence is watcher-first:
   - deployment environment: `watcher.deployment_environment` -> global `ENVIRONMENT`
   - token: `watcher.github_token` -> global `GITHUB_TOKEN`
@@ -132,7 +133,8 @@ main.go
 ## Database Models (Authoritative)
 
 ### `Watcher`
-- identity/config: `name`, `service_name`, `metadata_url`, `install_dir`
+- identity/config: `name`, `service_name`, `source_type` (`github` | `http` | `fs`), `metadata_url` (GitHub URL, or feed root for `http`/`fs`), `install_dir`
+- feed credentials (`http` only): `feed_auth_type` (`bearer` | `basic` | `header`), `feed_auth_username`, `feed_auth_header`, `feed_auth_secret` (stored; API returns `has_feed_auth_secret` + masked value)
 - GitHub overrides: `deployment_environment`, `github_token` (stored; API returns masked status fields)
 - polling/deploy knobs: `check_interval_sec`, `download_retries`, `max_kept_versions`, `paused`
 - health defaults: `hc_enabled`, `hc_url`, `hc_retries`, `hc_interval_sec`, `hc_timeout_sec`
@@ -166,7 +168,7 @@ main.go
 - `GET /api/status`
 - `GET /api/logs`
 - `GET /api/logs/stream`
-- `POST /api/github/inspect`
+- `POST /api/sources/inspect` (`source_type` selects GitHub or feed; `POST /api/github/inspect` is an alias)
 - `GET /api/github/rate-limit` (quota per configured token; never returns tokens)
 
 ### Services (flat)
@@ -243,7 +245,7 @@ NSSM_PATH=C:\ProgramData\chocolatey\bin\nssm.exe
 DB_PATH=D:\apps\watcher\watcher.db
 API_PORT=8080
 API_BASE_URL=
-WATCHER_REPO_URL=https://github.com/fanboykun/watcher
+WATCHER_REPO_URL=https://github.com/fanboykun/watcher   # or an internal feed root (URL or UNC path) listing a "watcher" service
 GITHUB_DEPLOY_ENABLED=true
 ```
 

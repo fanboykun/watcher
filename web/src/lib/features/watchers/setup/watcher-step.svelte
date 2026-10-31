@@ -71,28 +71,28 @@
 			<Label for="checkInterval">Check Interval (sec)</Label>
 			<Input id="checkInterval" type="number" min="10" bind:value={model.ui.checkInterval} />
 		</div>
-		<div class="space-y-2">
-			<Label for="deploymentEnvironment">Deployment Environment</Label>
-			<Input
-				id="deploymentEnvironment"
-				bind:value={model.ui.deploymentEnvironment}
-				placeholder="production"
-			/>
-		</div>
-		<div class="space-y-2 md:col-span-2">
-			<Label for="watcherGitHubToken">Watcher GitHub Token Override</Label>
-			<Input
-				id="watcherGitHubToken"
-				type="password"
-				bind:value={model.ui.watcherGitHubToken}
-				disabled={!model.ui.useWatcherGitHubToken}
-				placeholder="Optional watcher-specific token"
-			/>
-			<div class="mt-2 flex items-center gap-2">
-				<Checkbox id="useWatcherGitHubToken" bind:checked={model.ui.useWatcherGitHubToken} />
-				<Label for="useWatcherGitHubToken">Use watcher-specific GitHub token</Label>
+		{#if model.ui.sourceType === 'github'}<div class="space-y-2">
+				<Label for="deploymentEnvironment">Deployment Environment</Label>
+				<Input
+					id="deploymentEnvironment"
+					bind:value={model.ui.deploymentEnvironment}
+					placeholder="production"
+				/>
 			</div>
-		</div>
+			<div class="space-y-2 md:col-span-2">
+				<Label for="watcherGitHubToken">Watcher GitHub Token Override</Label>
+				<Input
+					id="watcherGitHubToken"
+					type="password"
+					bind:value={model.ui.watcherGitHubToken}
+					disabled={!model.ui.useWatcherGitHubToken}
+					placeholder="Optional watcher-specific token"
+				/>
+				<div class="mt-2 flex items-center gap-2">
+					<Checkbox id="useWatcherGitHubToken" bind:checked={model.ui.useWatcherGitHubToken} />
+					<Label for="useWatcherGitHubToken">Use watcher-specific GitHub token</Label>
+				</div>
+			</div>{/if}
 		<div class="flex items-center gap-2 md:col-span-2">
 			<Checkbox id="healthChecksEnabled" bind:checked={model.ui.healthChecksEnabled} />
 			<Label for="healthChecksEnabled">Enable watcher-level health checks</Label>

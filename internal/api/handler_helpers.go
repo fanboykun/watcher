@@ -130,6 +130,9 @@ func enrichWatcherSecrets(w *database.Watcher) {
 	if w == nil {
 		return
 	}
+	feedSecret := strings.TrimSpace(w.FeedAuthSecret)
+	w.HasFeedAuthSecret = feedSecret != ""
+	w.FeedAuthSecretMasked = maskToken(feedSecret)
 	token := strings.TrimSpace(w.GitHubToken)
 	w.HasGitHubToken = token != ""
 	w.GitHubTokenMasked = maskToken(token)

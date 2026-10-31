@@ -10,7 +10,9 @@ import (
 type WatcherConfig struct {
 	Name                  string
 	ServiceName           string
+	SourceType            string // github | http | fs | s3; empty means github
 	MetadataURL           string
+	FeedAuth              FeedAuth // http and s3 sources only
 	ReleaseRef            string
 	DeploymentEnvironment string
 	GitHubToken           string
@@ -66,7 +68,9 @@ func WatcherConfigFromDB(w *database.Watcher) *WatcherConfig {
 	cfg := &WatcherConfig{
 		Name:                  w.Name,
 		ServiceName:           w.ServiceName,
+		SourceType:            strings.TrimSpace(w.SourceType),
 		MetadataURL:           w.MetadataURL,
+		FeedAuth:              FeedAuth{Type: w.FeedAuthType, Username: w.FeedAuthUsername, Header: w.FeedAuthHeader, Region: w.FeedAuthRegion, Secret: w.FeedAuthSecret},
 		ReleaseRef:            releaseRef,
 		DeploymentEnvironment: strings.TrimSpace(w.DeploymentEnvironment),
 		GitHubToken:           strings.TrimSpace(w.GitHubToken),

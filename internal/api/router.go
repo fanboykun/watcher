@@ -48,7 +48,8 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 	apiGroup.GET("/status", h.SystemStatus)
 	apiGroup.GET("/logs", h.AgentLogs)
 	apiGroup.GET("/logs/stream", h.StreamAgentLogs)
-	apiGroup.POST("/github/inspect", h.InspectGitHubRepo)
+	apiGroup.POST("/github/inspect", h.InspectGitHubRepo) // kept for older dashboards
+	apiGroup.POST("/sources/inspect", h.InspectGitHubRepo)
 	apiGroup.GET("/github/rate-limit", h.GitHubRateLimits)
 
 	// ── Services (flat, across all watchers) ──────────────

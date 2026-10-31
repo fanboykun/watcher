@@ -8,7 +8,13 @@ import "github.com/fanboykun/watcher/internal/database"
 type CreateWatcherRequest struct {
 	Name                            string                 `json:"name" binding:"required"`
 	ServiceName                     string                 `json:"service_name" binding:"required"`
+	SourceType                      string                 `json:"source_type"`
 	MetadataURL                     string                 `json:"metadata_url" binding:"required"`
+	FeedAuthType                    string                 `json:"feed_auth_type"`
+	FeedAuthUsername                string                 `json:"feed_auth_username"`
+	FeedAuthHeader                  string                 `json:"feed_auth_header"`
+	FeedAuthRegion                  string                 `json:"feed_auth_region"`
+	FeedAuthSecret                  string                 `json:"feed_auth_secret"`
 	ReleaseRef                      string                 `json:"release_ref"`
 	DeploymentEnvironment           string                 `json:"deployment_environment"`
 	GitHubToken                     string                 `json:"github_token"`
@@ -41,7 +47,13 @@ type CreateWatcherRequest struct {
 type UpdateWatcherRequest struct {
 	Name                            *string `json:"name"`
 	ServiceName                     *string `json:"service_name"`
+	SourceType                      *string `json:"source_type"`
 	MetadataURL                     *string `json:"metadata_url"`
+	FeedAuthType                    *string `json:"feed_auth_type"`
+	FeedAuthUsername                *string `json:"feed_auth_username"`
+	FeedAuthHeader                  *string `json:"feed_auth_header"`
+	FeedAuthRegion                  *string `json:"feed_auth_region"`
+	FeedAuthSecret                  *string `json:"feed_auth_secret"` // blank keeps the saved secret
 	ReleaseRef                      *string `json:"release_ref"`
 	DeploymentEnvironment           *string `json:"deployment_environment"`
 	GitHubToken                     *string `json:"github_token"`

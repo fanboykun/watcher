@@ -18,6 +18,7 @@
 	import ConfirmationDialog from '$lib/features/watchers/components/confirmation-dialog.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 	import { createWatcherDetail } from '$lib/features/watchers/detail/detail-controller.svelte';
+	import { isGitHubSource } from '$lib/features/watchers/presentation';
 	const model = createWatcherDetail();
 </script>
 
@@ -115,6 +116,7 @@
 	bind:open={model.ui.showRollbackDialog}
 	rollbackTargetVersion={model.ui.rollbackTargetVersion}
 	bind:rollbackReportGitHub={model.ui.rollbackReportGitHub}
+	canReportGitHub={isGitHubSource(model.watcher?.source_type)}
 />
 
 <!-- Confirm Action Dialog -->

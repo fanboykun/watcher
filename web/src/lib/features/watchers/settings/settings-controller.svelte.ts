@@ -4,8 +4,15 @@ import { forget, invalidate, message, watcherScope } from '$lib/query/client';
 import { untrack } from 'svelte';
 import { createCommand } from '$lib/query/command.svelte';
 import { page } from '$app/state';
-import { api, type Service, type Watcher } from '$lib/api';
+import {
+	api,
+	type FeedAuthDraft,
+	type ReleaseSourceType,
+	type Service,
+	type Watcher
+} from '$lib/api';
 import type { WebhookSelectionState } from '$lib/webhooks';
+import { feedAuthTypeFor, takesFeedCredentials } from '$lib/features/watchers/presentation';
 import { Save } from '@lucide/svelte';
 export function createWatcherSettings() {
 	const id = $derived(Number(page.params.id));
@@ -40,6 +47,8 @@ export function createWatcherSettings() {
 		confirmActionLabel: 'Confirm',
 		confirmActionClass: '',
 		editInterval: 60,
+		editSourceType: 'github' as ReleaseSourceType,
+		editFeedAuth: { type: '', username: '', header: '', region: '', secret: '' } as FeedAuthDraft,
 		editMetadataURL: '',
 		editReleaseRef: 'latest',
 		editAutoDeploy: true,
@@ -91,6 +100,14 @@ export function createWatcherSettings() {
 		if (!watcher) return;
 		ui.editInterval = watcher.check_interval_sec;
 		ui.editAutoDeploy = watcher.auto_deploy ?? true;
+		ui.editSourceType = watcher.source_type || 'github';
+		ui.editFeedAuth = {
+			type: watcher.feed_auth_type || '',
+			username: watcher.feed_auth_username || '',
+			header: watcher.feed_auth_header || '',
+			region: watcher.feed_auth_region || '',
+			secret: ''
+		};
 		ui.editMetadataURL = watcher.metadata_url;
 		ui.editReleaseRef = watcher.release_ref || 'latest';
 		ui.editHcEnabled = watcher.hc_enabled;
@@ -121,7 +138,16 @@ export function createWatcherSettings() {
 			const saved = await saveMutation.mutateAsync({
 				check_interval_sec: ui.editInterval,
 				auto_deploy: ui.editAutoDeploy,
+				source_type: ui.editSourceType,
 				metadata_url: ui.editMetadataURL,
+				...(takesFeedCredentials(ui.editSourceType) && {
+					feed_auth_type: feedAuthTypeFor(ui.editSourceType, ui.editFeedAuth.type),
+					feed_auth_username: ui.editFeedAuth.username.trim(),
+					feed_auth_header: ui.editFeedAuth.header.trim(),
+					feed_auth_region: ui.editFeedAuth.region.trim(),
+					// Blank keeps the saved secret.
+					feed_auth_secret: ui.editFeedAuth.secret.trim()
+				}),
 				release_ref: ui.editReleaseRef.trim() || 'latest',
 				deployment_environment: ui.editDeploymentEnvironment,
 				github_token: ui.editUseGlobalToken

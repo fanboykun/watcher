@@ -108,6 +108,17 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 		return
 	}
 
+	sourceType, metadataURL, err := resolveWatcherSource(req.SourceType, req.MetadataURL, req.ReleaseRef)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	feedAuth, err := resolveFeedAuth(sourceType, agent.FeedAuth{Type: req.FeedAuthType, Username: req.FeedAuthUsername, Header: req.FeedAuthHeader, Region: req.FeedAuthRegion, Secret: req.FeedAuthSecret})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+
 	autoDeploy := true
 	if req.AutoDeploy != nil {
 		autoDeploy = *req.AutoDeploy
@@ -116,7 +127,13 @@ func (h *Handler) CreateWatcher(c *gin.Context) {
 	watcher := database.Watcher{
 		Name:                            req.Name,
 		ServiceName:                     req.ServiceName,
-		MetadataURL:                     req.MetadataURL,
+		SourceType:                      sourceType,
+		MetadataURL:                     metadataURL,
+		FeedAuthType:                    feedAuth.Type,
+		FeedAuthUsername:                feedAuth.Username,
+		FeedAuthHeader:                  feedAuth.Header,
+		FeedAuthRegion:                  feedAuth.Region,
+		FeedAuthSecret:                  feedAuth.Secret,
 		ReleaseRef:                      defaultReleaseRef(req.ReleaseRef),
 		DeploymentEnvironment:           strings.TrimSpace(req.DeploymentEnvironment),
 		GitHubToken:                     strings.TrimSpace(req.GitHubToken),
@@ -261,6 +278,47 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 		return
 	}
 
+	nextSourceType, nextMetadataURL, nextReleaseRef := watcher.SourceType, watcher.MetadataURL, watcher.ReleaseRef
+	if req.SourceType != nil {
+		nextSourceType = *req.SourceType
+	}
+	if req.MetadataURL != nil {
+		nextMetadataURL = *req.MetadataURL
+	}
+	if req.ReleaseRef != nil {
+		nextReleaseRef = *req.ReleaseRef
+	}
+	nextSourceType, nextMetadataURL, err = resolveWatcherSource(nextSourceType, nextMetadataURL, nextReleaseRef)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	nextFeedAuth := agent.FeedAuth{Type: watcher.FeedAuthType, Username: watcher.FeedAuthUsername, Header: watcher.FeedAuthHeader, Region: watcher.FeedAuthRegion, Secret: watcher.FeedAuthSecret}
+	if req.FeedAuthType != nil {
+		nextFeedAuth.Type = *req.FeedAuthType
+	}
+	if req.FeedAuthUsername != nil {
+		nextFeedAuth.Username = *req.FeedAuthUsername
+	}
+	if req.FeedAuthHeader != nil {
+		nextFeedAuth.Header = *req.FeedAuthHeader
+	}
+	if req.FeedAuthRegion != nil {
+		nextFeedAuth.Region = *req.FeedAuthRegion
+	}
+	if req.FeedAuthSecret != nil && strings.TrimSpace(*req.FeedAuthSecret) != "" {
+		nextFeedAuth.Secret = *req.FeedAuthSecret
+	}
+	// Leaving http/s3 drops the credential unless the request explicitly sets one.
+	if nextSourceType != agent.SourceHTTP && nextSourceType != agent.SourceS3 && req.FeedAuthType == nil {
+		nextFeedAuth = agent.FeedAuth{}
+	}
+	nextFeedAuth, err = resolveFeedAuth(nextSourceType, nextFeedAuth)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+
 	updates := map[string]any{}
 	if req.Name != nil {
 		updates["name"] = *req.Name
@@ -268,8 +326,18 @@ func (h *Handler) UpdateWatcher(c *gin.Context) {
 	if req.ServiceName != nil {
 		updates["service_name"] = *req.ServiceName
 	}
-	if req.MetadataURL != nil {
-		updates["metadata_url"] = *req.MetadataURL
+	if req.SourceType != nil {
+		updates["source_type"] = nextSourceType
+	}
+	if req.MetadataURL != nil || req.SourceType != nil {
+		updates["metadata_url"] = nextMetadataURL
+	}
+	if req.SourceType != nil || req.FeedAuthType != nil || req.FeedAuthUsername != nil || req.FeedAuthHeader != nil || req.FeedAuthRegion != nil || req.FeedAuthSecret != nil {
+		updates["feed_auth_type"] = nextFeedAuth.Type
+		updates["feed_auth_username"] = nextFeedAuth.Username
+		updates["feed_auth_header"] = nextFeedAuth.Header
+		updates["feed_auth_region"] = nextFeedAuth.Region
+		updates["feed_auth_secret"] = nextFeedAuth.Secret
 	}
 	if req.ReleaseRef != nil {
 		updates["release_ref"] = defaultReleaseRef(*req.ReleaseRef)
