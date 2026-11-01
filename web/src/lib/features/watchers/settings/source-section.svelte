@@ -24,7 +24,7 @@
 				></Card.Header
 			><Card.Content class="space-y-4"
 				><div class="space-y-2">
-					<Label>Release source</Label>
+					<Label>Source type</Label>
 					<SourceTypePicker bind:value={model.ui.editSourceType} idPrefix="editSource" />
 				</div>
 				<div class="space-y-2">

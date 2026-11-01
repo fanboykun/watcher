@@ -2,6 +2,7 @@
 	import * as RadioGroup from '$lib/components/ui/radio-group';
 	import { Label } from '$lib/components/ui/label';
 	import type { ReleaseSourceType } from '$lib/api';
+	import { cn } from '$lib/utils';
 
 	let {
 		value = $bindable(),
@@ -45,7 +46,10 @@
 	{#each options as option (option.value)}
 		<Label
 			for="{idPrefix}-{option.value}"
-			class="flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 p-3"
+			class={cn(
+				'flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 p-3 transition-colors',
+				value === option.value && 'border-primary bg-primary/5'
+			)}
 		>
 			<RadioGroup.Item id="{idPrefix}-{option.value}" value={option.value} class="mt-1" />
 			<div>

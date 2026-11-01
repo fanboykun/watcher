@@ -6,6 +6,7 @@
 	import { Check } from '@lucide/svelte';
 	import type { createWatcherSetup } from '$lib/features/watchers/setup/setup-controller.svelte';
 	let { model }: { model: ReturnType<typeof createWatcherSetup> } = $props();
+	import { isGitHubSource, sourceLocationLabel } from '$lib/features/watchers/presentation';
 </script>
 
 <div class="space-y-4">
@@ -60,7 +61,11 @@
 			/>
 		</div>
 		<div class="space-y-2 md:col-span-2">
-			<Label for="metadataURL">Metadata URL</Label>
+			<Label for="metadataURL"
+				>{isGitHubSource(model.ui.sourceType)
+					? 'Metadata URL'
+					: sourceLocationLabel(model.ui.sourceType)}</Label
+			>
 			<Input id="metadataURL" bind:value={model.ui.metadataURL} />
 		</div>
 		<div class="space-y-2 md:col-span-2">
