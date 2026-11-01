@@ -98,7 +98,7 @@ Configure Watcher with the repo URL or direct manifest URL. During creation, Wat
 
 ## Internal Release Feeds
 
-A watcher with `source_type = http` reads the same manifest from company storage instead of GitHub; `source_type = fs` reads it from a local directory or SMB/UNC share. Its `metadata_url` is the feed root, and Watcher polls `<feed root>/version.json`:
+A watcher with `source_type = http` reads the same manifest from company storage instead of GitHub; `source_type = fs` reads it from a local directory or SMB/UNC share, and `source_type = s3` from a private S3-compatible bucket. Its `metadata_url` is the feed root, and Watcher polls `<feed root>/version.json`:
 
 ```text
 <feed root>/

@@ -5,7 +5,8 @@ Their releases are built by a self-hosted runner inside the same network and
 published to company storage (MinIO/S3, an IIS/nginx directory, a Nexus or
 Artifactory raw repository). A watcher with `source_type = http` polls that
 storage instead of GitHub. A watcher with `source_type = fs` reads the same
-tree from a local directory or SMB/UNC share.
+tree from a local directory or SMB/UNC share, and `source_type = s3` reads it
+from a private S3-compatible bucket.
 
 A feed is a plain directory tree, so any static file server can host it:
 
@@ -100,6 +101,16 @@ a custom header), stored write-only on the watcher and added per request hop
 only when the hop's scheme, host and port match the feed root, so manifests
 and redirects cannot send it elsewhere. `fs` feeds authenticate as the
 Windows account Watcher runs as.
+
+An `s3` feed is an `http` feed whose requests are signed with AWS Signature
+V4 (`feed_auth_type = sigv4`: access key ID, secret key, region defaulting to
+`us-east-1`). Its root is the bucket URL plus prefix, either path-style
+(`https://minio.internal:9000/<bucket>/<prefix>`, usual for MinIO) or
+virtual-hosted (`https://<bucket>.s3.<region>.amazonaws.com/<prefix>`).
+Watcher signs exactly the request it sends, so no addressing-style setting is
+needed. Signing is hand-written (bodiless GET only) to keep the Windows
+binary free of an SDK; it is checked against the AWS reference signature and
+a real MinIO server.
 
 GitHub-only features are skipped for feed watchers rather than failing: the
 GitHub Deployment API (deploy and rollback reporting) and GitHub repository

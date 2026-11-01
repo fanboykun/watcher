@@ -1,0 +1,330 @@
+name: Release Go NSSM Service (internal feed)
+
+# Watcher-ready release template for a single Go repo deployed as NSSM services.
+# Produces a flat Windows amd64 zip plus version.json.
+# Internal-feed variant: runs on a self-hosted runner inside the private
+# network and publishes to a MinIO/S3 release feed instead of GitHub Releases.
+# Only the git tag and job logs reach GitHub; the artifact never leaves the network.
+#
+# Setup (see "Self-hosted runner release feeds" in the Watcher INSTALL.md):
+#   1. Copy workflows/scripts/publish-feed.sh from the Watcher repo to
+#      .github/scripts/publish-feed.sh in this repo.
+#   2. Register a Linux self-hosted runner with the "release-feed" label in a
+#      runner group limited to release repos. It needs bash, zip, jq and mc.
+#   3. Give the runner write access to the feed: either an mc alias named
+#      "feed" configured on the host (preferred: no secret leaves the network),
+#      or FEED_ENDPOINT + FEED_ACCESS_KEY + FEED_SECRET_KEY repository secrets.
+#   4. Point watchers at the feed root with source_type "s3" (or "http" through
+#      a gateway), e.g. https://minio.internal:9000/releases/<app>.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "pkg/**"
+      - "static/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+    inputs:
+      force_bump:
+        description: "Force a specific bump (patch|minor|major). Empty manual runs default to patch."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  # Every feed publish from this repo is serialized: they share releases.json
+  # and, in a monorepo, the root version.json.
+  group: release-feed-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  # mc path of the feed root: <alias>/<bucket>/<prefix>
+  FEED_TARGET: feed/releases/admin-be
+  APP_NAME: admin-be
+  APP_DISPLAY_NAME: Admin Backend
+  GO_VERSION: "1.25.6"
+  GO_PRIVATE: ""
+  WEB_BINARY: web.exe
+  WEB_ENTRY: ./cmd/api
+  WINDOWS_SERVICE_NAME: admin-be
+  START_ARGUMENTS: ""
+  ENV_FILE: .env
+  HEALTH_CHECK_URL: http://localhost:8080/health
+  WORKER_BINARY: worker.exe
+  WORKER_ENTRY: ./cmd/worker
+
+jobs:
+  release:
+    runs-on: [self-hosted, release-feed]
+    # environment: release-feed  # uncomment to require reviewer approval before publishing
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    name: Release ${{ env.APP_DISPLAY_NAME }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine version bump and tag
+        id: semver
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          CURRENT_SHA: ${{ github.sha }}
+          FORCE_RAW: ${{ github.event.inputs.force_bump }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force origin "+refs/tags/*:refs/tags/*" >/dev/null 2>&1 || true
+
+          LATEST_TAG="$(git tag --list "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 1 || true)"
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_VER="v0.0.0"
+          else
+            LATEST_VER="$LATEST_TAG"
+          fi
+
+          echo "----- Tag lookup -----"
+          echo "Top 5 tags by semver:"
+          git tag --list "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 5 | sed 's/^/  /' || true
+          echo "Selected latest tag : ${LATEST_TAG:-<none>}"
+          echo "Working from version: ${LATEST_VER}"
+          echo "----------------------"
+
+          VERSION="${LATEST_VER#v}"
+          MAJOR="$(echo "$VERSION" | cut -d. -f1)"
+          MINOR="$(echo "$VERSION" | cut -d. -f2)"
+          PATCH="$(echo "$VERSION" | cut -d. -f3)"
+
+          COMMIT_SUBJECT="$(git log -1 --pretty=%s "$CURRENT_SHA" 2>/dev/null || true)"
+          COMMIT_BODY="$(git log -1 --pretty=%b "$CURRENT_SHA" 2>/dev/null || true)"
+          COMMIT_FULL="$(git log -1 --pretty=%B "$CURRENT_SHA" 2>/dev/null || true)"
+          echo "Latest commit subject: ${COMMIT_SUBJECT:-<none>}"
+
+          PR_NUMBER=""
+          PR_TITLE=""
+          PR_BODY=""
+          PR_URL=""
+          if command -v gh >/dev/null 2>&1; then
+            PR_NUMBER="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${CURRENT_SHA}/pulls" \
+              -H "Accept: application/vnd.github+json" \
+              --jq '.[0].number // empty' 2>/dev/null || true)"
+            if [ -n "$PR_NUMBER" ]; then
+              PR_TITLE="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title --jq '.title' 2>/dev/null || true)"
+              PR_BODY="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""' 2>/dev/null || true)"
+              PR_URL="https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}"
+              echo "Resolved PR: #${PR_NUMBER} ${PR_TITLE}"
+            else
+              echo "No PR associated with HEAD commit; using commit message for release notes."
+            fi
+          else
+            echo "gh CLI not available; using commit message for release notes."
+          fi
+
+          FORCE="$(echo "${FORCE_RAW:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          BUMP=""
+          CHANGELOG=""
+
+          if echo "$COMMIT_FULL" | grep -qiE "BREAKING[[:space:]]CHANGE|^[a-z]+(\([^)]+\))?!:"; then
+            BUMP="major"
+          elif echo "$COMMIT_SUBJECT" | grep -qiE "^feat(\([^)]+\))?:"; then
+            BUMP="minor"
+          elif echo "$COMMIT_SUBJECT" | grep -qiE "^(fix|perf|refactor)(\([^)]+\))?:"; then
+            BUMP="patch"
+          elif echo "$COMMIT_SUBJECT" | grep -qiE "^(chore|docs|ci|style|test|build)(\([^)]+\))?:"; then
+            echo "Non-releasable conventional type: $COMMIT_SUBJECT"
+          elif [ -n "$COMMIT_SUBJECT" ]; then
+            echo "Non-conventional commit subject; defaulting to patch because path filter and skip-ci gate passed."
+            BUMP="patch"
+          fi
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -z "$FORCE" ]; then
+            FORCE="patch"
+            echo "Manual run with no force_bump; defaulting to patch."
+          fi
+
+          if [ -n "$FORCE" ]; then
+            case "$FORCE" in
+              major|minor|patch) ;;
+              *) echo "Invalid force_bump: '$FORCE'. Allowed: patch|minor|major" >&2; exit 1 ;;
+            esac
+            BUMP="$FORCE"
+          fi
+
+          if [ -z "$BUMP" ]; then
+            echo "No releasable change and no force_bump; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -n "$PR_TITLE" ]; then
+            CHANGELOG="* PR #${PR_NUMBER}: ${PR_TITLE}"
+          elif [ -n "$COMMIT_SUBJECT" ]; then
+            CHANGELOG="* ${COMMIT_SUBJECT}"
+          else
+            CHANGELOG="* Manual ${BUMP} release"
+          fi
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VER="v${MAJOR}.${MINOR}.${PATCH}"
+          NEW_TAG="${NEW_VER}"
+
+          echo "Bump type : $BUMP"
+          echo "Old tag   : ${LATEST_TAG:-<none>}"
+          echo "New tag   : $NEW_TAG"
+          echo "Changelog : $CHANGELOG"
+
+          if git rev-parse -q --verify "refs/tags/${NEW_TAG}" >/dev/null; then
+            echo "Tag $NEW_TAG already exists locally; skipping create."
+          elif git ls-remote --exit-code --tags origin "refs/tags/${NEW_TAG}" >/dev/null 2>&1; then
+            echo "Tag $NEW_TAG already exists on origin; skipping create."
+          else
+            git tag "$NEW_TAG"
+            git push origin "$NEW_TAG"
+            echo "Tag $NEW_TAG pushed."
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "new_ver=$NEW_VER" >> "$GITHUB_OUTPUT"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+          echo "bump_type=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "pr_title=$PR_TITLE" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            printf "%s\n" "$CHANGELOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "pr_body<<PR_BODY_EOF"
+            printf "%s\n" "$PR_BODY"
+            echo "PR_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "commit_body<<COMMIT_BODY_EOF"
+            printf "%s\n" "$COMMIT_BODY"
+            echo "COMMIT_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+
+      - uses: actions/setup-go@v5
+        if: steps.semver.outputs.should_release == 'true'
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Configure private Go modules
+        if: steps.semver.outputs.should_release == 'true' && env.GO_PRIVATE != ''
+        env:
+          GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          echo "GOPRIVATE=${{ env.GO_PRIVATE }}" >> "$GITHUB_ENV"
+          git config --global url."https://${GH_ACCESS_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Build Windows amd64 binaries
+        if: steps.semver.outputs.should_release == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -ldflags="-X main.Version=${{ steps.semver.outputs.new_ver }}" \
+            -o "dist/${{ env.WEB_BINARY }}" \
+            "${{ env.WEB_ENTRY }}"
+          if [ -n "${{ env.WORKER_ENTRY }}" ]; then
+            CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+              -ldflags="-X main.Version=${{ steps.semver.outputs.new_ver }}" \
+              -o "dist/${{ env.WORKER_BINARY }}" \
+              "${{ env.WORKER_ENTRY }}"
+          fi
+          echo "===== BUILD OUTPUT CHECK ====="
+          ls -lah dist
+          echo "===== BUNDLE INPUT SIZE CHECK ====="
+          du -sh dist
+
+      - name: Package release zip
+        id: zip
+        if: steps.semver.outputs.should_release == 'true'
+        run: |
+          set -euo pipefail
+          ZIP_NAME="${{ env.APP_NAME }}-${{ steps.semver.outputs.new_ver }}-windows-amd64.zip"
+          cd dist && zip -r "../${ZIP_NAME}" . && cd ..
+          BUNDLE_SIZE="$(du -h "${ZIP_NAME}" | cut -f1)"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "bundle_size=${BUNDLE_SIZE}" >> "$GITHUB_OUTPUT"
+          echo "Packaged: ${ZIP_NAME} (${BUNDLE_SIZE})"
+
+      - name: Configure feed credentials
+        if: steps.semver.outputs.should_release == 'true'
+        env:
+          FEED_ENDPOINT: ${{ secrets.FEED_ENDPOINT }}
+          FEED_ACCESS_KEY: ${{ secrets.FEED_ACCESS_KEY }}
+          FEED_SECRET_KEY: ${{ secrets.FEED_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          # Without secrets, mc uses the "feed" alias configured on the runner host.
+          if [ -n "${FEED_ACCESS_KEY}" ]; then
+            SCHEME="${FEED_ENDPOINT%%://*}"
+            HOST="${FEED_ENDPOINT#*://}"
+            echo "::add-mask::${FEED_SECRET_KEY}"
+            echo "MC_HOST_feed=${SCHEME}://${FEED_ACCESS_KEY}:${FEED_SECRET_KEY}@${HOST}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish to release feed
+        id: publish
+        if: steps.semver.outputs.should_release == 'true'
+        env:
+          SERVICE: ${{ env.APP_NAME }}
+          VERSION: ${{ steps.semver.outputs.new_ver }}
+          TAG: ${{ steps.semver.outputs.new_tag }}
+          ZIP_PATH: ${{ steps.zip.outputs.zip_name }}
+          RELEASE_NAME: "${{ env.APP_DISPLAY_NAME }} ${{ steps.semver.outputs.new_ver }}"
+          NOTES: ${{ steps.semver.outputs.changelog }}
+          HINT_WINDOWS_SERVICE_NAME: ${{ env.WINDOWS_SERVICE_NAME }}
+          HINT_BINARY_NAME: ${{ env.WEB_BINARY }}
+          HINT_START_ARGUMENTS: ${{ env.START_ARGUMENTS }}
+          HINT_ENV_FILE: ${{ env.ENV_FILE }}
+          HINT_HEALTH_CHECK_URL: ${{ env.HEALTH_CHECK_URL }}
+        run: |
+          set -euo pipefail
+          SERVICE_HINTS="$(jq -cn \
+            --arg windows_service_name "$HINT_WINDOWS_SERVICE_NAME" \
+            --arg binary_name "$HINT_BINARY_NAME" \
+            --arg start_arguments "$HINT_START_ARGUMENTS" \
+            --arg env_file "$HINT_ENV_FILE" \
+            --arg health_check_url "$HINT_HEALTH_CHECK_URL" \
+            '{app_kind: "nssm", windows_service_name: $windows_service_name, binary_name: $binary_name, start_arguments: $start_arguments, env_file: $env_file, health_check_url: $health_check_url}')"
+          export SERVICE_HINTS
+          bash .github/scripts/publish-feed.sh
+
+      - name: Print release summary
+        if: steps.semver.outputs.should_release == 'true'
+        run: |
+          echo "========================================"
+          echo "Released: ${{ env.APP_DISPLAY_NAME }} ${{ steps.semver.outputs.new_ver }} (${{ steps.semver.outputs.bump_type }} bump)"
+          echo "Feed root: ${{ env.FEED_TARGET }}"
+          echo "Artifact: ${{ steps.publish.outputs.artifact_path }}"
+          echo "SHA-256: ${{ steps.publish.outputs.sha256 }}"
+          echo "========================================"
+
+      - name: Nothing to release
+        if: steps.semver.outputs.should_release != 'true'
+        run: |
+          echo "No release: non-releasable conventional commit type and no force_bump."

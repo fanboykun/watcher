@@ -11,7 +11,7 @@ A configured deployment target that polls a release source (GitHub or an interna
 _Avoid_: job, task, monitor
 
 **Release source**:
-Where a watcher reads releases from, set by `source_type`: `github` (repository releases or a `version.json` release asset) `http` (an internal release feed over HTTP(S)) or `fs` (the same feed on a local directory or SMB/UNC share).
+Where a watcher reads releases from, set by `source_type`: `github` (repository releases or a `version.json` release asset) `http` (an internal release feed over HTTP(S)), `fs` (the same feed on a local directory or SMB/UNC share) or `s3` (the same feed in a private S3-compatible bucket, read with SigV4).
 _Avoid_: provider, backend, origin
 
 **Release feed**:

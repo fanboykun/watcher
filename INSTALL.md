@@ -268,6 +268,7 @@ Hosts that cannot reach `github.com` can poll a release feed on company storage 
 | GitHub (default) | `github` | Repository URL or `version.json` release asset URL |
 | Internal release feed over HTTP(S) | `http` | Feed root, e.g. `https://releases.internal/apps/my-project` |
 | File share feed | `fs` | Feed directory, e.g. `\\fileserver\releases\my-project` or `D:\releases\my-project` |
+| Private S3 / MinIO bucket | `s3` | Bucket URL plus prefix, e.g. `https://minio.internal:9000/releases/my-project` |
 
 The feed layout and publishing order are described in `docs/version-json.md` and `docs/adr/0002-internal-release-feed.md`. A feed watcher follows `latest` or a pinned tag (`releases/<tag>/version.json`), and its **Feed releases** tab lists the feed's `releases.json` for downloading and deploying a specific version. Feed watchers never receive the GitHub token and skip GitHub Deployment reporting; set `GITHUB_DEPLOY_ENABLED=false` on hosts with no GitHub access at all.
 
@@ -294,6 +295,45 @@ When the feed sits behind Nexus/Artifactory, an authenticating proxy or an objec
 | `header` | `<header>: <secret>` (e.g. `X-JFrog-Art-Api`) | `feed_auth_header`, `feed_auth_secret` |
 
 The secret is write-only: the API returns only `has_feed_auth_secret` and a masked value, and a blank `feed_auth_secret` on update keeps the saved one. The credential is sent only to the feed root's scheme, host and port. An `artifact_url` on another host, or a redirect to one, is fetched without it, and an `https` feed's credential is never sent over plain `http`. A `401`/`403` shows as `feed authentication failed` on the poll or deploy.
+
+### Private S3 / MinIO buckets
+
+Choose **S3 / MinIO feed** and enter a read-only access key for the bucket (`feed_auth_type: "sigv4"`, `feed_auth_username` = access key ID, `feed_auth_secret` = secret key, optional `feed_auth_region`, default `us-east-1`, which MinIO accepts). The bucket stays private; Watcher signs each request with AWS Signature V4. Use path-style URLs for MinIO (`https://minio.internal:9000/<bucket>/<prefix>`) or virtual-hosted URLs for AWS (`https://<bucket>.s3.<region>.amazonaws.com/<prefix>`). Host clocks must be within 15 minutes of the storage server, or every request fails as `feed authentication failed (HTTP 403)`.
+
+A minimal MinIO policy for Watcher hosts:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::releases/*"] }
+  ]
+}
+```
+
+### Self-hosted runner release feeds
+
+To keep artifacts inside the private network, build and publish them on a self-hosted GitHub Actions runner that sits next to the storage:
+
+```text
+github.com  ◄─(outbound 443 only)─  self-hosted runner ──publish──►  MinIO/S3 feed  ◄──poll──  Watcher hosts (no internet)
+```
+
+The `*-internal.yml` templates in `workflows/` (Go NSSM, Bun IIS, Go monorepo) keep the normal tagging logic but publish with `workflows/scripts/publish-feed.sh` (copy it to `.github/scripts/publish-feed.sh` in the app repo) instead of creating a GitHub Release. The script:
+
+- refuses to overwrite an existing `releases/<tag>/`, so re-running a release fails instead of changing a deployed version;
+- records `sha256` and `size`, writes relative `artifact_url`s, and keeps other services' entries in the root `version.json` (monorepos share one feed root);
+- uploads in order: artifact, `releases/<tag>/version.json`, `releases.json`, then `version.json`; prereleases are indexed without moving `latest`;
+- aborts on any storage read error other than "object does not exist", so a credential problem can never truncate `releases.json`.
+
+Operating rules:
+
+- **Runner:** Linux with `bash`, `zip`, `jq` and `mc`, labeled `release-feed`. Never attach it to a public repository (pull requests from forks would run inside your network); put it in a runner group limited to the release repos, and prefer ephemeral runners (`--ephemeral`).
+- **Network:** the runner needs outbound HTTPS to GitHub only; Watcher hosts need only the feed.
+- **Credentials:** prefer an `mc` alias named `feed` configured on the runner host, so the storage secret never exists in GitHub; otherwise set `FEED_ENDPOINT`, `FEED_ACCESS_KEY` and `FEED_SECRET_KEY` repository secrets. Give the runner write access to the release prefix only, and Watcher hosts read-only (`s3:GetObject`).
+- **Approval:** uncomment `environment: release-feed` in the template to require a reviewer before publishing.
+- **GitHub reporting:** set `GITHUB_DEPLOY_ENABLED=false` on Watcher hosts without GitHub access.
+- **Source code** still lives on github.com; keeping the code itself private requires GitHub Enterprise Server.
 
 ### File share permissions
 
