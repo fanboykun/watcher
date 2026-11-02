@@ -1,4 +1,10 @@
-import type { ReleaseInfo, CatalogDownload, ReleaseCatalogResponse } from './types';
+import type {
+	ReleaseInfo,
+	CatalogDownload,
+	ReleaseCatalogResponse,
+	ReleaseMark,
+	RollbackConfig
+} from './types';
 import { request } from './transport';
 export const releasesApi = {
 	getReleaseCatalog: (id: number, page = 1, signal?: AbortSignal) =>
@@ -19,8 +25,25 @@ export const releasesApi = {
 			{ method: 'POST' }
 		),
 	watcherVersionCatalog: (id: number, signal?: AbortSignal) =>
-		request<{ versions: ReleaseInfo[]; downloads: CatalogDownload[]; current_version: string }>(
-			`/watchers/${id}/versions`,
-			{ signal }
-		)
+		request<{
+			versions: ReleaseInfo[];
+			downloads: CatalogDownload[];
+			marks: ReleaseMark[];
+			/** Versions with saved configuration drafts that a manual rollback can apply. */
+			draft_versions: string[];
+			current_version: string;
+		}>(`/watchers/${id}/versions`, { signal }),
+	rollbackConfig: (id: number, version: string, signal?: AbortSignal) =>
+		request<RollbackConfig>(`/watchers/${id}/versions/${encodeURIComponent(version)}/config`, {
+			signal
+		}),
+	blockRelease: (id: number, version: string, reason: string) =>
+		request<ReleaseMark>(`/watchers/${id}/versions/${encodeURIComponent(version)}/block`, {
+			method: 'PUT',
+			body: JSON.stringify({ reason })
+		}),
+	unblockRelease: (id: number, version: string) =>
+		request<ReleaseMark>(`/watchers/${id}/versions/${encodeURIComponent(version)}/block`, {
+			method: 'DELETE'
+		})
 };

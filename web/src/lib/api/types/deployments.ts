@@ -1,3 +1,5 @@
+import type { ServiceConfigFile } from './services';
+
 export interface DeployLog {
 	id: number;
 	watcher_id: number;
@@ -33,6 +35,40 @@ export interface ReleaseInfo {
 	size_human: string;
 	is_current: boolean;
 	has_snapshot: boolean;
+}
+
+/** What Watcher knows about one version: its published notes, and whether it is blocked. */
+export interface ReleaseMark {
+	id: number;
+	watcher_id: number;
+	version: string;
+	tag: string;
+	title: string;
+	notes: string;
+	url: string;
+	published_at: string | null;
+	blocked_at: string | null;
+	block_reason: string;
+}
+
+/** A retained version's saved configuration and the draft a manual rollback would apply. */
+export interface RollbackConfigService {
+	service_id: number;
+	service_name: string;
+	env_file: string;
+	snapshot_env: string;
+	snapshot_files: ServiceConfigFile[];
+	has_draft: boolean;
+	draft_env: string;
+	/** Null keeps the saved managed files. */
+	draft_files: ServiceConfigFile[] | null;
+}
+
+export interface RollbackConfig {
+	version: string;
+	source: string;
+	captured_at: string;
+	services: RollbackConfigService[];
 }
 
 export interface CatalogAsset {
@@ -71,6 +107,7 @@ export interface ReleaseCatalogResponse {
 	repository: string;
 	releases: CatalogRelease[];
 	downloads: CatalogDownload[];
+	marks: ReleaseMark[];
 	page: number;
 	has_next: boolean;
 }

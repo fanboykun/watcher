@@ -11,7 +11,9 @@ export const keys = {
 		['watcher', id, 'candidate', target, selection] as const,
 	polls: (id: number, page: number, size: number, status: string) =>
 		['watcher', id, 'polls', status, page, size] as const,
-	snapshot: (id: number, version: string) => ['watcher', id, 'snapshot', version] as const,
+	// Under the watcher's versions key, so refreshing versions refreshes it too.
+	rollbackConfig: (id: number, version: string) =>
+		['watcher', id, 'versions', version, 'config'] as const,
 	logs: (id: number | undefined, lines: number, source: string, trace: string) =>
 		['logs', id ?? 'agent', source, trace, lines] as const
 };

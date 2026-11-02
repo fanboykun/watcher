@@ -18,7 +18,10 @@
 	import ConfirmationDialog from '$lib/features/watchers/components/confirmation-dialog.svelte';
 	import RequestLoading from '$lib/components/request-loading.svelte';
 	import { createWatcherDetail } from '$lib/features/watchers/detail/detail-controller.svelte';
+	import { isBlocked, markFor } from '$lib/features/watchers/releases/release-marks';
 	const model = createWatcherDetail();
+	const currentMark = $derived(markFor(model.marks, model.watcher?.current_version ?? ''));
+	const rollbackHasDraft = $derived(model.draftVersions.includes(model.ui.rollbackTargetVersion));
 </script>
 
 {#if !model.loading && !model.watcher}
@@ -75,6 +78,20 @@
 				</div>
 			{/if}
 
+			{#if model.watcher.current_version && isBlocked(currentMark)}
+				<div
+					role="alert"
+					class="mb-4 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
+				>
+					<AlertCircle class="mt-0.5 h-4 w-4 shrink-0" />
+					<span class="min-w-0 break-words">
+						<strong>The running version is blocked.</strong>
+						<code>{model.watcher.current_version}</code>: {currentMark?.block_reason}. Watcher will
+						not redeploy it; roll back to an unblocked version from Versions.
+					</span>
+				</div>
+			{/if}
+
 			{#if model.hasActiveRollbackPin(model.watcher)}
 				<div
 					class="section-toolbar mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-500"
@@ -110,7 +127,11 @@
 <RollbackDialog
 	errorMessage={model.ui.error}
 	onRollback={(version, report) =>
-		model.runPending('rollback', () => model.rollback(version, report))}
+		model.runPending('rollback', () =>
+			model.rollback(version, report, model.ui.rollbackUseDraft && rollbackHasDraft)
+		)}
+	hasDraft={rollbackHasDraft}
+	bind:useDraft={model.ui.rollbackUseDraft}
 	pending={model.pendingAction === 'rollback'}
 	bind:open={model.ui.showRollbackDialog}
 	rollbackTargetVersion={model.ui.rollbackTargetVersion}

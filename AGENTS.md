@@ -51,6 +51,14 @@ main.go
   - a rate-limited poll records poll status `rate_limited` and returns without error
   - a rate-limited artifact download waits up to 15 minutes, then closes the attempt as `deferred` (not counted by retry suspension, no rollback, watcher status restored)
   - a deploy is not started when the token cannot afford it (`deployRequestBudget`)
+- Blocked releases (`release_marks.blocked_at`) are never deployed:
+  - polling records poll status `blocked` and stays on the current version; a queued manual redeploy of a blocked target closes as `blocked`
+  - approve, redeploy (of a blocked current version), catalog select/deploy and manual rollback return 409
+  - automatic rollback skips a blocked previous version and restores the newest unblocked retained release with a valid config snapshot, or none
+  - blocked versions stay on disk but do not count toward `max_kept_versions`
+- Manual rollback can apply configuration drafts saved for exactly that version (`service_config_revisions.target_version = <version>`, never `next`):
+  - only when the request sets `use_draft: true`; the snapshot is rewritten with the drafts after admission, restored if activation fails, and the drafts are consumed on success (snapshot source `rollback_edit`)
+  - automatic rollback after a failed deploy never applies drafts
 - GitHub settings precedence is watcher-first:
   - deployment environment: `watcher.deployment_environment` -> global `ENVIRONMENT`
   - token: `watcher.github_token` -> global `GITHUB_TOKEN`
@@ -158,6 +166,11 @@ main.go
 ### `PollEvent`
 - `watcher_id`, `checked_at`, `status`, `remote_version`, `error`
 
+### `ReleaseMark`
+- one row per `(watcher_id, version)`
+- notes captured from the GitHub release object a poll or catalog download already fetched: `tag`, `title`, `notes` (capped at 64 KB), `url` (http(s) only), `published_at`
+- block: `blocked_at`, `block_reason`; recording notes never touches the block
+
 ---
 
 ## API Surface (Current)
@@ -202,6 +215,11 @@ main.go
 - `POST /api/watchers/:id/rollback`
 - `POST /api/watchers/:id/resume`
 - `DELETE /api/watchers/:id/versions/:version`
+- `GET /api/watchers/:id/versions/:version/config` (saved configuration plus rollback drafts)
+- `PUT /api/watchers/:id/versions/:version/block` (`{"reason": "..."}`, required)
+- `DELETE /api/watchers/:id/versions/:version/block`
+- `GET /api/watchers/:id/versions` and `GET /api/watchers/:id/releases` include `marks`; `/versions` also lists `draft_versions`
+- `POST /api/watchers/:id/rollback` accepts `use_draft`
 
 ### Self-management
 - `GET /api/self/version`
@@ -335,7 +353,8 @@ workflows/deploy.yml
 7. API has no authentication layer; treat deployment as internal/trusted only.
 8. `web/build/` must exist before Go build so `go:embed all:build` succeeds.
 9. Never map a GitHub 403/429 to a deploy failure; check `errors.Is(err, agent.ErrRateLimited)` first. API handlers report it with `githubError` (429 + `Retry-After`).
-10. Tests that make rate-limited requests through the real transport must use an isolated `NewGitHubPool()`, or they will block the process-wide pool for other tests.
+10. Every deploy path must call `agent.CheckReleaseAllowed` (or run through one that does) before touching services; map `agent.ErrReleaseBlocked` to 409.
+11. Tests that make rate-limited requests through the real transport must use an isolated `NewGitHubPool()`, or they will block the process-wide pool for other tests.
 
 ---
 

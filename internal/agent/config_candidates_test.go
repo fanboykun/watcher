@@ -22,7 +22,7 @@ func candidateFixture(t *testing.T) (*RepoWatcher, database.Service) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&database.Watcher{}, &database.Service{}, &database.ServiceConfigRevision{}, &database.ServiceConfigFile{}, &database.DeployLog{}, &database.PollEvent{}); err != nil {
+	if err := db.AutoMigrate(&database.Watcher{}, &database.ReleaseMark{}, &database.Service{}, &database.ServiceConfigRevision{}, &database.ServiceConfigFile{}, &database.DeployLog{}, &database.PollEvent{}); err != nil {
 		t.Fatal(err)
 	}
 	w := database.Watcher{Name: "test", InstallDir: t.TempDir(), AutoDeploy: true}

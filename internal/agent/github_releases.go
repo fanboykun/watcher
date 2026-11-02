@@ -138,11 +138,22 @@ func (g *GitHubClient) fetchReleases(ctx context.Context, owner, repo string, pe
 
 // fetchNamedAssetFromRelease fetches named asset from release.
 func (g *GitHubClient) fetchNamedAssetFromRelease(ctx context.Context, owner, repo, releaseRef, assetName string) ([]byte, error) {
+	data, _, err := g.fetchNamedAssetWithRelease(ctx, owner, repo, releaseRef, assetName)
+	return data, err
+}
+
+// fetchNamedAssetWithRelease also returns the release object the asset was resolved from.
+func (g *GitHubClient) fetchNamedAssetWithRelease(ctx context.Context, owner, repo, releaseRef, assetName string) ([]byte, *githubRelease, error) {
 	release, err := g.fetchRelease(ctx, owner, repo, releaseRef)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	data, err := g.fetchReleaseAsset(ctx, release, releaseRef, assetName)
+	return data, release, err
+}
 
+// fetchReleaseAsset downloads a named asset of an already-fetched release.
+func (g *GitHubClient) fetchReleaseAsset(ctx context.Context, release *githubRelease, releaseRef, assetName string) ([]byte, error) {
 	var asset *githubAsset
 	for i := range release.Assets {
 		if release.Assets[i].Name == assetName {

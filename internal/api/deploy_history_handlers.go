@@ -67,6 +67,10 @@ func (h *Handler) RedeployWatcher(c *gin.Context) {
 		if live.PendingCatalogID != 0 || active != 0 || live.Status == "deploying" {
 			return errCatalogConflict
 		}
+		// Redeploy resolves the source's latest release; the agent refuses that one too if it is blocked.
+		if err := agent.CheckReleaseAllowed(tx, watcher.ID, live.CurrentVersion); err != nil {
+			return err
+		}
 		// Reserve the attempt and force the next poll only after all operation guards pass.
 		if err := tx.Model(&live).UpdateColumns(map[string]any{"current_version": "", "last_error": ""}).Error; err != nil {
 			return err

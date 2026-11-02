@@ -116,6 +116,9 @@ func registerAPIRoutes(apiGroup *gin.RouterGroup, h *Handler) {
 		watchers.POST("/:id/webhook/test", h.SendWatcherWebhookTest)
 		watchers.POST("/:id/webhook/resume", h.ResumeWatcherWebhook)
 		watchers.DELETE("/:id/versions/:version", h.DeleteWatcherVersion)
+		watchers.GET("/:id/versions/:version/config", h.GetRollbackConfig)
+		watchers.PUT("/:id/versions/:version/block", h.BlockRelease)
+		watchers.DELETE("/:id/versions/:version/block", h.UnblockRelease)
 	}
 
 	// ── Self-management ──────────────────────────────────

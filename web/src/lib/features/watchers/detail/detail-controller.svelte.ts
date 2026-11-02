@@ -45,6 +45,7 @@ export function createWatcherDetail() {
 		showConfirmDialog: false,
 		rollbackTargetVersion: '',
 		rollbackReportGitHub: true,
+		rollbackUseDraft: true,
 		confirmTitle: '',
 		confirmDescription: '',
 		confirmActionLabel: 'Confirm',
@@ -78,6 +79,8 @@ export function createWatcherDetail() {
 	const pollTotal = $derived(pollQuery.data?.total ?? 0);
 	const versions = $derived(versionQuery.data?.versions ?? []);
 	const downloads = $derived(versionQuery.data?.downloads ?? []);
+	const marks = $derived(versionQuery.data?.marks ?? []);
+	const draftVersions = $derived(versionQuery.data?.draft_versions ?? []);
 	const webhookDeliveries = $derived(deliveryQuery.data?.data ?? []);
 	const deliveryTotal = $derived(deliveryQuery.data?.total ?? 0);
 	const deploysPaging = $derived(deployQuery.isPlaceholderData);
@@ -284,6 +287,12 @@ export function createWatcherDetail() {
 		},
 		get downloads() {
 			return downloads;
+		},
+		get marks() {
+			return marks;
+		},
+		get draftVersions() {
+			return draftVersions;
 		},
 		get deliveryTotal() {
 			return deliveryTotal;

@@ -142,7 +142,7 @@ func (r *RepoWatcher) deploy(ctx context.Context, gh *GitHubClient, svcMeta Serv
 	}
 
 	// ── Clean old releases ────────────────────────────────────────
-	if err := CleanOldReleases(r.wcfg.InstallDir, r.wcfg.MaxKeptVersions); err != nil {
+	if err := CleanOldReleases(r.wcfg.InstallDir, r.wcfg.MaxKeptVersions, releaseBlockedFunc(r.db, r.watcherID)); err != nil {
 		r.log.Warn("failed to clean old releases", "error", err)
 	}
 

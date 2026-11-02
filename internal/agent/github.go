@@ -15,6 +15,8 @@ const githubDeploymentStatusDescriptionLimit = 140
 
 type VersionMetadata struct {
 	Services map[string]ServiceMeta `json:"services"`
+	// Release describes the GitHub release the metadata came from, when it was fetched through the API.
+	Release *ReleaseNotes `json:"-"`
 }
 
 type ServiceMeta struct {

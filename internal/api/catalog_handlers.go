@@ -55,8 +55,13 @@ func (h *Handler) ListCatalogReleases(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	marks, err := h.releaseMarks(watcher.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
 	owner, repo, _ := agent.ParseGitHubURL(watcher.MetadataURL)
-	c.JSON(http.StatusOK, gin.H{"releases": catalog.Releases, "page": catalog.Page, "has_next": catalog.HasNext, "downloads": artifacts, "repository": owner + "/" + repo})
+	c.JSON(http.StatusOK, gin.H{"releases": catalog.Releases, "page": catalog.Page, "has_next": catalog.HasNext, "downloads": artifacts, "marks": marks, "repository": owner + "/" + repo})
 }
 
 func (h *Handler) DownloadCatalogRelease(c *gin.Context) {
@@ -104,6 +109,9 @@ func (h *Handler) DownloadCatalogRelease(c *gin.Context) {
 		githubError(c, http.StatusBadGateway, err)
 		return
 	}
+	if err := agent.RecordReleaseNotes(h.db, watcher.ID, version, agent.NotesFromGitHubRelease(release)); err != nil {
+		h.log.WithWatcher(watcher.ID, watcher.Name).Warn("failed to record release notes", "version", version, "error", err)
+	}
 	h.log.WithWatcher(watcher.ID, watcher.Name).WithTrace(agent.TraceFromContext(c.Request.Context())).Info("release artifact staged", "catalog_id", artifact.ID, "version", version, "asset", asset.Name)
 	c.JSON(http.StatusCreated, artifact)
 }
@@ -143,6 +151,9 @@ func reserveCatalogCandidate(tx *gorm.DB, watcher *database.Watcher, artifact *d
 	}
 	if live.MetadataURL != watcher.MetadataURL || live.InstallDir != watcher.InstallDir || live.ServiceName != watcher.ServiceName {
 		return fmt.Errorf("watcher configuration changed; refresh the catalog")
+	}
+	if err := agent.CheckReleaseAllowed(tx, watcher.ID, artifact.Version); err != nil {
+		return err
 	}
 	if active != 0 || live.Status == "deploying" || live.Status == "approved" || (live.PendingVersion != "" && (live.PendingVersion != artifact.Version || (live.PendingCatalogID != 0 && live.PendingCatalogID != artifact.ID))) {
 		return errCatalogConflict
@@ -227,7 +238,7 @@ func (h *Handler) queueCatalogDeploy(c *gin.Context, watcher *database.Watcher, 
 
 func catalogError(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
-	if errors.Is(err, errCatalogConflict) {
+	if errors.Is(err, errCatalogConflict) || errors.Is(err, agent.ErrReleaseBlocked) {
 		status = http.StatusConflict
 	}
 	c.JSON(status, ErrorResponse{Error: err.Error()})

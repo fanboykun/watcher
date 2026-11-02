@@ -37,8 +37,8 @@ describe('server-state cache contracts', () => {
 			keys.polls(1, 2, 10, 'all'),
 			keys.polls(1, 1, 25, 'all'),
 			keys.polls(1, 1, 10, 'failed'),
-			keys.snapshot(1, 'v1'),
-			keys.snapshot(1, 'v2'),
+			keys.rollbackConfig(1, 'v1'),
+			keys.rollbackConfig(1, 'v2'),
 			keys.logs(1, 100, 'agent', 'a'),
 			keys.logs(1, 100, 'agent', 'b')
 		];

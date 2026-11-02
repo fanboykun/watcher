@@ -39,7 +39,7 @@ func (g *GitHubClient) FetchMetadataForRelease(ctx context.Context, rawURL, rele
 		if err != nil {
 			return nil, fmt.Errorf("parse metadata URL: %w", err)
 		}
-		data, err := g.fetchNamedAssetFromRelease(ctx, owner, repo, releaseRef, "version.json")
+		data, release, err := g.fetchNamedAssetWithRelease(ctx, owner, repo, releaseRef, "version.json")
 		if err != nil {
 			return nil, fmt.Errorf("fetch version.json for release %q: %w", releaseRef, err)
 		}
@@ -47,6 +47,7 @@ func (g *GitHubClient) FetchMetadataForRelease(ctx context.Context, rawURL, rele
 		if err := json.Unmarshal(data, &meta); err != nil {
 			return nil, fmt.Errorf("decode version.json: %w", err)
 		}
+		meta.Release = NotesFromGitHubRelease(release)
 		return &meta, nil
 	}
 
@@ -58,6 +59,7 @@ func (g *GitHubClient) fetchLatestMetadata(ctx context.Context, rawURL string) (
 	g.log.Debug("fetching metadata", "url", rawURL)
 
 	var data []byte
+	var release *githubRelease
 	var err error
 
 	if g.token != "" {
@@ -66,7 +68,7 @@ func (g *GitHubClient) fetchLatestMetadata(ctx context.Context, rawURL string) (
 		if err != nil {
 			return nil, fmt.Errorf("parse metadata URL: %w", err)
 		}
-		data, err = g.fetchNamedAssetFromRelease(ctx, owner, repo, "latest", "version.json")
+		data, release, err = g.fetchNamedAssetWithRelease(ctx, owner, repo, "latest", "version.json")
 		if err != nil {
 			return nil, fmt.Errorf("fetch version.json via API: %w", err)
 		}
@@ -81,6 +83,8 @@ func (g *GitHubClient) fetchLatestMetadata(ctx context.Context, rawURL string) (
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, fmt.Errorf("decode version.json: %w", err)
 	}
+	// A public direct download has no release object; notes arrive with a catalog download instead.
+	meta.Release = NotesFromGitHubRelease(release)
 
 	return &meta, nil
 }

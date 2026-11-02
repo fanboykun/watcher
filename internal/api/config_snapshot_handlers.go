@@ -27,3 +27,22 @@ func (h *Handler) GetWatcherConfigSnapshot(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, snapshot)
 }
+
+// GetRollbackConfig returns a retained version's saved configuration with the drafts
+// a manual rollback to it would apply.
+func (h *Handler) GetRollbackConfig(c *gin.Context) {
+	watcher, err := h.findWatcher(c)
+	if err != nil {
+		return
+	}
+	config, err := agent.ReadRollbackConfig(h.db, watcher.ID, c.Param("version"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, agent.ErrConfigSnapshotNotFound) || os.IsNotExist(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, ErrorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, config)
+}

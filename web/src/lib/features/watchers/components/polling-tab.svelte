@@ -71,7 +71,7 @@
 										class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize
 								{p.status === 'new_release'
 											? 'border-blue-500/30 bg-blue-500/15 text-blue-400'
-											: p.status === 'error'
+											: p.status === 'error' || p.status === 'blocked'
 												? 'border-red-500/30 bg-red-500/15 text-red-400'
 												: p.status === 'rate_limited'
 													? 'border-amber-500/30 bg-amber-500/15 text-amber-400'

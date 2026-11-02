@@ -11,9 +11,18 @@
 	import WebhooksTab from '$lib/features/watchers/components/webhooks-tab.svelte';
 	import CandidateTab from '$lib/features/watchers/components/candidate-tab.svelte';
 	import ReleasesTab from '$lib/features/watchers/components/releases-tab.svelte';
-	import DownloadedVersions from '$lib/features/watchers/components/downloaded-versions.svelte';
+	import { buildVersionRows } from '$lib/features/watchers/releases/version-rows';
 	import type { createWatcherDetail } from '$lib/features/watchers/detail/detail-controller.svelte';
 	let { model }: { model: ReturnType<typeof createWatcherDetail> } = $props();
+	const versionRows = $derived(
+		buildVersionRows({
+			versions: model.versions,
+			downloads: model.downloads,
+			marks: model.marks,
+			draftVersions: model.draftVersions,
+			currentVersion: model.watcher?.current_version ?? ''
+		})
+	);
 </script>
 
 {#if model.watcher}
@@ -44,9 +53,7 @@
 				{/if}
 			</Tabs.Trigger>
 			<Tabs.Trigger value="deploys">Deploys ({model.deployTotal})</Tabs.Trigger>
-			<Tabs.Trigger value="versions"
-				>Versions ({model.versions.length + model.downloads.length})</Tabs.Trigger
-			>
+			<Tabs.Trigger value="versions">Versions ({versionRows.length})</Tabs.Trigger>
 			<Tabs.Trigger value="polling">Polls</Tabs.Trigger>
 			<Tabs.Trigger value="webhooks">Webhooks ({model.deliveryTotal})</Tabs.Trigger>
 		</Tabs.List>
@@ -113,19 +120,16 @@
 			/>
 		</Tabs.Content>
 
-		<Tabs.Content value="versions" class="mt-4 space-y-4">
-			<DownloadedVersions
-				downloads={model.downloads}
+		<Tabs.Content value="versions" class="mt-4">
+			<VersionsTab
+				watcherId={model.id}
+				rows={versionRows}
 				busy={model.actionBusy}
+				onRollback={model.openRollbackDialog}
+				onDeleteVersion={model.deleteVersion}
 				onConfigure={(download) =>
 					model.runPending('catalog_candidate', () => model.configureDownload(download))}
 				onDeploy={model.deployDownload}
-			/>
-			<VersionsTab
-				busy={model.actionBusy}
-				versions={model.versions}
-				onRollback={model.openRollbackDialog}
-				onDeleteVersion={model.deleteVersion}
 			/>
 		</Tabs.Content>
 
