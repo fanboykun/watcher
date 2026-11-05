@@ -39,8 +39,20 @@ func (h *Handler) ListAvailableVersions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
+	marks, err := h.releaseMarks(watcher.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+	drafts, err := agent.RollbackDraftVersions(h.db, watcher.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"downloads":       downloads,
+		"marks":           marks,
+		"draft_versions":  drafts,
 		"watcher_id":      watcher.ID,
 		"current_version": watcher.CurrentVersion,
 		"versions":        versions,
@@ -81,6 +93,10 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 		c.JSON(http.StatusNotFound, ErrorResponse{
 			Error: fmt.Sprintf("version %s not found on disk", req.Version),
 		})
+		return
+	}
+	if err := agent.CheckReleaseAllowed(h.db, watcher.ID, req.Version); err != nil {
+		releaseBlockedError(c, err)
 		return
 	}
 	if err := agent.ValidateConfigSnapshot(watcher.InstallDir, req.Version); err != nil {
@@ -127,6 +143,18 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 		return
 	}
 	_ = h.db.Model(&dlog).Update("root_attempt_id", dlog.ID).Error
+	finish := func(cause error) error { return cause }
+	applied := 0
+	if req.UseDraft {
+		// Staged only after admission, so no other attempt can read the rewritten snapshot.
+		applied, finish, err = agent.StageRollbackDrafts(h.db, watcher.ID, req.Version)
+		if err != nil {
+			// Nothing ran, so the reserved attempt is withdrawn rather than recorded as a failure.
+			_ = h.db.Delete(&dlog).Error
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Could not apply the edited configuration: " + err.Error()})
+			return
+		}
+	}
 	if h.events != nil {
 		h.events.Publish(watcher.ID, agent.WatcherEvent{
 			Type: agent.EventDeployStarted,
@@ -158,7 +186,7 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 		apiBaseURL = h.appCfg.APIBaseURL
 	}
 	logURL := buildWatcherLogURL(apiBaseURL, watcher.ID, dlog.ID)
-	go h.runRollback(watcher, dlog.ID, req.Version, watcher.CurrentVersion, reportGitHub, logger, wcfg)
+	go h.runRollback(watcher, dlog.ID, req.Version, watcher.CurrentVersion, reportGitHub, logger, wcfg, applied, finish)
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"message":       fmt.Sprintf("rollback to %s started", req.Version),
@@ -168,7 +196,9 @@ func (h *Handler) RollbackWatcher(c *gin.Context) {
 	})
 }
 
-func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targetVersion, previousVersion string, reportGitHub bool, logger *agent.Logger, wcfg *agent.WatcherConfig) {
+// runRollback activates a retained version. finish settles drafts staged by StageRollbackDrafts:
+// it restores the original snapshot when activation fails and consumes the drafts when it succeeds.
+func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targetVersion, previousVersion string, reportGitHub bool, logger *agent.Logger, wcfg *agent.WatcherConfig, appliedDrafts int, finish func(error) error) {
 	startedAt := time.Now().UTC()
 	logger.Info("manual rollback started", "deploy_log_id", deployLogID, "target_version", targetVersion, "previous_version", previousVersion)
 	appendRollbackLog := func(text string) {
@@ -178,8 +208,16 @@ func (h *Handler) runRollback(watcher *database.Watcher, deployLogID uint, targe
 
 	deployer := agent.NewDeployer(wcfg, h.nssmPath, logger, appendRollbackLog)
 	appendRollbackLog(fmt.Sprintf("rollback: started target=%s from=%s", targetVersion, previousVersion))
+	if appliedDrafts > 0 {
+		appendRollbackLog(fmt.Sprintf("rollback: applying edited configuration for %d service(s)", appliedDrafts))
+	}
 
 	rollbackErr := deployer.Rollback(context.Background(), targetVersion)
+	if rollbackErr != nil {
+		rollbackErr = finish(rollbackErr)
+	} else if err := finish(nil); err != nil {
+		appendRollbackLog("rollback: edited configuration applied but its drafts were not cleared: " + err.Error())
+	}
 	if rollbackErr == nil {
 		if _, err := agent.ReconcileConfigSnapshot(h.db, watcher.ID, targetVersion); err != nil {
 			rollbackErr = fmt.Errorf("rollback activated %s but failed to reconcile persisted config: %w", targetVersion, err)

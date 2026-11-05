@@ -12,6 +12,7 @@
 		serviceName,
 		context,
 		mode = 'candidate',
+		baselineLabel = 'active',
 		directory = '',
 		envPath = '',
 		envContent = $bindable(''),
@@ -28,7 +29,8 @@
 	}: {
 		serviceName: string;
 		context: string;
-		mode?: 'active' | 'candidate' | 'form';
+		mode?: 'active' | 'candidate' | 'form' | 'rollback';
+		baselineLabel?: string;
 		directory?: string;
 		envPath?: string;
 		envContent?: string;
@@ -139,7 +141,9 @@
 					? 'Active configuration'
 					: mode === 'candidate'
 						? 'Candidate draft'
-						: 'Service configuration'}
+						: mode === 'rollback'
+							? 'Rollback configuration'
+							: 'Service configuration'}
 			</p>
 			<h3 class="mt-1 truncate text-sm font-semibold">
 				{serviceName} <span class="mx-1.5 text-muted-foreground">/</span><span
@@ -167,6 +171,7 @@
 			{removed}
 			{changedCount}
 			{mode}
+			{baselineLabel}
 			{explicitFiles}
 			{disabled}
 			onadd={add}
@@ -211,7 +216,7 @@
 							size="xs"
 							onclick={() => (confirmation = 'restore')}
 							disabled={disabled || currentContent === original}
-							><RotateCcw class="size-3" />Restore active</Button.Root
+							><RotateCcw class="size-3" />Restore {baselineLabel}</Button.Root
 						>{#if selectedFile}<Button.Root
 								variant="ghost"
 								size="xs"
@@ -282,11 +287,13 @@
 	<div class="config-notice">
 		<Check class="size-3.5 shrink-0" />
 		<p>
-			{mode === 'candidate'
-				? 'Saving prepares this draft only. Active settings and running services change when you deploy the reviewed release.'
-				: mode === 'active'
-					? 'Applying writes the environment and app-directory files now. Release-directory files are used on the next deployment. Restart the service when required.'
-					: 'Configuration is saved with this service. App-directory files are written on save; release-directory files are used when deploying.'}{#if !envPath}<span
+			{mode === 'rollback'
+				? 'Saving keeps these edits as a draft. They apply when you roll back to this version and choose to use them; the saved configuration changes only if that rollback succeeds.'
+				: mode === 'candidate'
+					? 'Saving prepares this draft only. Active settings and running services change when you deploy the reviewed release.'
+					: mode === 'active'
+						? 'Applying writes the environment and app-directory files now. Release-directory files are used on the next deployment. Restart the service when required.'
+						: 'Configuration is saved with this service. App-directory files are written on save; release-directory files are used when deploying.'}{#if !envPath}<span
 					class="ml-1 text-amber-400"
 					>Set an environment file path in service settings to write environment content to disk.</span
 				>{/if}
@@ -307,13 +314,13 @@
 					? 'Remove this managed file?'
 					: confirmation === 'copy'
 						? 'Replace the staged file set?'
-						: 'Replace with active content?'}</Dialog.Title
+						: `Replace with ${baselineLabel} content?`}</Dialog.Title
 			><Dialog.Description
 				>{confirmation === 'remove'
 					? 'This removes the entry from your editable file set. Review and save to apply this change. Files already on disk are retained.'
 					: confirmation === 'copy'
-						? 'All staged managed files will be replaced with copies of the active files. Environment edits are kept.'
-						: 'Edits to this file will be replaced with the active configuration. Other files keep their edits.'}</Dialog.Description
+						? `All staged managed files will be replaced with copies of the ${baselineLabel} files. Environment edits are kept.`
+						: `Edits to this file will be replaced with the ${baselineLabel} configuration. Other files keep their edits.`}</Dialog.Description
 			></Dialog.Header
 		><Dialog.Footer
 			><Button.Root variant="outline" onclick={() => (confirmation = null)}
@@ -322,8 +329,8 @@
 				>{confirmation === 'remove'
 					? 'Remove file'
 					: confirmation === 'copy'
-						? 'Copy active files'
-						: 'Restore active'}</Button.Root
+						? `Copy ${baselineLabel} files`
+						: `Restore ${baselineLabel}`}</Button.Root
 			></Dialog.Footer
 		></Dialog.Content
 	>

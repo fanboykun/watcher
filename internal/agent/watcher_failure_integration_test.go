@@ -18,7 +18,7 @@ func newWatcherFailureFixture(t *testing.T) (*RepoWatcher, *gorm.DB, database.Wa
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	if err := db.AutoMigrate(&database.Watcher{}, &database.Service{}, &database.ServiceConfigFile{}, &database.DeployLog{}); err != nil {
+	if err := db.AutoMigrate(&database.Watcher{}, &database.ReleaseMark{}, &database.Service{}, &database.ServiceConfigFile{}, &database.DeployLog{}); err != nil {
 		t.Fatalf("migrate database: %v", err)
 	}
 	watcher := database.Watcher{

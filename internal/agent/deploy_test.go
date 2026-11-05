@@ -31,7 +31,7 @@ func TestCleanOldReleases_KeepsNewest(t *testing.T) {
 	}
 
 	// Keep only 3
-	err := CleanOldReleases(dir, 3)
+	err := CleanOldReleases(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestCleanOldReleases_FewerThanKeep(t *testing.T) {
 		os.MkdirAll(vDir, 0755)
 	}
 
-	err := CleanOldReleases(dir, 3)
+	err := CleanOldReleases(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestCleanOldReleases_EmptyReleasesDir(t *testing.T) {
 	relDir := filepath.Join(dir, "releases")
 	os.MkdirAll(relDir, 0755)
 
-	err := CleanOldReleases(dir, 3)
+	err := CleanOldReleases(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestCleanOldReleases_NoReleasesDir(t *testing.T) {
 	dir := t.TempDir()
 
 	// No releases/ directory at all — should not error
-	err := CleanOldReleases(dir, 3)
+	err := CleanOldReleases(dir, 3, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

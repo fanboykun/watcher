@@ -2,7 +2,10 @@
 	import ServiceDrafts from '$lib/features/watchers/candidates/service-drafts.svelte';
 	import ApprovalReview from '$lib/features/watchers/candidates/approval-review.svelte';
 	import TargetSelector from '$lib/features/watchers/candidates/target-selector.svelte';
-	import { keys } from '$lib/query/options';
+	import { keys, queries } from '$lib/query/options';
+	import { createQuery } from '@tanstack/svelte-query';
+	import ReleaseNotes from '$lib/features/watchers/releases/release-notes.svelte';
+	import { isBlocked, markFor } from '$lib/features/watchers/releases/release-marks';
 
 	import UnsavedChanges from '$lib/components/console/unsaved-changes.svelte';
 	import RequestError from '$lib/components/request-error.svelte';
@@ -29,6 +32,9 @@
 		onRefreshWatcher?: () => Promise<void>;
 	} = $props();
 	const model = createCandidate(() => ({ watcher, busy, onApprove, onDiscard, onRefreshWatcher }));
+	// Shares the detail page's versions query, which carries every release mark.
+	const versionQuery = createQuery(() => queries.versions(watcher.id));
+	const pendingMark = $derived(markFor(versionQuery.data?.marks, watcher.pending_version));
 </script>
 
 <UnsavedChanges dirty={model.hasAnyChanges} label="candidate configuration" />
@@ -67,6 +73,7 @@
 						{#if model.hasAnyChanges}Save your edits first to keep them for the displayed target.{/if}
 					</p>
 				{/if}
+				<div class="mt-3 space-y-3"><ReleaseNotes mark={pendingMark} /></div>
 				{#if model.retainedCatalog && model.watcher.last_error}
 					<p class="mt-2 text-sm text-destructive">{model.watcher.last_error}</p>
 					<p class="mt-1 text-xs text-muted-foreground">
@@ -127,6 +134,7 @@
 						model.approving ||
 						model.loading ||
 						model.problems.length > 0 ||
+						isBlocked(pendingMark) ||
 						model.ui.loadedSelection !== model.pendingSelection ||
 						model.ui.loadedTarget !== model.watcher.pending_version ||
 						model.effectiveTarget !== model.watcher.pending_version}>Review deployment</Button.Root

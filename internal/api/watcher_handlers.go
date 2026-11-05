@@ -431,6 +431,10 @@ func (h *Handler) ApproveRelease(c *gin.Context) {
 		h.queueCatalogDeploy(c, watcher, watcher.PendingCatalogID)
 		return
 	}
+	if err := agent.CheckReleaseAllowed(h.db, watcher.ID, req.Version); err != nil {
+		releaseBlockedError(c, err)
+		return
+	}
 	result := h.db.Model(watcher).Where("status = ? AND pending_version = ?", "pending_approval", req.Version).
 		UpdateColumns(map[string]any{"status": "approved", "approved_version": req.Version})
 	if result.Error != nil {

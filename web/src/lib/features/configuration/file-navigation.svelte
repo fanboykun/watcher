@@ -15,6 +15,7 @@
 		removed,
 		changedCount,
 		mode,
+		baselineLabel = 'active',
 		explicitFiles,
 		disabled,
 		onadd,
@@ -33,6 +34,8 @@
 		removed: ServiceConfigFile[];
 		changedCount: number;
 		mode: string;
+		/** What the baseline is, in the UI's words: the active, or a version's saved, configuration. */
+		baselineLabel?: string;
 		explicitFiles: boolean;
 		disabled: boolean;
 		onadd: () => void;
@@ -56,7 +59,7 @@
 		class={['config-file', !selectedFile && !removedSelection && 'config-file-selected']}
 		onclick={() => onchoose(-1)}
 		aria-label={envPath || 'Environment'}
-		title={envContent !== baselineEnv ? 'Changed from active configuration' : undefined}
+		title={envContent !== baselineEnv ? `Changed from ${baselineLabel} configuration` : undefined}
 		aria-pressed={!selectedFile && !removedSelection}
 		><FileCode class="size-4 shrink-0" /><span class="min-w-0 flex-1 truncate"
 			>{envPath || 'Environment'}</span
@@ -72,7 +75,7 @@
 			title={!baseline
 				? 'Added file'
 				: baseline.content !== file.content
-					? 'Changed from active configuration'
+					? `Changed from ${baselineLabel} configuration`
 					: undefined}
 			aria-pressed={selectedFile === file && !removedSelection}
 			><FileCode class="size-4 shrink-0" /><span class="min-w-0 flex-1 truncate"
@@ -96,7 +99,7 @@
 	<div
 		class="mt-4 border-t border-border px-3 pt-4 text-[11px] leading-relaxed text-muted-foreground"
 	>
-		{changedCount} file{changedCount === 1 ? '' : 's'} differ from active configuration.
+		{changedCount} file{changedCount === 1 ? '' : 's'} differ from {baselineLabel} configuration.
 		{#if mode === 'candidate'}<p class="mt-3">
 				{explicitFiles
 					? 'An explicit file set is staged.'

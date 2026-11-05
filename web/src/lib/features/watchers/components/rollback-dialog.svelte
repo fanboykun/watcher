@@ -10,6 +10,9 @@
 		errorMessage?: string;
 		rollbackReportGitHub: boolean;
 		rollbackTargetVersion: string;
+		/** A configuration draft is saved for the target version. */
+		hasDraft?: boolean;
+		useDraft?: boolean;
 		onRollback: (version: string, reportGithub?: boolean) => Promise<void>;
 	}
 
@@ -19,7 +22,9 @@
 		errorMessage = '',
 		rollbackReportGitHub = $bindable(),
 		onRollback,
-		rollbackTargetVersion
+		rollbackTargetVersion,
+		hasDraft = false,
+		useDraft = $bindable(true)
 	}: Props = $props();
 </script>
 
@@ -43,6 +48,25 @@
 			<p class="text-sm">
 				Target version: <span class="font-mono font-medium">{rollbackTargetVersion}</span>
 			</p>
+			{#if hasDraft}
+				<div class="space-y-1 rounded-md border border-border p-3">
+					<div class="flex items-center gap-2">
+						<Checkbox id="rollbackUseDraft" bind:checked={useDraft} disabled={pending} />
+						<Label for="rollbackUseDraft" class="text-sm select-none"
+							>Apply the edited configuration</Label
+						>
+					</div>
+					<p class="text-xs text-muted-foreground">
+						{useDraft
+							? 'Your saved edits replace this version’s configuration. If the rollback fails, the saved configuration is kept unchanged.'
+							: 'Restores the configuration this version last ran with. Your edits stay saved.'}
+					</p>
+				</div>
+			{:else}
+				<p class="text-xs text-muted-foreground">
+					Restores the configuration this version last ran with.
+				</p>
+			{/if}
 			<div class="flex items-center gap-2 py-1">
 				<Checkbox
 					id="rollbackReportGitHub"

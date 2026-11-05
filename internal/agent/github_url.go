@@ -137,6 +137,7 @@ func shouldIgnoreAssetForServiceDiscovery(assetName string) bool {
 func buildMetadataFromRelease(release *githubRelease) *VersionMetadata {
 	meta := &VersionMetadata{
 		Services: make(map[string]ServiceMeta),
+		Release:  NotesFromGitHubRelease(release),
 	}
 
 	for _, asset := range release.Assets {

@@ -13,7 +13,7 @@ func TestStateManagerHasPendingManualDeploy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&database.Watcher{}, &database.DeployLog{}); err != nil {
+	if err := db.AutoMigrate(&database.Watcher{}, &database.ReleaseMark{}, &database.DeployLog{}); err != nil {
 		t.Fatalf("migrate db: %v", err)
 	}
 

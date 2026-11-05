@@ -127,6 +127,8 @@ type MessageResponse struct {
 type RollbackRequest struct {
 	Version      string `json:"version" binding:"required"`
 	ReportGitHub *bool  `json:"report_github"`
+	// UseDraft applies the configuration drafts saved for Version on top of its snapshot.
+	UseDraft bool `json:"use_draft"`
 }
 
 // ── Agent self config DTOs ───────────────────────────────────

@@ -55,10 +55,10 @@ export const watchersApi = {
 			is_current: v.version === current
 		}));
 	},
-	rollbackWatcher: (id: number, version: string, reportGithub = true) =>
+	rollbackWatcher: (id: number, version: string, reportGithub = true, useDraft = false) =>
 		request<RollbackResponse>(`/watchers/${id}/rollback`, {
 			method: 'POST',
-			body: JSON.stringify({ version, report_github: reportGithub })
+			body: JSON.stringify({ version, report_github: reportGithub, use_draft: useDraft })
 		}),
 	resumeWatcherUpdates: (id: number) =>
 		request<{ message: string }>(`/watchers/${id}/resume`, { method: 'POST' }),

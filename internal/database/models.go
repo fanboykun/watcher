@@ -73,6 +73,7 @@ type Watcher struct {
 
 	// Relations
 	CatalogArtifacts  []CatalogArtifact `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"-"`
+	ReleaseMarks      []ReleaseMark     `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"-"`
 	Services          []Service         `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"services"`
 	DeployLogs        []DeployLog       `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"deploy_logs"`
 	PollEvents        []PollEvent       `gorm:"foreignKey:WatcherID;constraint:OnDelete:CASCADE" json:"poll_events"`
@@ -247,6 +248,24 @@ type CatalogArtifact struct {
 	SHA256       string     `json:"sha256"`
 	DownloadedAt *time.Time `json:"downloaded_at"`
 	CreatedAt    time.Time  `json:"created_at"`
+}
+
+// ReleaseMark records what Watcher knows about one version of a watcher's
+// release: the notes published with it, and whether an operator blocked it.
+// A blocked version is never deployed, approved or rolled back to.
+type ReleaseMark struct {
+	ID          uint       `gorm:"primaryKey" json:"id"`
+	WatcherID   uint       `gorm:"not null;uniqueIndex:idx_release_mark_version" json:"watcher_id"`
+	Version     string     `gorm:"not null;uniqueIndex:idx_release_mark_version" json:"version"`
+	Tag         string     `gorm:"not null;default:''" json:"tag"`
+	Title       string     `gorm:"not null;default:''" json:"title"`
+	Notes       string     `gorm:"type:text" json:"notes"`
+	URL         string     `gorm:"not null;default:''" json:"url"`
+	PublishedAt *time.Time `json:"published_at"`
+	BlockedAt   *time.Time `json:"blocked_at"`
+	BlockReason string     `gorm:"not null;default:''" json:"block_reason"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // RevisionConfigFile is a managed file staged without active row identities.

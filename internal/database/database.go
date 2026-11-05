@@ -34,6 +34,7 @@ func NewDB(dbPath string) (*gorm.DB, error) {
 		&AuthCredential{},
 		&Watcher{},
 		&CatalogArtifact{},
+		&ReleaseMark{},
 		&Service{},
 		&ServiceConfigRevision{},
 		&ServiceConfigFile{},

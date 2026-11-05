@@ -27,7 +27,7 @@ func newRateLimitedWatcher(t *testing.T, server *httptest.Server) (*RepoWatcher,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&database.Watcher{}, &database.DeployLog{}, &database.PollEvent{}); err != nil {
+	if err := db.AutoMigrate(&database.Watcher{}, &database.ReleaseMark{}, &database.DeployLog{}, &database.PollEvent{}); err != nil {
 		t.Fatal(err)
 	}
 	watcher := database.Watcher{

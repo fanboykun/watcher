@@ -72,7 +72,7 @@ func TestWatcherGitHubDeploymentStatusIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := db.AutoMigrate(&database.Watcher{}, &database.DeployLog{}); err != nil {
+			if err := db.AutoMigrate(&database.Watcher{}, &database.ReleaseMark{}, &database.DeployLog{}); err != nil {
 				t.Fatal(err)
 			}
 			dbWatcher := database.Watcher{Name: "alpha", ServiceName: "api", MetadataURL: "https://github.com/example/app", InstallDir: root}

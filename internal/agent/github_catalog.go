@@ -249,6 +249,10 @@ func (r *RepoWatcher) RunCatalog(ctx context.Context, catalogID, deployLogID uin
 	if err := ValidateCatalogArtifact(&watcher, &artifact); err != nil {
 		return err
 	}
+	// The API checked the block when queuing; this catches a block added since.
+	if err := CheckReleaseAllowed(r.db, watcher.ID, artifact.Version); err != nil {
+		return err
+	}
 	cycle.log.Info("catalog deployment started", "catalog_id", catalogID, "version", artifact.Version, "asset", artifact.AssetName)
 	cycle.github = r.github
 	gh := cycle.githubClient(cycle.log)

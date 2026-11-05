@@ -21,6 +21,7 @@ type Context = {
 		activeTab: string;
 		rollbackTargetVersion: string;
 		rollbackReportGitHub: boolean;
+		rollbackUseDraft: boolean;
 		showRollbackDialog: boolean;
 	};
 	fetchWatcher: () => Promise<Watcher>;
@@ -125,12 +126,14 @@ export function createWatcherActions(context: Context) {
 	function openRollbackDialog(version: string) {
 		context.ui.rollbackTargetVersion = version;
 		context.ui.rollbackReportGitHub = true;
+		// Saved edits apply by default; the dialog only offers this when a draft exists.
+		context.ui.rollbackUseDraft = true;
 		context.ui.showRollbackDialog = true;
 	}
-	async function rollback(version: string, reportGithub = true) {
+	async function rollback(version: string, reportGithub = true, useDraft = false) {
 		try {
 			context.ui.triggerMsg = `Starting rollback to ${version}...`;
-			const res = await api.rollbackWatcher(context.id, version, reportGithub);
+			const res = await api.rollbackWatcher(context.id, version, reportGithub, useDraft);
 			context.ui.showRollbackDialog = false;
 			const fallback = resolve(`/watchers/${context.id}/logs/${res.deploy_log_id}`);
 			await goto(fallback);

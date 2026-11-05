@@ -20,6 +20,8 @@
 	} from '@lucide/svelte';
 	import { filesize } from 'filesize';
 	import { formatDate } from '$lib/utils';
+	import ReleaseNotes from '$lib/features/watchers/releases/release-notes.svelte';
+	import { isBlocked, markFor } from '$lib/features/watchers/releases/release-marks';
 
 	let {
 		watcher,
@@ -166,6 +168,12 @@
 			{#each catalog.releases as release (release.id)}
 				{@const asset = selectedAsset(release)}
 				{@const downloaded = downloadFor(release)}
+				{@const mark = markFor(
+					catalog.marks,
+					downloaded?.version ?? release.tag_name,
+					release.tag_name
+				)}
+				{@const blocked = isBlocked(mark)}
 				<article class="space-y-3 px-5 py-5" aria-label={`Release ${release.tag_name}`}>
 					<div class="section-toolbar">
 						<div class="min-w-0 space-y-1.5">
@@ -173,6 +181,7 @@
 								<h3 class="font-medium break-all">{release.name || release.tag_name}</h3>
 								{#if release.prerelease}<Badge variant="outline">Prerelease</Badge>{/if}
 								{#if release.draft}<Badge variant="outline">Draft</Badge>{/if}
+								{#if blocked}<Badge variant="destructive">Blocked</Badge>{/if}
 								{#if downloaded?.version === watcher.current_version || release.tag_name === watcher.current_version}<Badge
 										variant="secondary">Current</Badge
 									>{/if}
@@ -202,12 +211,12 @@
 										: 'Download artifact'}</DropdownMenu.Item
 								>
 								<DropdownMenu.Item
-									disabled={!downloaded || release.draft}
+									disabled={!downloaded || release.draft || blocked}
 									onclick={() => selectCandidate(release)}
 									><SlidersHorizontal />Configure candidate</DropdownMenu.Item
 								>
 								<DropdownMenu.Item
-									disabled={!downloaded || release.draft}
+									disabled={!downloaded || release.draft || blocked}
 									onclick={() => {
 										deployTarget = downloaded ?? null;
 										confirmOpen = true;
@@ -221,6 +230,7 @@
 							</DropdownMenu.Content>
 						</DropdownMenu.Root>
 					</div>
+					<ReleaseNotes {mark} showNotes={false} />
 					<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 						{#if asset}
 							<label class="flex min-w-0 items-center gap-2 text-xs text-muted-foreground"

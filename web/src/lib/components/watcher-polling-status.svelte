@@ -19,6 +19,7 @@
 		new_release: 'New release',
 		intercepted: 'Awaiting approval',
 		skipped: 'Release skipped',
+		blocked: 'Release blocked',
 		deploy_suspended: 'Deployment suspended',
 		rate_limited: 'GitHub rate limited',
 		completed: 'Completed'
@@ -57,7 +58,7 @@
 		<div class="min-w-0">
 			{#if kind === 'both'}<p class="mb-1.5 text-xs text-muted-foreground">Latest poll</p>{/if}
 			<p
-				class={`text-sm font-medium ${watcher.last_poll_status === 'error' ? 'text-red-400' : ['intercepted', 'deploy_suspended', 'rate_limited'].includes(watcher.last_poll_status) ? 'text-amber-400' : ''}`}
+				class={`text-sm font-medium ${['error', 'blocked'].includes(watcher.last_poll_status) ? 'text-red-400' : ['intercepted', 'deploy_suspended', 'rate_limited'].includes(watcher.last_poll_status) ? 'text-amber-400' : ''}`}
 			>
 				{result}
 			</p>
@@ -68,7 +69,7 @@
 					{timeAgo(watcher.last_poll_at)}
 				</p>{/if}
 			{#if watcher.last_poll_error}<p
-					class={`${kind === 'both' ? 'mt-1 text-xs break-words' : 'mt-1 max-w-72 truncate text-xs'} ${watcher.last_poll_status === 'error' ? 'text-red-400' : 'text-muted-foreground'}`}
+					class={`${kind === 'both' ? 'mt-1 text-xs break-words' : 'mt-1 max-w-72 truncate text-xs'} ${['error', 'blocked'].includes(watcher.last_poll_status) ? 'text-red-400' : 'text-muted-foreground'}`}
 					title={watcher.last_poll_error}
 				>
 					{watcher.last_poll_error}

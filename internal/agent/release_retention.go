@@ -69,17 +69,23 @@ func ListAvailableVersions(installDir string) ([]ReleaseInfo, error) {
 }
 
 // CleanOldReleases removes old release directories, keeping only the `keep` most recent.
-func CleanOldReleases(installDir string, keep int) error {
+// Blocked versions are kept but do not use a slot, so they never push out a release
+// that rollback could still restore. blocked may be nil.
+func CleanOldReleases(installDir string, keep int, blocked func(version string) bool) error {
 	versions, err := ListAvailableVersions(installDir)
 	if err != nil {
 		return err
 	}
 
-	if len(versions) <= keep {
-		return nil
-	}
-
-	for _, v := range versions[keep:] {
+	kept := 0
+	for _, v := range versions {
+		if blocked != nil && blocked(v.Version) {
+			continue
+		}
+		if kept < keep {
+			kept++
+			continue
+		}
 		if v.IsCurrent {
 			continue // never delete the current version
 		}

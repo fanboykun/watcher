@@ -70,10 +70,10 @@ export const queries = {
 			queryKey: keys.candidate(id, target, selection),
 			queryFn: ({ signal }) => api.getWatcherCandidate(id, target, signal)
 		}),
-	snapshot: (id: number, version: string) =>
+	rollbackConfig: (id: number, version: string) =>
 		queryOptions({
-			queryKey: keys.snapshot(id, version),
-			queryFn: ({ signal }) => api.getWatcherConfigSnapshot(id, version, signal)
+			queryKey: keys.rollbackConfig(id, version),
+			queryFn: ({ signal }) => api.rollbackConfig(id, version, signal)
 		}),
 	services: () =>
 		queryOptions({ queryKey: keys.services, queryFn: ({ signal }) => api.listServices(signal) }),

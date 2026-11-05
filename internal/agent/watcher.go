@@ -41,12 +41,14 @@ func NewRepoWatcher(dbWatcher *database.Watcher, db *gorm.DB, appCfg *config.App
 	wcfg := WatcherConfigFromDB(dbWatcher)
 	componentLog := log.WithWatcher(dbWatcher.ID, wcfg.Name)
 	state := NewStateManager(db, dbWatcher.ID, componentLog, events, webhookService)
+	deployer := NewDeployer(wcfg, appCfg.NssmPath, componentLog, state.AppendDeployLog)
+	deployer.blocked = releaseBlockedFunc(db, dbWatcher.ID)
 	return &RepoWatcher{
 		wcfg:      wcfg,
 		global:    appCfg,
 		log:       componentLog,
 		state:     state,
-		deployer:  NewDeployer(wcfg, appCfg.NssmPath, componentLog, state.AppendDeployLog),
+		deployer:  deployer,
 		db:        db,
 		watcherID: dbWatcher.ID,
 		webhooks:  webhookService,
@@ -141,6 +143,9 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 
 	targetVersion := svcMeta.Version
 	r.log.Info("remote version", "target", targetVersion, "published_at", svcMeta.PublishedAt)
+	if err := RecordReleaseNotes(r.db, r.watcherID, targetVersion, meta.Release); err != nil {
+		r.log.Warn("failed to record release notes", "version", targetVersion, "error", err)
+	}
 
 	localVersion, maxIgnoredVersion, err := r.state.ReadVersion()
 	if err != nil {
@@ -154,6 +159,17 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 	if localVersion == targetVersion {
 		r.log.Info("already up to date")
 		r.state.RecordPollEvent("no_update", targetVersion, "")
+		return nil
+	}
+
+	if err := CheckReleaseAllowed(r.db, r.watcherID, targetVersion); err != nil {
+		if !errors.Is(err, ErrReleaseBlocked) {
+			r.state.RecordPollEvent("error", targetVersion, err.Error())
+			return err
+		}
+		r.log.Warn("release is blocked; not deploying", "target", targetVersion, "error", err)
+		r.state.RecordPollEvent("blocked", targetVersion, err.Error())
+		r.closeBlockedRedeploy(targetVersion, err)
 		return nil
 	}
 
@@ -213,6 +229,18 @@ func (r *RepoWatcher) runCycle(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// closeBlockedRedeploy settles a queued manual redeploy whose target is blocked,
+// restoring the current version the redeploy cleared to force a deployment.
+func (r *RepoWatcher) closeBlockedRedeploy(targetVersion string, blockErr error) {
+	currentVersion, err := currentVersionFromCurrentDir(r.wcfg.InstallDir)
+	if err != nil {
+		r.log.Warn("cannot resolve the active release", "error", err)
+	}
+	if err := r.state.CloseBlockedRedeploy(targetVersion, blockErr.Error(), currentVersion); err != nil {
+		r.log.Error("failed to close blocked redeploy", "version", targetVersion, "error", err)
+	}
 }
 
 // recordDeployFailure persists the target failure and any compensation result.

@@ -294,6 +294,40 @@ func (s *StateManager) SetDeferred(errMsg, previousStatus, previousError string)
 	return nil
 }
 
+// CloseBlockedRedeploy closes a queued manual redeploy as "blocked" without counting it as a
+// failure, and restores currentVersion when the redeploy cleared it to force a deployment.
+func (s *StateManager) CloseBlockedRedeploy(version, errMsg, currentVersion string) error {
+	now := time.Now().UTC()
+	var attempt database.DeployLog
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		err := tx.Where("watcher_id = ? AND kind = ? AND reason = ? AND completed_at IS NULL", s.watcherID, "deploy", "manual_redeploy").
+			Order("id desc").First(&attempt).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var durationMs int64
+		if attempt.StartedAt != nil {
+			durationMs = now.Sub(*attempt.StartedAt).Milliseconds()
+		}
+		if err := tx.Model(&attempt).Updates(map[string]any{"status": "blocked", "version": version, "error": errMsg, "completed_at": &now, "duration_ms": durationMs}).Error; err != nil {
+			return err
+		}
+		if currentVersion == "" {
+			return nil
+		}
+		return tx.Model(&database.Watcher{}).Where("id = ? AND current_version = ?", s.watcherID, "").
+			UpdateColumn("current_version", currentVersion).Error
+	})
+	if err != nil || attempt.ID == 0 {
+		return err
+	}
+	s.publish(EventDeployFinished, map[string]any{"deploy_log_id": attempt.ID, "status": "blocked", "error": errMsg})
+	return nil
+}
+
 // SetRolledBack records a successful rollback and advances the rollback high-watermark.
 func (s *StateManager) SetRolledBack(version string) error {
 	now := time.Now().UTC()

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -39,10 +40,15 @@ func (e *deployRecoveryError) Unwrap() error {
 }
 
 // resolveRollbackVersion selects a valid recorded previous version for automatic rollback.
+// A blocked previous version is replaced by the newest unblocked retained release.
 func (d *Deployer) resolveRollbackVersion(targetVersion, previousVersion string) string {
 	previousVersion = strings.TrimSpace(previousVersion)
 	if previousVersion == "" || previousVersion == targetVersion {
 		return ""
+	}
+	if d.isBlocked(previousVersion) {
+		d.lWarn("previous version is blocked; looking for another retained release", "version", previousVersion)
+		return d.newestUnblockedRelease(targetVersion, previousVersion)
 	}
 
 	releaseDir := filepath.Join(d.wcfg.InstallDir, "releases", releaseStorageName(previousVersion))
@@ -50,6 +56,32 @@ func (d *Deployer) resolveRollbackVersion(targetVersion, previousVersion string)
 		return previousVersion
 	}
 	d.lWarn("configured previous version is unavailable on disk", "version", previousVersion, "path", releaseDir)
+	return ""
+}
+
+// isBlocked reports whether an operator blocked the version.
+func (d *Deployer) isBlocked(version string) bool {
+	return d.blocked != nil && d.blocked(version)
+}
+
+// newestUnblockedRelease returns the newest retained release with a valid
+// configuration snapshot that is neither blocked nor excluded.
+func (d *Deployer) newestUnblockedRelease(exclude ...string) string {
+	versions, err := ListAvailableVersions(d.wcfg.InstallDir)
+	if err != nil {
+		d.lWarn("cannot list retained releases for rollback", "error", err)
+		return ""
+	}
+	for _, v := range versions {
+		if slices.Contains(exclude, v.Version) || d.isBlocked(v.Version) {
+			continue
+		}
+		if err := ValidateConfigSnapshot(d.wcfg.InstallDir, v.Version); err != nil {
+			continue
+		}
+		return v.Version
+	}
+	d.lWarn("no unblocked retained release is available for rollback")
 	return ""
 }
 

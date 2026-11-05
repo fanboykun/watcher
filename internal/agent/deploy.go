@@ -21,6 +21,8 @@ type Deployer struct {
 	serviceManager   ServiceManager
 	log              *Logger
 	logFn            func(string)
+	// blocked reports versions automatic rollback must never restore.
+	blocked func(version string) bool
 }
 
 // NewDeployer creates a configured deployer.
